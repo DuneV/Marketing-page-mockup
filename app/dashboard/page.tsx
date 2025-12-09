@@ -1,3 +1,5 @@
+// dashboard/page.tsx
+
 "use client"
 
 import { useEffect, useState } from "react"
@@ -11,7 +13,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const user = localStorage.getItem("user")
-    console.log("[v0] Checking auth - user:", user)
+    console.log("Checking auth - user:", user)
 
     if (user) {
       try {
@@ -22,7 +24,7 @@ export default function DashboardPage() {
           return
         }
       } catch (e) {
-        console.log("[v0] Error parsing user data")
+        console.log("Error parsing user data")
       }
     }
 

@@ -1,6 +1,6 @@
 import { Card } from "@/components/ui/card"
 
-interface KPICardProps {
+export interface KPICardProps {
   label: string
   value: string
   icon: string
