@@ -9,6 +9,9 @@ import { AdminKPICard } from "@/components/admin/admin-kpi-card"
 import { UsersTable } from "@/components/admin/users-table"
 import { CreateUserModal } from "@/components/admin/create-user-modal"
 import { DeleteUserDialog } from "@/components/admin/delete-user-dialog"
+import { TableSkeleton } from "@/components/admin/table-skeleton"
+import { KPISkeleton } from "@/components/admin/kpi-skeleton"
+import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "sonner"
 import type { User } from "@/types/user"
 
@@ -57,8 +60,29 @@ export function UsersAdminView() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <p className="text-muted-foreground">Cargando...</p>
+      <div className="space-y-6">
+        {/* Header Skeleton */}
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-10 w-40" />
+        </div>
+
+        {/* KPI Skeletons */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <KPISkeleton key={i} />
+          ))}
+        </div>
+
+        {/* Table Skeleton */}
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-6 w-40" />
+          </CardHeader>
+          <CardContent>
+            <TableSkeleton columns={7} rows={5} />
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -95,7 +119,7 @@ export function UsersAdminView() {
           <CardTitle>Usuarios Internos</CardTitle>
         </CardHeader>
         <CardContent>
-          <UsersTable users={users} onDelete={handleDeleteClick} />
+          <UsersTable users={users} onDelete={handleDeleteClick} onCreateClick={() => setIsCreateModalOpen(true)} />
         </CardContent>
       </Card>
 

@@ -1,15 +1,17 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
-import { Trash2 } from "lucide-react"
+import { Trash2, Users } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import type { User } from "@/types/user"
+import { EmptyState } from "./empty-state"
 
 interface UsersTableProps {
   users: User[]
   onDelete: (userId: string) => void
+  onCreateClick?: () => void
 }
 
-export function UsersTable({ users, onDelete }: UsersTableProps) {
+export function UsersTable({ users, onDelete, onCreateClick }: UsersTableProps) {
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("es-ES", {
       year: "numeric",
@@ -35,8 +37,14 @@ export function UsersTable({ users, onDelete }: UsersTableProps) {
         <TableBody>
           {users.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={7} className="text-center text-muted-foreground h-24">
-                No hay usuarios registrados
+              <TableCell colSpan={7} className="h-[400px] p-0">
+                <EmptyState
+                  icon={Users}
+                  title="No hay usuarios registrados"
+                  description="Agrega usuarios internos para gestionar las campañas y dar acceso al sistema"
+                  actionLabel={onCreateClick ? "Nuevo Usuario" : undefined}
+                  onAction={onCreateClick}
+                />
               </TableCell>
             </TableRow>
           ) : (

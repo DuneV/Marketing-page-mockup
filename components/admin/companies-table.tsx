@@ -1,17 +1,19 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Trash2 } from "lucide-react"
+import { Trash2, Building2 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import type { Company } from "@/types/company"
 import { AssignServiceModal } from "./assign-service-modal"
 import { ReportConfigBuilderSimple } from "./report-config-builder-simple"
+import { EmptyState } from "./empty-state"
 
 interface CompaniesTableProps {
   companies: Company[]
   onDelete: (companyId: string) => void
   onRowClick: (companyId: string) => void
   onConfigChange?: () => void
+  onCreateClick?: () => void
 }
 
 const sizeColors = {
@@ -21,7 +23,7 @@ const sizeColors = {
   enterprise: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100",
 }
 
-export function CompaniesTable({ companies, onDelete, onRowClick, onConfigChange }: CompaniesTableProps) {
+export function CompaniesTable({ companies, onDelete, onRowClick, onConfigChange, onCreateClick }: CompaniesTableProps) {
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("es-ES", {
       year: "numeric",
@@ -47,8 +49,14 @@ export function CompaniesTable({ companies, onDelete, onRowClick, onConfigChange
         <TableBody>
           {companies.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={7} className="text-center text-muted-foreground h-24">
-                No hay empresas registradas
+              <TableCell colSpan={7} className="h-[400px] p-0">
+                <EmptyState
+                  icon={Building2}
+                  title="No hay empresas registradas"
+                  description="Comienza agregando tu primera empresa cliente para gestionar sus campañas y reportes"
+                  actionLabel={onCreateClick ? "Nueva Empresa" : undefined}
+                  onAction={onCreateClick}
+                />
               </TableCell>
             </TableRow>
           ) : (
