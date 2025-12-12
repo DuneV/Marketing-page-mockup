@@ -7,6 +7,7 @@ import type { Company } from "@/types/company"
 interface CompaniesTableProps {
   companies: Company[]
   onDelete: (companyId: string) => void
+  onRowClick: (companyId: string) => void
 }
 
 const sizeColors = {
@@ -16,7 +17,7 @@ const sizeColors = {
   enterprise: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100",
 }
 
-export function CompaniesTable({ companies, onDelete }: CompaniesTableProps) {
+export function CompaniesTable({ companies, onDelete, onRowClick }: CompaniesTableProps) {
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("es-ES", {
       year: "numeric",
@@ -48,7 +49,11 @@ export function CompaniesTable({ companies, onDelete }: CompaniesTableProps) {
             </TableRow>
           ) : (
             companies.map((company) => (
-              <TableRow key={company.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+              <TableRow
+                key={company.id}
+                className="hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors"
+                onClick={() => onRowClick(company.id)}
+              >
                 <TableCell className="font-medium">{company.nombre}</TableCell>
                 <TableCell>
                   <Badge variant="outline" className={sizeColors[company.tamaño]}>
@@ -78,7 +83,10 @@ export function CompaniesTable({ companies, onDelete }: CompaniesTableProps) {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => onDelete(company.id)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onDelete(company.id)
+                    }}
                     className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20"
                   >
                     <Trash2 className="h-4 w-4" />

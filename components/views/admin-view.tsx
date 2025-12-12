@@ -9,12 +9,15 @@ import { AdminKPICard } from "@/components/admin/admin-kpi-card"
 import { CompaniesTable } from "@/components/admin/companies-table"
 import { CreateCompanyModal } from "@/components/admin/create-company-modal"
 import { DeleteCompanyDialog } from "@/components/admin/delete-company-dialog"
+import { CompanyDetailModal } from "@/components/admin/company-detail-modal"
 import type { Company } from "@/types/company"
 
 export function AdminView() {
   const [companies, setCompanies] = useState<Company[]>([])
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [deleteCompanyId, setDeleteCompanyId] = useState<string | null>(null)
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null)
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
@@ -41,6 +44,16 @@ export function AdminView() {
     setDeleteCompanyId(companyId)
   }
 
+  const handleRowClick = (companyId: string) => {
+    setSelectedCompanyId(companyId)
+    setIsDetailModalOpen(true)
+  }
+
+  const handleCloseDetailModal = () => {
+    setIsDetailModalOpen(false)
+    setSelectedCompanyId(null)
+  }
+
   const totalCompanies = companies.length
   const activeCompanies = companies.filter((c) => c.estado === "activa").length
   const totalCampaigns = companies.reduce((sum, c) => sum + (c.totalCampañas || 0), 0)
@@ -55,6 +68,7 @@ export function AdminView() {
   }
 
   const companyToDelete = deleteCompanyId ? companies.find((c) => c.id === deleteCompanyId) || null : null
+  const selectedCompany = selectedCompanyId ? companies.find((c) => c.id === selectedCompanyId) || null : null
 
   if (isLoading) {
     return (
@@ -97,7 +111,7 @@ export function AdminView() {
           <CardTitle>Empresas Clientes</CardTitle>
         </CardHeader>
         <CardContent>
-          <CompaniesTable companies={companies} onDelete={handleDeleteClick} />
+          <CompaniesTable companies={companies} onDelete={handleDeleteClick} onRowClick={handleRowClick} />
         </CardContent>
       </Card>
 
@@ -113,6 +127,12 @@ export function AdminView() {
         isOpen={deleteCompanyId !== null}
         onClose={() => setDeleteCompanyId(null)}
         onConfirm={handleDeleteCompany}
+      />
+
+      <CompanyDetailModal
+        company={selectedCompany}
+        isOpen={isDetailModalOpen}
+        onClose={handleCloseDetailModal}
       />
     </div>
   )
