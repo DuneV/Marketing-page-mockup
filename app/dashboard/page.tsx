@@ -5,11 +5,18 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import Dashboard from "@/components/dashboard"
+import { DashboardLayout } from "@/components/dashboard-layout"
+import { CampaignsView } from "@/components/views/campaigns-view"
+import { SettingsView } from "@/components/views/settings-view"
+import { AdminView } from "@/components/views/admin-view"
+import type { ViewType } from "@/components/app-sidebar"
 
 export default function DashboardPage() {
   const router = useRouter()
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [activeView, setActiveView] = useState<ViewType>("overview")
+  const [userType, setUserType] = useState<"employee" | "company">("company")
 
   useEffect(() => {
     const user = localStorage.getItem("user")
@@ -20,6 +27,7 @@ export default function DashboardPage() {
         const userData = JSON.parse(user)
         if (userData.authenticated) {
           setIsAuthenticated(true)
+          setUserType(userData.userType || "company")
           setIsLoading(false)
           return
         }
@@ -42,5 +50,23 @@ export default function DashboardPage() {
     )
   }
 
-  return isAuthenticated ? <Dashboard /> : null
+  if (!isAuthenticated) {
+    return null
+  }
+
+  return (
+    <DashboardLayout
+      activeView={activeView}
+      onNavigate={setActiveView}
+      userType={userType}
+    >
+      {activeView === "overview" && <Dashboard activeView="overview" userType={userType} />}
+      {activeView === "people" && <Dashboard activeView="people" userType={userType} />}
+      {activeView === "company" && <Dashboard activeView="company" userType={userType} />}
+      {activeView === "employee" && <Dashboard activeView="employee" userType={userType} />}
+      {activeView === "campaigns" && <CampaignsView />}
+      {activeView === "settings" && <SettingsView />}
+      {activeView === "admin" && <AdminView />}
+    </DashboardLayout>
+  )
 }
