@@ -1,7 +1,8 @@
 "use client"
 
 import { LayoutDashboard, Target, Settings, Shield, LogOut, User, ChevronUp } from "lucide-react"
-import { useRouter } from "next/navigation"
+import { useRouter, usePathname } from "next/navigation"
+import Link from "next/link"
 import {
   Sidebar,
   SidebarContent,
@@ -24,13 +25,12 @@ import {
 export type ViewType = "overview" | "campaigns" | "settings" | "admin" | "people" | "company" | "employee"
 
 interface AppSidebarProps {
-  activeView: ViewType
-  onNavigate: (view: ViewType) => void
   userType: "employee" | "company"
 }
 
-export function AppSidebar({ activeView, onNavigate, userType }: AppSidebarProps) {
+export function AppSidebar({ userType }: AppSidebarProps) {
   const router = useRouter()
+  const pathname = usePathname()
   const { setOpenMobile } = useSidebar()
 
   const handleLogout = () => {
@@ -38,8 +38,7 @@ export function AppSidebar({ activeView, onNavigate, userType }: AppSidebarProps
     router.push("/auth/login")
   }
 
-  const handleNavigate = (view: ViewType) => {
-    onNavigate(view)
+  const handleNavigation = () => {
     // Close mobile sidebar after navigation
     setOpenMobile(false)
   }
@@ -65,17 +64,17 @@ export function AppSidebar({ activeView, onNavigate, userType }: AppSidebarProps
     {
       title: "Dashboard",
       icon: LayoutDashboard,
-      view: "overview" as ViewType,
+      href: "/dashboard",
     },
     {
       title: "Campañas",
       icon: Target,
-      view: "campaigns" as ViewType,
+      href: "/campaigns",
     },
     {
       title: "Configuración",
       icon: Settings,
-      view: "settings" as ViewType,
+      href: "/settings",
     },
   ]
 
@@ -83,7 +82,7 @@ export function AppSidebar({ activeView, onNavigate, userType }: AppSidebarProps
     {
       title: "Admin Panel",
       icon: Shield,
-      view: "admin" as ViewType,
+      href: "/admin",
     },
   ]
 
@@ -106,14 +105,16 @@ export function AppSidebar({ activeView, onNavigate, userType }: AppSidebarProps
           <SidebarGroupLabel>General</SidebarGroupLabel>
           <SidebarMenu>
             {generalMenuItems.map((item) => (
-              <SidebarMenuItem key={item.view}>
+              <SidebarMenuItem key={item.href}>
                 <SidebarMenuButton
-                  isActive={activeView === item.view}
-                  onClick={() => handleNavigate(item.view)}
+                  asChild
+                  isActive={pathname === item.href}
                   tooltip={item.title}
                 >
-                  <item.icon className="h-4 w-4" />
-                  <span>{item.title}</span>
+                  <Link href={item.href} onClick={handleNavigation}>
+                    <item.icon className="h-4 w-4" />
+                    <span>{item.title}</span>
+                  </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             ))}
@@ -125,14 +126,16 @@ export function AppSidebar({ activeView, onNavigate, userType }: AppSidebarProps
             <SidebarGroupLabel>Admin</SidebarGroupLabel>
             <SidebarMenu>
               {adminMenuItems.map((item) => (
-                <SidebarMenuItem key={item.view}>
+                <SidebarMenuItem key={item.href}>
                   <SidebarMenuButton
-                    isActive={activeView === item.view}
-                    onClick={() => handleNavigate(item.view)}
+                    asChild
+                    isActive={pathname === item.href}
                     tooltip={item.title}
                   >
-                    <item.icon className="h-4 w-4" />
-                    <span>{item.title}</span>
+                    <Link href={item.href} onClick={handleNavigation}>
+                      <item.icon className="h-4 w-4" />
+                      <span>{item.title}</span>
+                    </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}

@@ -1,8 +1,9 @@
 "use client"
 
 import { ReactNode } from "react"
+import { usePathname } from "next/navigation"
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
-import { AppSidebar, ViewType } from "@/components/app-sidebar"
+import { AppSidebar } from "@/components/app-sidebar"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Separator } from "@/components/ui/separator"
 import {
@@ -13,31 +14,27 @@ import {
 } from "@/components/ui/breadcrumb"
 
 interface DashboardLayoutProps {
-  activeView: ViewType
-  onNavigate: (view: ViewType) => void
   userType: "employee" | "company"
   children: ReactNode
 }
 
-const viewTitles: Record<ViewType, string> = {
-  overview: "Dashboard",
-  campaigns: "Campañas",
-  settings: "Configuración",
-  admin: "Admin Panel",
-  people: "Personas",
-  company: "Empresa",
-  employee: "Mi Campaña",
+const pathTitles: Record<string, string> = {
+  "/dashboard": "Dashboard",
+  "/campaigns": "Campañas",
+  "/settings": "Configuración",
+  "/admin": "Admin Panel",
 }
 
 export function DashboardLayout({
-  activeView,
-  onNavigate,
   userType,
   children,
 }: DashboardLayoutProps) {
+  const pathname = usePathname()
+  const title = pathTitles[pathname] || "Dashboard"
+
   return (
     <SidebarProvider>
-      <AppSidebar activeView={activeView} onNavigate={onNavigate} userType={userType} />
+      <AppSidebar userType={userType} />
       <SidebarInset>
         <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-2 border-b bg-background px-4">
           <SidebarTrigger className="-ml-1" />
@@ -46,7 +43,7 @@ export function DashboardLayout({
             <BreadcrumbList>
               <BreadcrumbItem>
                 <BreadcrumbPage className="font-semibold text-lg">
-                  {viewTitles[activeView] || "Dashboard"}
+                  {title}
                 </BreadcrumbPage>
               </BreadcrumbItem>
             </BreadcrumbList>
