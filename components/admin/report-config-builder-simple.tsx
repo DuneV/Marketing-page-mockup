@@ -242,15 +242,17 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
         </Button>
       </DialogTrigger>
       {config && (
-        <DialogContent className="max-w-[95vw] sm:max-w-[90vw] lg:max-w-6xl max-h-[90vh] overflow-hidden">
-        <DialogHeader>
-          <DialogTitle>Configurar Reporte - {company.nombre}</DialogTitle>
-          <DialogDescription>
-            Personaliza los KPIs y gráficos del dashboard para esta empresa
-          </DialogDescription>
-        </DialogHeader>
+        <DialogContent className="max-w-[95vw] sm:max-w-[90vw] lg:max-w-6xl h-[90vh] flex flex-col p-0">
+        <div className="px-6 pt-6 pb-4 shrink-0">
+          <DialogHeader>
+            <DialogTitle>Configurar Reporte - {company.nombre}</DialogTitle>
+            <DialogDescription>
+              Personaliza los KPIs y gráficos del dashboard para esta empresa
+            </DialogDescription>
+          </DialogHeader>
+        </div>
 
-        <ScrollArea className="h-[50vh] md:h-[60vh] lg:h-[600px] pr-4">
+        <ScrollArea className="flex-1 px-6 overflow-y-auto">
           <div className="space-y-6 py-4">
             {!servicePackage && (
               <Alert variant="destructive">
@@ -547,15 +549,17 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
           </div>
         </ScrollArea>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)} disabled={isLoading}>
-            Cancelar
-          </Button>
-          <Button onClick={handleSave} disabled={!servicePackage || isLoading}>
-            <Save className="h-4 w-4 mr-2" />
-            {isLoading ? "Guardando..." : "Guardar Configuración"}
-          </Button>
-        </DialogFooter>
+        <div className="px-6 py-4 border-t shrink-0">
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={isLoading}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSave} disabled={!servicePackage || isLoading}>
+              <Save className="h-4 w-4 mr-2" />
+              {isLoading ? "Guardando..." : "Guardar Configuración"}
+            </Button>
+          </DialogFooter>
+        </div>
       </DialogContent>
       )}
     </Dialog>
