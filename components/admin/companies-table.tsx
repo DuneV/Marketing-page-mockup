@@ -2,6 +2,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Trash2 } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import type { Company } from "@/types/company"
 import { AssignServiceModal } from "./assign-service-modal"
 import { ReportConfigBuilderSimple } from "./report-config-builder-simple"
@@ -30,17 +31,17 @@ export function CompaniesTable({ companies, onDelete, onRowClick, onConfigChange
   }
 
   return (
-    <div className="overflow-x-auto">
+    <TooltipProvider>
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Nombre</TableHead>
-            <TableHead>Tamaño</TableHead>
-            <TableHead>Tipo</TableHead>
-            <TableHead>Productos</TableHead>
-            <TableHead>Estado</TableHead>
-            <TableHead>Fecha Creación</TableHead>
-            <TableHead className="text-right w-[400px]">Acciones</TableHead>
+            <TableHead className="w-[25%]">Nombre</TableHead>
+            <TableHead className="w-[10%]">Tamaño</TableHead>
+            <TableHead className="w-[12%]">Tipo</TableHead>
+            <TableHead className="w-[10%] text-center">Prods.</TableHead>
+            <TableHead className="w-[10%]">Estado</TableHead>
+            <TableHead className="w-[13%]">Creación</TableHead>
+            <TableHead className="w-[20%] text-right">Acciones</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -57,17 +58,32 @@ export function CompaniesTable({ companies, onDelete, onRowClick, onConfigChange
                 className="hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors"
                 onClick={() => onRowClick(company.id)}
               >
-                <TableCell className="font-medium">{company.nombre}</TableCell>
+                <TableCell className="font-medium">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="truncate max-w-[200px]">{company.nombre}</div>
+                    </TooltipTrigger>
+                    <TooltipContent>{company.nombre}</TooltipContent>
+                  </Tooltip>
+                </TableCell>
                 <TableCell>
                   <Badge variant="outline" className={sizeColors[company.tamaño]}>
-                    {company.tamaño}
+                    {company.tamaño.charAt(0).toUpperCase()}
                   </Badge>
                 </TableCell>
-                <TableCell>{company.tipo}</TableCell>
-                <TableCell>
-                  <span className="text-sm" title={company.productos.join(", ")}>
-                    {company.cantidad} producto{company.cantidad !== 1 ? "s" : ""}
-                  </span>
+                <TableCell className="truncate max-w-[100px]">{company.tipo}</TableCell>
+                <TableCell className="text-center">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="text-sm cursor-help">{company.cantidad}</span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <div className="max-w-xs">
+                        <p className="font-semibold mb-1">Productos:</p>
+                        <p>{company.productos.join(", ")}</p>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
                 </TableCell>
                 <TableCell>
                   <Badge
@@ -81,22 +97,27 @@ export function CompaniesTable({ companies, onDelete, onRowClick, onConfigChange
                     {company.estado === "activa" ? "Activa" : "Inactiva"}
                   </Badge>
                 </TableCell>
-                <TableCell>{formatDate(company.fechaCreacion)}</TableCell>
-                <TableCell className="text-right w-[400px]">
-                  <div className="flex items-center justify-end gap-2 flex-nowrap" onClick={(e) => e.stopPropagation()}>
+                <TableCell className="text-sm">{formatDate(company.fechaCreacion)}</TableCell>
+                <TableCell className="text-right">
+                  <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                     <AssignServiceModal company={company} onAssigned={onConfigChange} />
                     <ReportConfigBuilderSimple company={company} onSaved={onConfigChange} />
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onDelete(company.id)
-                      }}
-                      className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onDelete(company.id)
+                          }}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Eliminar</TooltipContent>
+                    </Tooltip>
                   </div>
                 </TableCell>
               </TableRow>
@@ -104,6 +125,6 @@ export function CompaniesTable({ companies, onDelete, onRowClick, onConfigChange
           )}
         </TableBody>
       </Table>
-    </div>
+    </TooltipProvider>
   )
 }

@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   LayoutDashboard,
   Plus,
@@ -234,15 +235,20 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          <LayoutDashboard className="h-4 w-4 mr-2" />
-          Configurar Reporte
-        </Button>
-      </DialogTrigger>
+    <TooltipProvider>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm">
+                <LayoutDashboard className="h-4 w-4" />
+              </Button>
+            </DialogTrigger>
+          </TooltipTrigger>
+          <TooltipContent>Configurar Reporte</TooltipContent>
+        </Tooltip>
       {config && (
-        <DialogContent className="max-w-[95vw] sm:max-w-[90vw] lg:max-w-6xl h-[90vh] flex flex-col p-0">
+        <DialogContent className="max-w-[90vw] sm:max-w-4xl lg:max-w-5xl max-h-[85vh] flex flex-col p-0">
         <div className="px-6 pt-6 pb-4 shrink-0">
           <DialogHeader>
             <DialogTitle>Configurar Reporte - {company.nombre}</DialogTitle>
@@ -562,6 +568,7 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
         </div>
       </DialogContent>
       )}
-    </Dialog>
+      </Dialog>
+    </TooltipProvider>
   );
 }

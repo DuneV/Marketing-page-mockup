@@ -55,7 +55,9 @@ export function DashboardLayout({
           </div>
         </header>
         <main className="flex flex-1 flex-col gap-4 p-4 bg-white dark:bg-slate-950">
-          {children}
+          <div className="w-full max-w-screen-2xl mx-auto">
+            {children}
+          </div>
         </main>
       </SidebarInset>
     </SidebarProvider>

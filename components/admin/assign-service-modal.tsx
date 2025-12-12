@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Settings, Check } from "lucide-react";
@@ -77,13 +78,18 @@ export function AssignServiceModal({ company, onAssigned }: AssignServiceModalPr
   const selectedPackage = packages.find((p) => p.id === selectedPackageId);
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          <Settings className="h-4 w-4 mr-2" />
-          Asignar Servicio
-        </Button>
-      </DialogTrigger>
+    <TooltipProvider>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Settings className="h-4 w-4" />
+              </Button>
+            </DialogTrigger>
+          </TooltipTrigger>
+          <TooltipContent>Asignar Servicio</TooltipContent>
+        </Tooltip>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Asignar Paquete de Servicio</DialogTitle>
@@ -203,6 +209,7 @@ export function AssignServiceModal({ company, onAssigned }: AssignServiceModalPr
           </Button>
         </DialogFooter>
       </DialogContent>
-    </Dialog>
+      </Dialog>
+    </TooltipProvider>
   );
 }

@@ -97,25 +97,43 @@ export function DynamicDashboard({ empresaId, empresaNombre }: DynamicDashboardP
         <div className="space-y-6">
           {config.filas
             .sort((a, b) => a.orden - b.orden)
-            .map((fila) => (
-              <div key={fila.id}>
-                {fila.graficos.length > 0 && (
-                  <div className="grid grid-cols-12 gap-4">
-                    {fila.graficos.map((grafico) => (
-                      <div
-                        key={grafico.id}
-                        className={`col-span-12 md:col-span-${grafico.columnas}`}
-                        style={{
-                          gridColumn: `span ${grafico.columnas} / span ${grafico.columnas}`,
-                        }}
-                      >
-                        <DynamicChart chart={grafico} />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
+            .map((fila) => {
+              // Mapa de clases seguras para Tailwind
+              const getColumnClass = (cols: number) => {
+                const columnClasses: Record<number, string> = {
+                  1: "col-span-12 md:col-span-1",
+                  2: "col-span-12 md:col-span-2",
+                  3: "col-span-12 md:col-span-3",
+                  4: "col-span-12 md:col-span-4",
+                  5: "col-span-12 md:col-span-5",
+                  6: "col-span-12 md:col-span-6",
+                  7: "col-span-12 md:col-span-7",
+                  8: "col-span-12 md:col-span-8",
+                  9: "col-span-12 md:col-span-9",
+                  10: "col-span-12 md:col-span-10",
+                  11: "col-span-12 md:col-span-11",
+                  12: "col-span-12"
+                };
+                return columnClasses[cols] || "col-span-12";
+              };
+
+              return (
+                <div key={fila.id}>
+                  {fila.graficos.length > 0 && (
+                    <div className="grid grid-cols-12 gap-4">
+                      {fila.graficos.map((grafico) => (
+                        <div
+                          key={grafico.id}
+                          className={getColumnClass(grafico.columnas)}
+                        >
+                          <DynamicChart chart={grafico} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
         </div>
       ) : (
         <Card>
