@@ -1,6 +1,6 @@
 "use client"
 
-import { LayoutDashboard, Target, Settings, Shield, LogOut, User, ChevronUp } from "lucide-react"
+import { LayoutDashboard, Target, Settings, Shield, LogOut, User, ChevronUp, Users } from "lucide-react"
 import { useRouter, usePathname } from "next/navigation"
 import Link from "next/link"
 import {
@@ -81,9 +81,14 @@ export function AppSidebar({ userType, isAdmin = false }: AppSidebarProps) {
 
   const adminMenuItems = [
     {
-      title: "Admin Panel",
+      title: "Empresas",
       icon: Shield,
-      href: "/admin",
+      href: "/admin/companies",
+    },
+    {
+      title: "Usuarios",
+      icon: Users,
+      href: "/admin/users",
     },
   ]
 

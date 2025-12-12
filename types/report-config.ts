@@ -98,8 +98,8 @@ export interface ReportConfiguration {
 // Ejemplo de uso según tu estructura:
 /*
 {
-  empresaId: "uuid-de-nicolay",
-  empresaNombre: "Nicolay",
+  empresaId: "uuid-de-empresa",
+  empresaNombre: "empresa",
   filtros: {
     fechas: {
       inicio: "2000-01-01",
