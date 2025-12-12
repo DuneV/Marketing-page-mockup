@@ -9,6 +9,7 @@ import { AdminKPICard } from "@/components/admin/admin-kpi-card"
 import { UsersTable } from "@/components/admin/users-table"
 import { CreateUserModal } from "@/components/admin/create-user-modal"
 import { DeleteUserDialog } from "@/components/admin/delete-user-dialog"
+import { toast } from "sonner"
 import type { User } from "@/types/user"
 
 export function UsersAdminView() {
@@ -27,13 +28,20 @@ export function UsersAdminView() {
   const handleCreateUser = (newUser: Omit<User, "id" | "fechaCreacion">) => {
     const created = UsersStorage.create(newUser)
     setUsers([...users, created])
+    toast.success("Usuario creado", {
+      description: `${newUser.nombre} ha sido agregado exitosamente`
+    })
   }
 
   const handleDeleteUser = () => {
     if (deleteUserId) {
+      const userName = users.find(u => u.id === deleteUserId)?.nombre
       UsersStorage.delete(deleteUserId)
       setUsers(users.filter((u) => u.id !== deleteUserId))
       setDeleteUserId(null)
+      toast.success("Usuario eliminado", {
+        description: `${userName} ha sido eliminado permanentemente`
+      })
     }
   }
 

@@ -11,6 +11,7 @@ import { CreateCompanyModal } from "@/components/admin/create-company-modal"
 import { DeleteCompanyDialog } from "@/components/admin/delete-company-dialog"
 import { CompanyDetailModal } from "@/components/admin/company-detail-modal"
 import { initDemoData } from "@/lib/init-demo-data"
+import { toast } from "sonner"
 import type { Company } from "@/types/company"
 
 export function AdminView() {
@@ -31,13 +32,20 @@ export function AdminView() {
   const handleCreateCompany = (newCompany: Omit<Company, "id" | "fechaCreacion">) => {
     const created = CompaniesStorage.create(newCompany)
     setCompanies([...companies, created])
+    toast.success("Empresa creada", {
+      description: `${newCompany.nombre} ha sido agregada exitosamente`
+    })
   }
 
   const handleDeleteCompany = () => {
     if (deleteCompanyId) {
+      const companyName = companies.find(c => c.id === deleteCompanyId)?.nombre
       CompaniesStorage.delete(deleteCompanyId)
       setCompanies(companies.filter((c) => c.id !== deleteCompanyId))
       setDeleteCompanyId(null)
+      toast.success("Empresa eliminada", {
+        description: `${companyName} ha sido eliminada permanentemente`
+      })
     }
   }
 
@@ -64,11 +72,15 @@ export function AdminView() {
   const handleInitDemoData = () => {
     try {
       initDemoData()
-      alert("Datos de demostración inicializados correctamente. Ahora todas las empresas tienen paquetes y configuraciones de reportes asignadas.")
+      toast.success("Datos inicializados", {
+        description: "Todas las empresas tienen paquetes y configuraciones asignadas"
+      })
       handleConfigChange()
     } catch (error) {
       console.error("Error inicializando datos:", error)
-      alert("Error al inicializar datos de demostración")
+      toast.error("Error al inicializar", {
+        description: "No se pudieron cargar los datos de demostración"
+      })
     }
   }
 
