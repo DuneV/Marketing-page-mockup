@@ -1,0 +1,563 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  LayoutDashboard,
+  Plus,
+  Trash2,
+  AlertCircle,
+  GripVertical,
+  Save,
+  FileText,
+} from "lucide-react";
+import { reportConfigStorage } from "@/lib/report-config-storage";
+import type { Company } from "@/types/company";
+import type {
+  ReportConfiguration,
+  DashboardRow,
+  ChartDefinition,
+  KPIDefinition,
+  ChartType,
+  DataSource,
+  KPIOperation,
+  ServicePackage,
+  ReportTemplate,
+} from "@/types/report-config";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+
+interface ReportConfigBuilderProps {
+  company: Company;
+  onSaved?: () => void;
+}
+
+export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuilderProps) {
+  const [open, setOpen] = useState(false);
+  const [config, setConfig] = useState<Omit<ReportConfiguration, "id" | "fechaCreacion" | "fechaActualizacion"> | null>(null);
+  const [servicePackage, setServicePackage] = useState<ServicePackage | null>(null);
+  const [templates, setTemplates] = useState<ReportTemplate[]>([]);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      try {
+        reportConfigStorage.initialize();
+        const assignment = reportConfigStorage.getCompanyServiceAssignment(company.id);
+        if (assignment) {
+          const pkg = reportConfigStorage.getServicePackageById(assignment.paqueteId);
+          setServicePackage(pkg);
+        }
+        const allTemplates = reportConfigStorage.getAllTemplates();
+        setTemplates(allTemplates);
+        const existingConfig = reportConfigStorage.getConfigurationByCompany(company.id);
+        if (existingConfig) {
+          setConfig(existingConfig);
+        } else {
+          setConfig({
+            empresaId: company.id,
+            empresaNombre: company.nombre,
+            filtros: {},
+            kpis: [],
+            filas: [],
+            activa: true,
+          });
+        }
+      } catch (error) {
+        console.error("Error loading config:", error);
+      }
+    }
+  }, [open, company.id, company.nombre]);
+
+  const loadTemplate = (templateId: string) => {
+    const template = templates.find((t) => t.id === templateId);
+    if (template) {
+      setConfig({
+        empresaId: company.id,
+        empresaNombre: company.nombre,
+        ...template.configuracion,
+      });
+    }
+  };
+
+  const addKPI = () => {
+    if (!config || !servicePackage) return;
+    if (config.kpis.length >= servicePackage.maxKPIs) {
+      alert(`Límite de KPIs alcanzado (${servicePackage.maxKPIs})`);
+      return;
+    }
+    const newKPI: KPIDefinition = {
+      id: crypto.randomUUID(),
+      nombre: "Nuevo KPI",
+      operacion: "mean",
+      fuente: servicePackage.fuentesDatos[0],
+    };
+    setConfig({ ...config, kpis: [...config.kpis, newKPI] });
+  };
+
+  const updateKPI = (id: string, updates: Partial<KPIDefinition>) => {
+    if (!config) return;
+    setConfig({
+      ...config,
+      kpis: config.kpis.map((kpi) => (kpi.id === id ? { ...kpi, ...updates } : kpi)),
+    });
+  };
+
+  const deleteKPI = (id: string) => {
+    if (!config) return;
+    setConfig({
+      ...config,
+      kpis: config.kpis.filter((kpi) => kpi.id !== id),
+    });
+  };
+
+  const addRow = () => {
+    if (!config || !servicePackage) return;
+    if (config.filas.length >= servicePackage.maxFilas) {
+      alert(`Límite de filas alcanzado (${servicePackage.maxFilas})`);
+      return;
+    }
+    const newRow: DashboardRow = {
+      id: crypto.randomUUID(),
+      orden: config.filas.length + 1,
+      graficos: [],
+    };
+    setConfig({ ...config, filas: [...config.filas, newRow] });
+  };
+
+  const deleteRow = (id: string) => {
+    if (!config) return;
+    const filtered = config.filas.filter((row) => row.id !== id);
+    const reordered = filtered.map((row, index) => ({ ...row, orden: index + 1 }));
+    setConfig({ ...config, filas: reordered });
+  };
+
+  const addChartToRow = (rowId: string) => {
+    if (!config || !servicePackage) return;
+    const row = config.filas.find((r) => r.id === rowId);
+    if (!row) return;
+    if (row.graficos.length >= servicePackage.maxGraficosPorFila) {
+      alert(`Límite de gráficos por fila alcanzado (${servicePackage.maxGraficosPorFila})`);
+      return;
+    }
+    const newChart: ChartDefinition = {
+      id: crypto.randomUUID(),
+      tipo: servicePackage.graficosPermitidos[0],
+      titulo: "Nuevo Gráfico",
+      fuente: servicePackage.fuentesDatos[0],
+      columnas: 6,
+    };
+    setConfig({
+      ...config,
+      filas: config.filas.map((r) =>
+        r.id === rowId ? { ...r, graficos: [...r.graficos, newChart] } : r
+      ),
+    });
+  };
+
+  const updateChart = (rowId: string, chartId: string, updates: Partial<ChartDefinition>) => {
+    if (!config) return;
+    setConfig({
+      ...config,
+      filas: config.filas.map((row) =>
+        row.id === rowId
+          ? {
+              ...row,
+              graficos: row.graficos.map((chart) =>
+                chart.id === chartId ? { ...chart, ...updates } : chart
+              ),
+            }
+          : row
+      ),
+    });
+  };
+
+  const deleteChart = (rowId: string, chartId: string) => {
+    if (!config) return;
+    setConfig({
+      ...config,
+      filas: config.filas.map((row) =>
+        row.id === rowId
+          ? { ...row, graficos: row.graficos.filter((c) => c.id !== chartId) }
+          : row
+      ),
+    });
+  };
+
+  const handleSave = () => {
+    if (!config) return;
+    setIsLoading(true);
+    try {
+      const tempConfig: ReportConfiguration = {
+        ...config,
+        id: crypto.randomUUID(),
+        fechaCreacion: new Date().toISOString(),
+        fechaActualizacion: new Date().toISOString(),
+      };
+      const validation = reportConfigStorage.validateConfiguration(tempConfig, company.id);
+      if (!validation.valid) {
+        setValidationErrors(validation.errors);
+        setIsLoading(false);
+        return;
+      }
+      reportConfigStorage.createConfiguration(config);
+      setValidationErrors([]);
+      setOpen(false);
+      onSaved?.();
+    } catch (error) {
+      console.error("Error guardando configuración:", error);
+      setValidationErrors(["Error al guardar la configuración"]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          <LayoutDashboard className="h-4 w-4 mr-2" />
+          Configurar Reporte
+        </Button>
+      </DialogTrigger>
+      {config && (
+        <DialogContent className="max-w-[95vw] sm:max-w-[90vw] lg:max-w-6xl max-h-[90vh] overflow-hidden">
+        <DialogHeader>
+          <DialogTitle>Configurar Reporte - {company.nombre}</DialogTitle>
+          <DialogDescription>
+            Personaliza los KPIs y gráficos del dashboard para esta empresa
+          </DialogDescription>
+        </DialogHeader>
+
+        <ScrollArea className="h-[50vh] md:h-[60vh] lg:h-[600px] pr-4">
+          <div className="space-y-6 py-4">
+            {!servicePackage && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  Esta empresa no tiene un paquete de servicio asignado. Por favor, asigna un
+                  paquete primero.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {validationErrors.length > 0 && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  <ul className="list-disc pl-4">
+                    {validationErrors.map((error, i) => (
+                      <li key={i}>{error}</li>
+                    ))}
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {servicePackage && (
+              <>
+                {/* Plantillas */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Cargar desde Plantilla</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Select onValueChange={loadTemplate}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Seleccionar plantilla..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {templates.map((template) => (
+                          <SelectItem key={template.id} value={template.id}>
+                            <div className="flex items-center gap-2">
+                              <FileText className="h-4 w-4" />
+                              <span>{template.nombre}</span>
+                              <Badge variant="outline" className="ml-2">
+                                {template.categoria}
+                              </Badge>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </CardContent>
+                </Card>
+
+                {/* KPIs */}
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-sm">
+                        KPIs ({config.kpis.length}/{servicePackage.maxKPIs})
+                      </CardTitle>
+                      <Button size="sm" onClick={addKPI}>
+                        <Plus className="h-4 w-4 md:mr-1" />
+                        <span className="hidden md:inline">Agregar KPI</span>
+                        <span className="md:hidden">KPI</span>
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {config.kpis.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-4">
+                        No hay KPIs configurados
+                      </p>
+                    ) : (
+                      config.kpis.map((kpi) => (
+                        <div
+                          key={kpi.id}
+                          className="border rounded-lg p-2 sm:p-3 space-y-2 hover:bg-muted/50"
+                        >
+                          <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
+                            <div className="col-span-1 md:col-span-5">
+                              <Label className="text-xs">Nombre</Label>
+                              <Input
+                                value={kpi.nombre}
+                                onChange={(e) =>
+                                  updateKPI(kpi.id, { nombre: e.target.value })
+                                }
+                                placeholder="Nombre del KPI"
+                                className="h-8"
+                              />
+                            </div>
+                            <div className="col-span-1 md:col-span-3">
+                              <Label className="text-xs">Operación</Label>
+                              <Select
+                                value={kpi.operacion}
+                                onValueChange={(value) =>
+                                  updateKPI(kpi.id, { operacion: value as KPIOperation })
+                                }
+                              >
+                                <SelectTrigger className="h-8">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {["mean", "sum", "count", "max", "min"].map((op) => (
+                                    <SelectItem key={op} value={op}>
+                                      {op}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="col-span-1 md:col-span-3">
+                              <Label className="text-xs">Fuente</Label>
+                              <Select
+                                value={kpi.fuente}
+                                onValueChange={(value) =>
+                                  updateKPI(kpi.id, { fuente: value as DataSource })
+                                }
+                              >
+                                <SelectTrigger className="h-8">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {servicePackage.fuentesDatos.map((fuente) => (
+                                    <SelectItem key={fuente} value={fuente}>
+                                      {fuente}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="col-span-1 md:col-span-1 flex items-end">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => deleteKPI(kpi.id)}
+                                className="h-8 w-8 p-0"
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Filas y Gráficos */}
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-sm">
+                        Dashboard ({config.filas.length}/{servicePackage.maxFilas} filas)
+                      </CardTitle>
+                      <Button size="sm" onClick={addRow}>
+                        <Plus className="h-4 w-4 md:mr-1" />
+                        <span className="hidden md:inline">Agregar Fila</span>
+                        <span className="md:hidden">Fila</span>
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {config.filas.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-4">
+                        No hay filas configuradas
+                      </p>
+                    ) : (
+                      config.filas.map((row) => (
+                        <div key={row.id} className="border rounded-lg p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <GripVertical className="h-4 w-4 text-muted-foreground" />
+                              <span className="font-medium text-sm">Fila {row.orden}</span>
+                              <Badge variant="outline" className="text-xs">
+                                {row.graficos.length}/{servicePackage.maxGraficosPorFila}{" "}
+                                gráficos
+                              </Badge>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button size="sm" onClick={() => addChartToRow(row.id)}>
+                                <Plus className="h-4 w-4 md:mr-1" />
+                                <span className="hidden md:inline">Gráfico</span>
+                                <span className="md:hidden">+</span>
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => deleteRow(row.id)}
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-3 pl-2 sm:pl-6">
+                            {row.graficos.map((chart) => (
+                              <div
+                                key={chart.id}
+                                className="border rounded p-2 sm:p-3 bg-muted/30 space-y-2"
+                              >
+                                <div className="grid grid-cols-1 sm:grid-cols-6 lg:grid-cols-12 gap-2">
+                                  <div className="col-span-1 sm:col-span-6 lg:col-span-4">
+                                    <Label className="text-xs">Título</Label>
+                                    <Input
+                                      value={chart.titulo}
+                                      onChange={(e) =>
+                                        updateChart(row.id, chart.id, {
+                                          titulo: e.target.value,
+                                        })
+                                      }
+                                      className="h-8"
+                                    />
+                                  </div>
+                                  <div className="col-span-1 sm:col-span-3 lg:col-span-3">
+                                    <Label className="text-xs">Tipo</Label>
+                                    <Select
+                                      value={chart.tipo}
+                                      onValueChange={(value) =>
+                                        updateChart(row.id, chart.id, {
+                                          tipo: value as ChartType,
+                                        })
+                                      }
+                                    >
+                                      <SelectTrigger className="h-8">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {servicePackage.graficosPermitidos.map((tipo) => (
+                                          <SelectItem key={tipo} value={tipo}>
+                                            {tipo}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div className="col-span-1 sm:col-span-3 lg:col-span-3">
+                                    <Label className="text-xs">Fuente</Label>
+                                    <Select
+                                      value={chart.fuente}
+                                      onValueChange={(value) =>
+                                        updateChart(row.id, chart.id, {
+                                          fuente: value as DataSource,
+                                        })
+                                      }
+                                    >
+                                      <SelectTrigger className="h-8">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {servicePackage.fuentesDatos.map((fuente) => (
+                                          <SelectItem key={fuente} value={fuente}>
+                                            {fuente}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div className="col-span-1 sm:col-span-3 lg:col-span-1">
+                                    <Label className="text-xs">Cols</Label>
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      max={12}
+                                      value={chart.columnas}
+                                      onChange={(e) =>
+                                        updateChart(row.id, chart.id, {
+                                          columnas: parseInt(e.target.value) as any,
+                                        })
+                                      }
+                                      className="h-8"
+                                    />
+                                  </div>
+                                  <div className="col-span-1 sm:col-span-3 lg:col-span-1 flex items-end">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => deleteChart(row.id, chart.id)}
+                                      className="h-8 w-8 p-0"
+                                    >
+                                      <Trash2 className="h-4 w-4 text-destructive" />
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            )}
+          </div>
+        </ScrollArea>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={isLoading}>
+            Cancelar
+          </Button>
+          <Button onClick={handleSave} disabled={!servicePackage || isLoading}>
+            <Save className="h-4 w-4 mr-2" />
+            {isLoading ? "Guardando..." : "Guardar Configuración"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+      )}
+    </Dialog>
+  );
+}

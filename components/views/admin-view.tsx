@@ -3,13 +3,14 @@
 import { useEffect, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Shield, Plus, Building2, CheckCircle, Target, DollarSign } from "lucide-react"
+import { Shield, Plus, Building2, CheckCircle, Target, DollarSign, Database } from "lucide-react"
 import { CompaniesStorage } from "@/lib/companies-storage"
 import { AdminKPICard } from "@/components/admin/admin-kpi-card"
 import { CompaniesTable } from "@/components/admin/companies-table"
 import { CreateCompanyModal } from "@/components/admin/create-company-modal"
 import { DeleteCompanyDialog } from "@/components/admin/delete-company-dialog"
 import { CompanyDetailModal } from "@/components/admin/company-detail-modal"
+import { initDemoData } from "@/lib/init-demo-data"
 import type { Company } from "@/types/company"
 
 export function AdminView() {
@@ -54,6 +55,23 @@ export function AdminView() {
     setSelectedCompanyId(null)
   }
 
+  const handleConfigChange = () => {
+    // Recargar empresas si es necesario
+    const loadedCompanies = CompaniesStorage.getAll()
+    setCompanies(loadedCompanies)
+  }
+
+  const handleInitDemoData = () => {
+    try {
+      initDemoData()
+      alert("Datos de demostración inicializados correctamente. Ahora todas las empresas tienen paquetes y configuraciones de reportes asignadas.")
+      handleConfigChange()
+    } catch (error) {
+      console.error("Error inicializando datos:", error)
+      alert("Error al inicializar datos de demostración")
+    }
+  }
+
   const totalCompanies = companies.length
   const activeCompanies = companies.filter((c) => c.estado === "activa").length
   const totalCampaigns = companies.reduce((sum, c) => sum + (c.totalCampañas || 0), 0)
@@ -86,10 +104,16 @@ export function AdminView() {
           <Shield className="h-6 w-6 text-amber-600" />
           <h2 className="text-2xl font-bold">Gestión de Empresas</h2>
         </div>
-        <Button onClick={() => setIsCreateModalOpen(true)} className="bg-amber-600 hover:bg-amber-700">
-          <Plus className="h-4 w-4 mr-2" />
-          Nueva Empresa
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleInitDemoData}>
+            <Database className="h-4 w-4 mr-2" />
+            Inicializar Datos Demo
+          </Button>
+          <Button onClick={() => setIsCreateModalOpen(true)} className="bg-amber-600 hover:bg-amber-700">
+            <Plus className="h-4 w-4 mr-2" />
+            Nueva Empresa
+          </Button>
+        </div>
       </div>
 
       {/* KPI Cards */}
@@ -111,7 +135,12 @@ export function AdminView() {
           <CardTitle>Empresas Clientes</CardTitle>
         </CardHeader>
         <CardContent>
-          <CompaniesTable companies={companies} onDelete={handleDeleteClick} onRowClick={handleRowClick} />
+          <CompaniesTable
+            companies={companies}
+            onDelete={handleDeleteClick}
+            onRowClick={handleRowClick}
+            onConfigChange={handleConfigChange}
+          />
         </CardContent>
       </Card>
 

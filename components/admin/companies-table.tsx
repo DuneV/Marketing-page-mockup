@@ -3,11 +3,14 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Trash2 } from "lucide-react"
 import type { Company } from "@/types/company"
+import { AssignServiceModal } from "./assign-service-modal"
+import { ReportConfigBuilderSimple } from "./report-config-builder-simple"
 
 interface CompaniesTableProps {
   companies: Company[]
   onDelete: (companyId: string) => void
   onRowClick: (companyId: string) => void
+  onConfigChange?: () => void
 }
 
 const sizeColors = {
@@ -17,7 +20,7 @@ const sizeColors = {
   enterprise: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100",
 }
 
-export function CompaniesTable({ companies, onDelete, onRowClick }: CompaniesTableProps) {
+export function CompaniesTable({ companies, onDelete, onRowClick, onConfigChange }: CompaniesTableProps) {
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("es-ES", {
       year: "numeric",
@@ -37,7 +40,7 @@ export function CompaniesTable({ companies, onDelete, onRowClick }: CompaniesTab
             <TableHead>Productos</TableHead>
             <TableHead>Estado</TableHead>
             <TableHead>Fecha Creación</TableHead>
-            <TableHead className="text-right">Acciones</TableHead>
+            <TableHead className="text-right w-[400px]">Acciones</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -79,18 +82,22 @@ export function CompaniesTable({ companies, onDelete, onRowClick }: CompaniesTab
                   </Badge>
                 </TableCell>
                 <TableCell>{formatDate(company.fechaCreacion)}</TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onDelete(company.id)
-                    }}
-                    className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                <TableCell className="text-right w-[400px]">
+                  <div className="flex items-center justify-end gap-2 flex-nowrap" onClick={(e) => e.stopPropagation()}>
+                    <AssignServiceModal company={company} onAssigned={onConfigChange} />
+                    <ReportConfigBuilderSimple company={company} onSaved={onConfigChange} />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onDelete(company.id)
+                      }}
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))
