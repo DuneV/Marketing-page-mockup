@@ -26,9 +26,10 @@ export type ViewType = "overview" | "campaigns" | "settings" | "admin" | "people
 
 interface AppSidebarProps {
   userType: "employee" | "company"
+  isAdmin?: boolean
 }
 
-export function AppSidebar({ userType }: AppSidebarProps) {
+export function AppSidebar({ userType, isAdmin = false }: AppSidebarProps) {
   const router = useRouter()
   const pathname = usePathname()
   const { setOpenMobile } = useSidebar()
@@ -121,9 +122,9 @@ export function AppSidebar({ userType }: AppSidebarProps) {
           </SidebarMenu>
         </SidebarGroup>
 
-        {userType === "company" && (
+        {userType === "employee" && isAdmin && (
           <SidebarGroup>
-            <SidebarGroupLabel>Admin</SidebarGroupLabel>
+            <SidebarGroupLabel>Administración</SidebarGroupLabel>
             <SidebarMenu>
               {adminMenuItems.map((item) => (
                 <SidebarMenuItem key={item.href}>

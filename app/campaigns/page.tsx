@@ -10,6 +10,7 @@ export default function CampaignsPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [userType, setUserType] = useState<"employee" | "company">("company")
+  const [isAdmin, setIsAdmin] = useState(false)
 
   useEffect(() => {
     const user = localStorage.getItem("user")
@@ -20,6 +21,7 @@ export default function CampaignsPage() {
         if (userData.authenticated) {
           setIsAuthenticated(true)
           setUserType(userData.userType || "company")
+          setIsAdmin(userData.isAdmin || false)
           setIsLoading(false)
           return
         }
@@ -47,7 +49,7 @@ export default function CampaignsPage() {
   }
 
   return (
-    <DashboardLayout userType={userType}>
+    <DashboardLayout userType={userType} isAdmin={isAdmin}>
       <CampaignsView />
     </DashboardLayout>
   )

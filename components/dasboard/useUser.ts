@@ -6,6 +6,7 @@ export type UserRole = "company" | "employee"
 
 export function useUser() {
   const [userType, setUserType] = useState<UserRole | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -18,12 +19,14 @@ export function useUser() {
     try {
       const user = JSON.parse(stored)
       setUserType(user.userType)
+      setIsAdmin(user.isAdmin || false)
     } catch {
       setUserType(null)
+      setIsAdmin(false)
     }
 
     setLoading(false)
   }, [])
 
-  return { userType, loading }
+  return { userType, loading, isAdmin }
 }

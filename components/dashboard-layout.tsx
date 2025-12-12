@@ -15,6 +15,7 @@ import {
 
 interface DashboardLayoutProps {
   userType: "employee" | "company"
+  isAdmin?: boolean
   children: ReactNode
 }
 
@@ -27,6 +28,7 @@ const pathTitles: Record<string, string> = {
 
 export function DashboardLayout({
   userType,
+  isAdmin = false,
   children,
 }: DashboardLayoutProps) {
   const pathname = usePathname()
@@ -34,7 +36,7 @@ export function DashboardLayout({
 
   return (
     <SidebarProvider>
-      <AppSidebar userType={userType} />
+      <AppSidebar userType={userType} isAdmin={isAdmin} />
       <SidebarInset>
         <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-2 border-b bg-background px-4">
           <SidebarTrigger className="-ml-1" />

@@ -9,7 +9,8 @@ export default function AdminPage() {
   const router = useRouter()
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
-  const [userType, setUserType] = useState<"employee" | "company">("company")
+  const [userType, setUserType] = useState<"employee" | "company">("employee")
+  const [isAdmin, setIsAdmin] = useState(false)
 
   useEffect(() => {
     const user = localStorage.getItem("user")
@@ -19,10 +20,11 @@ export default function AdminPage() {
         const userData = JSON.parse(user)
         if (userData.authenticated) {
           setIsAuthenticated(true)
-          setUserType(userData.userType || "company")
+          setUserType(userData.userType || "employee")
+          setIsAdmin(userData.isAdmin || false)
 
-          // Only company users can access admin
-          if (userData.userType !== "company") {
+          // Only employee users with isAdmin can access admin
+          if (userData.userType !== "employee" || !userData.isAdmin) {
             router.push("/dashboard")
             return
           }
@@ -54,7 +56,7 @@ export default function AdminPage() {
   }
 
   return (
-    <DashboardLayout userType={userType}>
+    <DashboardLayout userType={userType} isAdmin={isAdmin}>
       <AdminView />
     </DashboardLayout>
   )

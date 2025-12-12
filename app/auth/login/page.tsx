@@ -8,19 +8,20 @@ import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { AlertCircle } from "lucide-react"
+import { AlertCircle, Shield } from "lucide-react"
 
 export default function LoginPage() {
   const router = useRouter()
-  const [userType, setUserType] = useState<"employee" | "company">("employee")
+  const [userType, setUserType] = useState<"employee" | "company" | "admin">("employee")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
 
   const demoCredentials = {
-    employee: { email: "empleado@bavaria.com", password: "password123" },
-    company: { email: "empresa@bavaria.com", password: "password123" },
+    employee: { email: "empleado@bavaria.com", password: "password123", isAdmin: false },
+    company: { email: "empresa@bavaria.com", password: "password123", isAdmin: false },
+    admin: { email: "admin@bavaria.com", password: "password123", isAdmin: true },
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -30,7 +31,19 @@ export default function LoginPage() {
 
     try {
       if (email && password.length >= 6) {
-        localStorage.setItem("user", JSON.stringify({ email, authenticated: true, userType, timestamp: Date.now() }))
+        const isAdmin = userType === "admin"
+        const actualUserType = userType === "admin" ? "employee" : userType
+
+        localStorage.setItem(
+          "user",
+          JSON.stringify({
+            email,
+            authenticated: true,
+            userType: actualUserType,
+            isAdmin,
+            timestamp: Date.now(),
+          })
+        )
 
         await new Promise((resolve) => setTimeout(resolve, 100))
 
@@ -67,7 +80,7 @@ export default function LoginPage() {
             <p className="text-sm text-slate-600 dark:text-slate-400">Inicia sesión en tu cuenta</p>
           </div>
 
-          <div className="mb-6 flex gap-3">
+          <div className="mb-6 flex gap-2">
             <button
               type="button"
               onClick={() => setUserType("employee")}
@@ -89,6 +102,18 @@ export default function LoginPage() {
               }`}
             >
               Empresa
+            </button>
+            <button
+              type="button"
+              onClick={() => setUserType("admin")}
+              className={`flex-1 py-2 px-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-1.5 ${
+                userType === "admin"
+                  ? "bg-amber-700 text-white"
+                  : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+              }`}
+            >
+              <Shield className="h-3.5 w-3.5" />
+              Admin
             </button>
           </div>
 
@@ -135,7 +160,11 @@ export default function LoginPage() {
               type="submit"
               disabled={loading}
               className={`w-full text-white font-semibold h-10 rounded-lg transition-all ${
-                userType === "employee" ? "bg-amber-600 hover:bg-amber-700" : "bg-red-600 hover:bg-red-700"
+                userType === "company"
+                  ? "bg-red-600 hover:bg-red-700"
+                  : userType === "admin"
+                    ? "bg-amber-700 hover:bg-amber-800"
+                    : "bg-amber-600 hover:bg-amber-700"
               }`}
             >
               {loading ? "Iniciando sesión..." : "Iniciar Sesión"}
@@ -161,7 +190,7 @@ export default function LoginPage() {
         <div className="mt-8 text-center text-xs text-slate-600 dark:text-slate-400">
           <p>© 2025 Bavaria Marketing. Todos los derechos reservados.</p>
           <p className="mt-2 text-slate-500 dark:text-slate-500">
-            Demo - Empleado: empleado@bavaria.com | Empresa: empresa@bavaria.com
+            Demo - Empleado: empleado@bavaria.com | Empresa: empresa@bavaria.com | Admin: admin@bavaria.com
           </p>
         </div>
       </div>
