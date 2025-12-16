@@ -10,6 +10,10 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { AlertCircle, Shield } from "lucide-react"
 
+import { signInWithEmailAndPassword } from "firebase/auth"
+import { auth, db } from "@/lib/firebase/client"
+import { doc, getDoc } from "firebase/firestore"
+
 export default function LoginPage() {
   const router = useRouter()
   const [userType, setUserType] = useState<"employee" | "company" | "admin">("employee")
@@ -18,10 +22,11 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
 
+  // Solo para rellenar rápido (NO define permisos)
   const demoCredentials = {
-    employee: { email: "empleado@bavaria.com", password: "password123", isAdmin: false },
-    company: { email: "empresa@bavaria.com", password: "password123", isAdmin: false },
-    admin: { email: "admin@bavaria.com", password: "password123", isAdmin: true },
+    employee: { email: "empleado@bavaria.com", password: "password123" },
+    company: { email: "empresa@bavaria.com", password: "password123" },
+    admin: { email: "admin@bavaria.com", password: "password123" },
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -30,29 +35,24 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      if (email && password.length >= 6) {
-        const isAdmin = userType === "admin"
-        const actualUserType = userType === "admin" ? "employee" : userType
+      const cred = await signInWithEmailAndPassword(auth, email, password)
 
-        localStorage.setItem(
-          "user",
-          JSON.stringify({
-            email,
-            authenticated: true,
-            userType: actualUserType,
-            isAdmin,
-            timestamp: Date.now(),
-          })
-        )
+      // Lee rol desde Firestore: users/{uid}.role
+      const snap = await getDoc(doc(db, "users", cred.user.uid))
+      const role = snap.exists() ? (snap.data().role as "admin" | "company" | "employee") : "employee"
 
-        await new Promise((resolve) => setTimeout(resolve, 100))
-
-        router.push("/dashboard")
+      if (role === "admin") router.push("/admin")
+      else if (role === "company") router.push("/company")
+      else router.push("/dashboard")
+    } catch (err: any) {
+      const code = err?.code ?? ""
+      if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
+        setError("Credenciales incorrectas")
+      } else if (code === "auth/user-not-found") {
+        setError("Usuario no existe")
       } else {
-        setError("Por favor, verifica tu email y contraseña")
+        setError("Error en el inicio de sesión")
       }
-    } catch (err) {
-      setError("Error en el inicio de sesión")
     } finally {
       setLoading(false)
     }
@@ -67,13 +67,11 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
       <div className="w-full max-w-md">
-        {/* Logo Section */}
         <div className="text-center mb-8">
           <h1 className="text-5xl font-bold text-amber-600 dark:text-amber-500 mb-2">Bavaria</h1>
           <p className="text-slate-600 dark:text-slate-400">Plataforma de Marketing</p>
         </div>
 
-        {/* Login Card */}
         <Card className="border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg p-8 rounded-xl">
           <div className="mb-6">
             <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-50 mb-2">Bienvenido</h2>
@@ -117,7 +115,6 @@ export default function LoginPage() {
             </button>
           </div>
 
-          {/* Error Alert */}
           {error && (
             <div className="mb-6 p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 rounded-lg flex gap-3">
               <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />

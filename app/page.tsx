@@ -2,21 +2,20 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
+import { onAuthStateChanged } from "firebase/auth"
+import { auth } from "@/lib/firebase/client"
 
 export default function Page() {
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    const user = localStorage.getItem("user")
+    const unsub = onAuthStateChanged(auth, (user) => {
+      router.replace(user ? "/dashboard" : "/auth/login")
+      setIsLoading(false)
+    })
 
-    if (!user) {
-      router.push("/auth/login")
-    } else {
-      router.push("/dashboard")
-    }
-
-    setIsLoading(false)
+    return () => unsub()
   }, [router])
 
   if (isLoading) {
