@@ -1,39 +1,45 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { CampaignsView } from "@/components/views/campaigns-view"
+import { useAuthRole } from "@/lib/auth/useAuthRole"
+import { Button } from "@/components/ui/button"
 
 export default function CampaignsPage() {
   const router = useRouter()
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
-  const [isLoading, setIsLoading] = useState(true)
-  const [userType, setUserType] = useState<"employee" | "company">("company")
-  const [isAdmin, setIsAdmin] = useState(false)
+  const { user, role, loading, error } = useAuthRole()
 
   useEffect(() => {
-    const user = localStorage.getItem("user")
-
-    if (user) {
-      try {
-        const userData = JSON.parse(user)
-        if (userData.authenticated) {
-          setIsAuthenticated(true)
-          setUserType(userData.userType || "company")
-          setIsAdmin(userData.isAdmin || false)
-          setIsLoading(false)
-          return
-        }
-      } catch (e) {
-        console.log("Error parsing user data")
-      }
+    if (!loading && !user) {
+      router.push("/auth/login")
     }
+  }, [loading, user, router])
 
-    router.push("/auth/login")
-  }, [router])
+  // Mostrar error si existe
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="text-center max-w-md p-6">
+          <h2 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-4">
+            Error al cargar campañas
+          </h2>
+          <p className="text-slate-600 dark:text-slate-400 mb-6">
+            {error.message}
+          </p>
+          <Button
+            onClick={() => router.push("/auth/login")}
+            className="bg-amber-600 hover:bg-amber-700 text-white"
+          >
+            Volver al Login
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
-  if (isLoading) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -44,9 +50,13 @@ export default function CampaignsPage() {
     )
   }
 
-  if (!isAuthenticated) {
+  if (!user) {
     return null
   }
+
+  // Determinar userType basado en el rol
+  const userType: "employee" | "company" = role === "company" ? "company" : "employee"
+  const isAdmin = role === "admin"
 
   return (
     <DashboardLayout userType={userType} isAdmin={isAdmin}>

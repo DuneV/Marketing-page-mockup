@@ -11,8 +11,7 @@ import { Label } from "@/components/ui/label"
 import { AlertCircle, Shield } from "lucide-react"
 
 import { signInWithEmailAndPassword } from "firebase/auth"
-import { auth, db } from "@/lib/firebase/client"
-import { doc, getDoc } from "firebase/firestore"
+import { auth } from "@/lib/firebase/client"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -35,21 +34,23 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const cred = await signInWithEmailAndPassword(auth, email, password)
+      // Solo autenticar, NO leer Firestore aquí
+      await signInWithEmailAndPassword(auth, email, password)
 
-      // Lee rol desde Firestore: users/{uid}.role
-      const snap = await getDoc(doc(db, "users", cred.user.uid))
-      const role = snap.exists() ? (snap.data().role as "admin" | "company" | "employee") : "employee"
+      console.log("[Login] Autenticación exitosa, redirigiendo...")
 
-      if (role === "admin") router.push("/admin")
-      else if (role === "company") router.push("/company")
-      else router.push("/dashboard")
+      // Redirigir a una página general que determinará el destino final
+      router.push("/app/redirect")
     } catch (err: any) {
       const code = err?.code ?? ""
+      console.error("[Login] Error en autenticación:", code, err)
+
       if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
         setError("Credenciales incorrectas")
       } else if (code === "auth/user-not-found") {
         setError("Usuario no existe")
+      } else if (code.includes("cors") || code.includes("firestore")) {
+        setError("Error de conexión con la base de datos. Intenta nuevamente.")
       } else {
         setError("Error en el inicio de sesión")
       }
