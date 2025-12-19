@@ -90,6 +90,11 @@ export function AppSidebar({ userType, isAdmin = false }: AppSidebarProps) {
       icon: Users,
       href: "/admin/users",
     },
+    {
+      title: "Campañas",
+      icon: Target,
+      href: "/admin/campaigns",
+    },
   ]
 
   return (

@@ -25,6 +25,7 @@ const pathTitles: Record<string, string> = {
   "/settings": "Configuración",
   "/admin/companies": "Admin Panel - Empresas",
   "/admin/users": "Admin Panel - Usuarios",
+  "/admin/campaigns": "Admin Panel - Campañas",
 }
 
 export function DashboardLayout({
