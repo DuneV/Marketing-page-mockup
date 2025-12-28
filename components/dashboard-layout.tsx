@@ -1,3 +1,5 @@
+// components/dashboard-layout.tsx
+
 "use client"
 
 import { ReactNode } from "react"
@@ -21,10 +23,13 @@ interface DashboardLayoutProps {
 
 const pathTitles: Record<string, string> = {
   "/dashboard": "Dashboard",
-  "/campaigns": "Campañas",
-  "/settings": "Configuración",
+  "/dashboard/campaigns": "Campañas",
+  "/dashboard/settings": "Configuración",
   "/admin/companies": "Admin Panel - Empresas",
   "/admin/users": "Admin Panel - Usuarios",
+  "/admin/dashboard": "Admin Panel - Dashboard",
+  "/admin/campaigns": "Admin Panel - Campañas",
+  "/admin/settings": "Admin Panel - Configuración"
 }
 
 export function DashboardLayout({
@@ -40,8 +45,6 @@ export function DashboardLayout({
       <AppSidebar userType={userType} isAdmin={isAdmin} />
       <SidebarInset>
         <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-2 border-b bg-background px-4">
-          <SidebarTrigger className="-ml-1" />
-          <Separator orientation="vertical" className="mr-2 h-4" />
           <Breadcrumb>
             <BreadcrumbList>
               <BreadcrumbItem>

@@ -3,6 +3,10 @@
 import { LayoutDashboard, Target, Settings, Shield, LogOut, User, ChevronUp, Users } from "lucide-react"
 import { useRouter, usePathname } from "next/navigation"
 import Link from "next/link"
+import { onAuthStateChanged } from "firebase/auth"
+import { useEffect, useState } from "react"
+import { signOut } from "firebase/auth"
+import { auth } from "@/lib/firebase/client"
 import {
   Sidebar,
   SidebarContent,
@@ -15,17 +19,10 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-
-export type ViewType = "overview" | "campaigns" | "settings" | "admin" | "people" | "company" | "employee"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 
 interface AppSidebarProps {
-  userType: "employee" | "company"
+  userType: "employee" | "company" // (si quieres, luego lo ampliamos)
   isAdmin?: boolean
 }
 
@@ -34,63 +31,46 @@ export function AppSidebar({ userType, isAdmin = false }: AppSidebarProps) {
   const pathname = usePathname()
   const { setOpenMobile } = useSidebar()
 
-  const handleLogout = () => {
-    localStorage.removeItem("user")
-    router.push("/auth/login")
+  const handleLogout = async () => {
+    await signOut(auth)
+    router.replace("/auth/login")
   }
 
-  const handleNavigation = () => {
-    // Close mobile sidebar after navigation
-    setOpenMobile(false)
-  }
+  const handleNavigation = () => setOpenMobile(false)
 
-  // Get user data from localStorage
-  const getUserData = () => {
-    if (typeof window !== "undefined") {
-      const user = localStorage.getItem("user")
-      if (user) {
-        const userData = JSON.parse(user)
-        return {
-          name: userData.name || "Usuario",
-          email: userData.email || "correo@gmail.com",
-        }
-      }
-    }
-    return { name: "Usuario", email: "correo@gmail.com" }
-  }
+  const [userData, setUserData] = useState({ name: "Usuario", email: "correo@gmail.com" })
 
-  const userData = getUserData()
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUserData({
+        name: u?.displayName ?? "Usuario",
+        email: u?.email ?? "correo@gmail.com",
+      })
+    })
+    return () => unsub()
+  }, [])
+
+  const dashboardHref = isAdmin ? "/admin/dashboard" : "/dashboard"
+  const campaignsHref = isAdmin ? "/admin/campaigns" : "/dashboard/campaigns"
+  const settingsHref = isAdmin ? "/admin/settings" : "/dashboard/settings"
+
+  const isActiveRoute = (href: string) => {
+    if (href === dashboardHref) return pathname === dashboardHref
+    return pathname === href || pathname.startsWith(href + "/")
+  }
 
   const generalMenuItems = [
-    {
-      title: "Dashboard",
-      icon: LayoutDashboard,
-      href: "/dashboard",
-    },
-    {
-      title: "Campañas",
-      icon: Target,
-      href: "/campaigns",
-    },
-    {
-      title: "Configuración",
-      icon: Settings,
-      href: "/settings",
-    },
+    { title: "Dashboard", icon: LayoutDashboard, href: dashboardHref },
+    { title: "Campañas", icon: Target, href: campaignsHref },
+    { title: "Configuración", icon: Settings, href: settingsHref },
   ]
 
   const adminMenuItems = [
-    {
-      title: "Empresas",
-      icon: Shield,
-      href: "/admin/companies",
-    },
-    {
-      title: "Usuarios",
-      icon: Users,
-      href: "/admin/users",
-    },
+    { title: "Empresas", icon: Shield, href: "/admin/companies" },
+    { title: "Usuarios", icon: Users, href: "/admin/users" },
   ]
+
+  const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/")
 
   return (
     <Sidebar collapsible="icon">
@@ -112,11 +92,7 @@ export function AppSidebar({ userType, isAdmin = false }: AppSidebarProps) {
           <SidebarMenu>
             {generalMenuItems.map((item) => (
               <SidebarMenuItem key={item.href}>
-                <SidebarMenuButton
-                  asChild
-                  isActive={pathname === item.href}
-                  tooltip={item.title}
-                >
+                <SidebarMenuButton asChild isActive={isActiveRoute(item.href)} tooltip={item.title}>
                   <Link href={item.href} onClick={handleNavigation}>
                     <item.icon className="h-4 w-4" />
                     <span>{item.title}</span>
@@ -127,17 +103,13 @@ export function AppSidebar({ userType, isAdmin = false }: AppSidebarProps) {
           </SidebarMenu>
         </SidebarGroup>
 
-        {userType === "employee" && isAdmin && (
+        {isAdmin && (
           <SidebarGroup>
             <SidebarGroupLabel>Administración</SidebarGroupLabel>
             <SidebarMenu>
               {adminMenuItems.map((item) => (
                 <SidebarMenuItem key={item.href}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={pathname === item.href}
-                    tooltip={item.title}
-                  >
+                  <SidebarMenuButton asChild isActive={isActive(item.href)} tooltip={item.title}>
                     <Link href={item.href} onClick={handleNavigation}>
                       <item.icon className="h-4 w-4" />
                       <span>{item.title}</span>
@@ -169,6 +141,7 @@ export function AppSidebar({ userType, isAdmin = false }: AppSidebarProps) {
                   <ChevronUp className="ml-auto h-4 w-4" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
+
               <DropdownMenuContent
                 className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
                 side="top"

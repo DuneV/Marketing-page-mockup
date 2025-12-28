@@ -1,3 +1,4 @@
+// lib/auth/useAuthRole.ts
 "use client"
 
 import { useEffect, useState } from "react"
@@ -26,7 +27,8 @@ export function useAuthRole() {
         const snap = await getDoc(doc(db, "users", u.uid))
         const r = snap.exists() ? (snap.data().role as Role) : null
         setRole(r ?? null)
-      } catch {
+      } catch (e) {
+        console.error("useAuthRole error:", e)
         setRole(null)
       } finally {
         setLoading(false)

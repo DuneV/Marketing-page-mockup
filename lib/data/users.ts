@@ -1,3 +1,5 @@
+// lib/data/users.ts 
+
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore"
 import { db } from "@/lib/firebase/client"
 import { UserDocSchema, type UserDoc } from "@/lib/schemas/user"

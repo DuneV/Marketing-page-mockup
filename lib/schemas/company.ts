@@ -1,3 +1,5 @@
+// lib/schemas/company.ts
+
 import { z } from "zod"
 
 export const CompanyDocSchema = z.object({

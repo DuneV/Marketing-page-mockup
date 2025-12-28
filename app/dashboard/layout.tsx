@@ -1,24 +1,30 @@
+// app/dashboard/layout.tsx
 "use client"
 
-import { useEffect } from "react"
+import React, { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useAuthRole } from "@/lib/auth/useAuthRole"
 
-export default function DashboardLayoutGuard({ children }: { children: React.ReactNode }) {
+export default function DashboardGuardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const { user, role, loading } = useAuthRole()
 
   useEffect(() => {
     if (loading) return
-    if (!user) router.replace("/auth/login")
-    else if (role === "admin") router.replace("/admin")
-    else if (role === "company") router.replace("/company")
+
+    if (!user) {
+      router.replace("/auth/login")
+      return
+    }
+    
+    if (role !== "company" && role !== "admin") {
+      router.replace("/auth/login")
+    }
   }, [user, role, loading, router])
 
-  if (loading) return <div className="min-h-screen grid place-items-center">Cargando...</div>
+  if (loading) return <div className="min-h-screen flex items-center justify-center">Cargando...</div>
   if (!user) return null
-  
-  if (role !== "employee") return null
+  if (role !== "company" && role !== "admin") return null
 
   return <>{children}</>
 }

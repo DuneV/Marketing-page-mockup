@@ -1,3 +1,5 @@
+// app/components/views/admin-view.tsx
+
 "use client"
 
 import { useEffect, useState } from "react"

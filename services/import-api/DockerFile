@@ -1,0 +1,15 @@
+FROM node:20-slim
+
+WORKDIR /app
+COPY package.json package-lock.json* yarn.lock* ./
+RUN if [ -f yarn.lock ]; then yarn install --frozen-lockfile; else npm ci; fi
+
+COPY tsconfig.json ./
+COPY src ./src
+RUN if [ -f yarn.lock ]; then yarn build; else npm run build; fi
+
+ENV NODE_ENV=production
+ENV PORT=8080
+EXPOSE 8080
+
+CMD ["node", "dist/index.js"]

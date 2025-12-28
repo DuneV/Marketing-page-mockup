@@ -50,16 +50,19 @@ export default function Dashboard({ activeView, userType }: DashboardProps) {
         <>
           {/* Filters and Campaign Selection */}
           <section className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2">
-                <FiltersPanel onFiltersChange={setFilters} />
-              </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
+            <div className="lg:col-span-2 h-full [&>*]:h-full">
+              <FiltersPanel onFiltersChange={setFilters} />
+            </div>
+
+            <div className="h-full">
               <CampaignSelector />
             </div>
+          </div>
           </section>
 
           {/* KPI Cards */}
-          <section>
+          <section className="mt-8 mb-8">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {kpiData.map((kpi) => (
                 <KPICard key={kpi.label} {...kpi} />
