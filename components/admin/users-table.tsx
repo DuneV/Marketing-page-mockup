@@ -1,5 +1,6 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { Trash2, Users } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import type { User } from "@/types/user"
@@ -9,6 +10,18 @@ interface UsersTableProps {
   users: User[]
   onDelete: (userId: string) => void
   onCreateClick?: () => void
+}
+
+const roleLabels = {
+  admin: "Admin",
+  employee: "Empleado",
+  company: "Empresa",
+}
+
+const roleColors = {
+  admin: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-100",
+  employee: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100",
+  company: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100",
 }
 
 export function UsersTable({ users, onDelete, onCreateClick }: UsersTableProps) {
@@ -25,10 +38,11 @@ export function UsersTable({ users, onDelete, onCreateClick }: UsersTableProps) 
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[15%]">Usuario</TableHead>
-            <TableHead className="w-[20%]">Nombre</TableHead>
-            <TableHead className="w-[15%]">Cédula</TableHead>
-            <TableHead className="w-[20%]">Empresa/Campaña</TableHead>
+            <TableHead className="w-[12%]">Usuario</TableHead>
+            <TableHead className="w-[18%]">Nombre</TableHead>
+            <TableHead className="w-[10%]">Rol</TableHead>
+            <TableHead className="w-[12%]">Cédula</TableHead>
+            <TableHead className="w-[18%]">Empresa Asignada</TableHead>
             <TableHead className="w-[10%] text-center">Unidades</TableHead>
             <TableHead className="w-[12%]">Creación</TableHead>
             <TableHead className="w-[8%] text-right">Acciones</TableHead>
@@ -37,7 +51,7 @@ export function UsersTable({ users, onDelete, onCreateClick }: UsersTableProps) 
         <TableBody>
           {users.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={7} className="h-[400px] p-0">
+              <TableCell colSpan={8} className="h-[400px] p-0">
                 <EmptyState
                   icon={Users}
                   title="No hay usuarios registrados"
@@ -56,7 +70,7 @@ export function UsersTable({ users, onDelete, onCreateClick }: UsersTableProps) 
                 <TableCell className="font-medium">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="truncate max-w-[120px]">{user.username}</div>
+                      <div className="truncate max-w-[100px]">{user.username}</div>
                     </TooltipTrigger>
                     <TooltipContent>{user.username}</TooltipContent>
                   </Tooltip>
@@ -64,7 +78,7 @@ export function UsersTable({ users, onDelete, onCreateClick }: UsersTableProps) 
                 <TableCell>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="truncate max-w-[180px]">{user.nombre}</div>
+                      <div className="truncate max-w-[150px]">{user.nombre}</div>
                     </TooltipTrigger>
                     <TooltipContent>
                       <div>
@@ -74,19 +88,26 @@ export function UsersTable({ users, onDelete, onCreateClick }: UsersTableProps) 
                     </TooltipContent>
                   </Tooltip>
                 </TableCell>
+                <TableCell>
+                  <Badge variant="outline" className={roleColors[user.role]}>
+                    {roleLabels[user.role]}
+                  </Badge>
+                </TableCell>
                 <TableCell className="font-mono text-sm">{user.cedula}</TableCell>
                 <TableCell>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="truncate max-w-[150px]">{user.empresa_campaña_actual}</div>
+                      <div className="truncate max-w-[140px]">
+                        {user.empresaActualNombre || <span className="text-muted-foreground">Sin asignar</span>}
+                      </div>
                     </TooltipTrigger>
-                    <TooltipContent>{user.empresa_campaña_actual}</TooltipContent>
+                    <TooltipContent>{user.empresaActualNombre || "Sin empresa asignada"}</TooltipContent>
                   </Tooltip>
                 </TableCell>
                 <TableCell className="text-center font-medium">
-                  {user.unidades_productos.toLocaleString()}
+                  {(user.unidadesProductos || 0).toLocaleString()}
                 </TableCell>
-                <TableCell className="text-sm">{formatDate(user.fechaCreacion)}</TableCell>
+                <TableCell className="text-sm">{formatDate(user.createdAt)}</TableCell>
                 <TableCell className="text-right">
                   <Tooltip>
                     <TooltipTrigger asChild>

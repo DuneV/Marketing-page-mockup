@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Target, Plus, TrendingUp, DollarSign, BarChart3 } from "lucide-react"
@@ -17,9 +17,17 @@ import { AssignUserToCampaignModal } from "@/components/admin/assign-user-to-cam
 import { TableSkeleton } from "@/components/admin/table-skeleton"
 import { KPISkeleton } from "@/components/admin/kpi-skeleton"
 import { Skeleton } from "@/components/ui/skeleton"
+import { TableSearch, type FilterOption } from "@/components/admin/table-search"
 import { toast } from "sonner"
 import type { Campaign } from "@/types/campaign"
 import type { Company } from "@/types/company"
+
+const statusFilterOptions: FilterOption[] = [
+  { value: "planificacion", label: "Planificación" },
+  { value: "activa", label: "Activa" },
+  { value: "completada", label: "Completada" },
+  { value: "cancelada", label: "Cancelada" },
+]
 
 export function CampaignsAdminView() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
@@ -32,6 +40,8 @@ export function CampaignsAdminView() {
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false)
   const [assignCampaignId, setAssignCampaignId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [statusFilter, setStatusFilter] = useState("all")
 
   useEffect(() => {
     loadData()
@@ -125,7 +135,22 @@ export function CampaignsAdminView() {
     setAssignCampaignId(null)
   }
 
-  // KPI calculations
+  // Filtrado de campañas
+  const filteredCampaigns = useMemo(() => {
+    return campaigns.filter((campaign) => {
+      const matchesSearch =
+        searchQuery === "" ||
+        campaign.nombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        campaign.empresaNombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        campaign.usuarioResponsableNombre.toLowerCase().includes(searchQuery.toLowerCase())
+
+      const matchesStatus = statusFilter === "all" || campaign.estado === statusFilter
+
+      return matchesSearch && matchesStatus
+    })
+  }, [campaigns, searchQuery, statusFilter])
+
+  // KPI calculations (usando todos los datos, no los filtrados)
   const totalCampaigns = campaigns.length
   const activeCampaigns = campaigns.filter((c) => c.estado === "activa").length
   const totalBudget = campaigns.reduce((sum, c) => sum + (c.presupuesto || 0), 0)
@@ -224,11 +249,27 @@ export function CampaignsAdminView() {
       {/* Campaigns Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Campañas</CardTitle>
+          <CardTitle className="flex items-center justify-between">
+            <span>Campañas</span>
+            {filteredCampaigns.length !== campaigns.length && (
+              <span className="text-sm font-normal text-muted-foreground">
+                Mostrando {filteredCampaigns.length} de {campaigns.length}
+              </span>
+            )}
+          </CardTitle>
         </CardHeader>
         <CardContent>
+          <TableSearch
+            searchValue={searchQuery}
+            onSearchChange={setSearchQuery}
+            searchPlaceholder="Buscar por nombre, empresa o responsable..."
+            filterValue={statusFilter}
+            onFilterChange={setStatusFilter}
+            filterOptions={statusFilterOptions}
+            filterLabel="Estado"
+          />
           <CampaignsTable
-            campaigns={campaigns}
+            campaigns={filteredCampaigns}
             onEdit={handleEditClick}
             onDelete={handleDeleteClick}
             onRowClick={handleRowClick}

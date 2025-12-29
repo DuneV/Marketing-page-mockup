@@ -8,7 +8,12 @@ import {
   deleteDoc,
   query,
   orderBy,
+  limit,
+  startAfter,
+  getCountFromServer,
   serverTimestamp,
+  type QueryDocumentSnapshot,
+  type DocumentData,
 } from "firebase/firestore"
 import { db } from "@/lib/firebase/client"
 import { CompanyDocSchema } from "@/lib/schemas/company"
@@ -46,7 +51,7 @@ export async function createCompany(data: Omit<Company, "id" | "fechaCreacion">)
 }
 
 /**
- * Obtener una empresa por ID
+ * Obtener una empresa por ID (sin contraseña por seguridad)
  */
 export async function getCompany(companyId: string): Promise<Company | null> {
   const snap = await getDoc(doc(db, "companies", companyId))
@@ -61,7 +66,7 @@ export async function getCompany(companyId: string): Promise<Company | null> {
     productos: data.productos || [],
     cantidad: data.cantidad,
     username: data.username,
-    contraseña: data.contraseña,
+    contraseña: "••••••••", // Ocultar contraseña por seguridad
     estado: data.estado,
     fechaCreacion: data.fechaCreacion || timestampToISO(data.createdAt),
     totalCampañas: data.totalCampañas || 0,
@@ -70,7 +75,7 @@ export async function getCompany(companyId: string): Promise<Company | null> {
 }
 
 /**
- * Obtener todas las empresas
+ * Obtener todas las empresas (sin contraseñas por seguridad)
  */
 export async function getAllCompanies(): Promise<Company[]> {
   const q = query(collection(db, "companies"), orderBy("createdAt", "desc"))
@@ -86,13 +91,74 @@ export async function getAllCompanies(): Promise<Company[]> {
       productos: data.productos || [],
       cantidad: data.cantidad,
       username: data.username,
-      contraseña: data.contraseña,
+      contraseña: "••••••••", // Ocultar contraseña por seguridad
       estado: data.estado,
       fechaCreacion: data.fechaCreacion || timestampToISO(data.createdAt),
       totalCampañas: data.totalCampañas || 0,
       inversionTotal: data.inversionTotal || 0,
     }
   })
+}
+
+/**
+ * Resultado paginado de empresas
+ */
+export interface PaginatedCompaniesResult {
+  companies: Company[]
+  lastDoc: QueryDocumentSnapshot<DocumentData> | null
+  hasMore: boolean
+  total: number
+}
+
+/**
+ * Obtener empresas con paginación
+ */
+export async function getCompaniesPaginated(
+  pageSize: number = 20,
+  lastDoc?: QueryDocumentSnapshot<DocumentData> | null
+): Promise<PaginatedCompaniesResult> {
+  const companiesRef = collection(db, "companies")
+
+  // Get total count
+  const countSnapshot = await getCountFromServer(companiesRef)
+  const total = countSnapshot.data().count
+
+  // Build query with pagination
+  let q = query(companiesRef, orderBy("createdAt", "desc"), limit(pageSize))
+
+  if (lastDoc) {
+    q = query(companiesRef, orderBy("createdAt", "desc"), startAfter(lastDoc), limit(pageSize))
+  }
+
+  const snapshot = await getDocs(q)
+
+  const companies = snapshot.docs.map((doc) => {
+    const data = doc.data()
+    return {
+      id: doc.id,
+      nombre: data.nombre,
+      tamaño: data.tamaño,
+      tipo: data.tipo,
+      productos: data.productos || [],
+      cantidad: data.cantidad,
+      username: data.username,
+      contraseña: "••••••••",
+      estado: data.estado,
+      fechaCreacion: data.fechaCreacion || timestampToISO(data.createdAt),
+      totalCampañas: data.totalCampañas || 0,
+      inversionTotal: data.inversionTotal || 0,
+    }
+  })
+
+  const lastVisible = snapshot.docs[snapshot.docs.length - 1] || null
+  const hasMore = snapshot.docs.length === pageSize
+
+  return {
+    companies,
+    lastDoc: lastVisible,
+    hasMore,
+    total,
+  }
 }
 
 /**

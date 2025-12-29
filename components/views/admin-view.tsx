@@ -2,10 +2,10 @@
 
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Shield, Plus, Building2, CheckCircle, Target, DollarSign, Database, Upload } from "lucide-react"
+import { Shield, Plus, Building2, CheckCircle, Target, DollarSign, Upload } from "lucide-react"
 import { getAllCompanies, createCompany, deleteCompany } from "@/lib/data/companies"
 import { migrateCompaniesToFirestore } from "@/lib/migrations/migrate-companies"
 import { AdminKPICard } from "@/components/admin/admin-kpi-card"
@@ -16,8 +16,14 @@ import { CompanyDetailModal } from "@/components/admin/company-detail-modal"
 import { TableSkeleton } from "@/components/admin/table-skeleton"
 import { KPISkeleton } from "@/components/admin/kpi-skeleton"
 import { Skeleton } from "@/components/ui/skeleton"
+import { TableSearch, type FilterOption } from "@/components/admin/table-search"
 import { toast } from "sonner"
 import type { Company } from "@/types/company"
+
+const statusFilterOptions: FilterOption[] = [
+  { value: "activa", label: "Activa" },
+  { value: "inactiva", label: "Inactiva" },
+]
 
 export function AdminView() {
   const [companies, setCompanies] = useState<Company[]>([])
@@ -26,6 +32,8 @@ export function AdminView() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [statusFilter, setStatusFilter] = useState("all")
 
   useEffect(() => {
     loadCompanies()
@@ -118,6 +126,20 @@ export function AdminView() {
     }
   }
 
+  // Filtrado de empresas
+  const filteredCompanies = useMemo(() => {
+    return companies.filter((company) => {
+      const matchesSearch =
+        searchQuery === "" ||
+        company.nombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        company.tipo.toLowerCase().includes(searchQuery.toLowerCase())
+
+      const matchesStatus = statusFilter === "all" || company.estado === statusFilter
+
+      return matchesSearch && matchesStatus
+    })
+  }, [companies, searchQuery, statusFilter])
+
   const totalCompanies = companies.length
   const activeCompanies = companies.filter((c) => c.estado === "activa").length
   const totalCampaigns = companies.reduce((sum, c) => sum + (c.totalCampañas || 0), 0)
@@ -199,11 +221,27 @@ export function AdminView() {
       {/* Companies Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Empresas Clientes</CardTitle>
+          <CardTitle className="flex items-center justify-between">
+            <span>Empresas Clientes</span>
+            {filteredCompanies.length !== companies.length && (
+              <span className="text-sm font-normal text-muted-foreground">
+                Mostrando {filteredCompanies.length} de {companies.length}
+              </span>
+            )}
+          </CardTitle>
         </CardHeader>
         <CardContent>
+          <TableSearch
+            searchValue={searchQuery}
+            onSearchChange={setSearchQuery}
+            searchPlaceholder="Buscar por nombre o tipo..."
+            filterValue={statusFilter}
+            onFilterChange={setStatusFilter}
+            filterOptions={statusFilterOptions}
+            filterLabel="Estado"
+          />
           <CompaniesTable
-            companies={companies}
+            companies={filteredCompanies}
             onDelete={handleDeleteClick}
             onRowClick={handleRowClick}
             onConfigChange={handleConfigChange}

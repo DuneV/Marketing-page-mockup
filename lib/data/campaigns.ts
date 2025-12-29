@@ -9,10 +9,15 @@ import {
   query,
   where,
   orderBy,
+  limit,
+  startAfter,
+  getCountFromServer,
   serverTimestamp,
   Timestamp,
   addDoc,
   writeBatch,
+  type QueryDocumentSnapshot,
+  type DocumentData,
 } from "firebase/firestore"
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage"
 import { db, storage } from "@/lib/firebase/client"
@@ -87,6 +92,54 @@ export async function getAllCampaigns(): Promise<Array<CampaignDoc & { id: strin
     id: doc.id,
     ...doc.data(),
   })) as Array<CampaignDoc & { id: string }>
+}
+
+/**
+ * Resultado paginado de campañas
+ */
+export interface PaginatedCampaignsResult {
+  campaigns: Array<CampaignDoc & { id: string }>
+  lastDoc: QueryDocumentSnapshot<DocumentData> | null
+  hasMore: boolean
+  total: number
+}
+
+/**
+ * Obtener campañas con paginación
+ */
+export async function getCampaignsPaginated(
+  pageSize: number = 20,
+  lastDoc?: QueryDocumentSnapshot<DocumentData> | null
+): Promise<PaginatedCampaignsResult> {
+  const campaignsRef = collection(db, "campaigns")
+
+  // Get total count
+  const countSnapshot = await getCountFromServer(campaignsRef)
+  const total = countSnapshot.data().count
+
+  // Build query with pagination
+  let q = query(campaignsRef, orderBy("createdAt", "desc"), limit(pageSize))
+
+  if (lastDoc) {
+    q = query(campaignsRef, orderBy("createdAt", "desc"), startAfter(lastDoc), limit(pageSize))
+  }
+
+  const snapshot = await getDocs(q)
+
+  const campaigns = snapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  })) as Array<CampaignDoc & { id: string }>
+
+  const lastVisible = snapshot.docs[snapshot.docs.length - 1] || null
+  const hasMore = snapshot.docs.length === pageSize
+
+  return {
+    campaigns,
+    lastDoc: lastVisible,
+    hasMore,
+    total,
+  }
 }
 
 /**
