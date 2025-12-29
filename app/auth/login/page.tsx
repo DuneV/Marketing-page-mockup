@@ -12,9 +12,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { AlertCircle, Shield } from "lucide-react"
 
-import { signInWithEmailAndPassword,  signOut} from "firebase/auth"
-import { auth, db } from "@/lib/firebase/client"
-import { doc, getDoc } from "firebase/firestore"
+import { signInWithEmailAndPassword } from "firebase/auth"
+import { auth } from "@/lib/firebase/client"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -32,52 +31,35 @@ export default function LoginPage() {
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault()
-  setError("")
-  setLoading(true)
+    e.preventDefault()
+    setError("")
+    setLoading(true)
 
-  try {
-    const cred = await signInWithEmailAndPassword(auth, email, password)
+    try {
+      // Solo autenticar, NO leer Firestore aquí
+      await signInWithEmailAndPassword(auth, email, password)
 
-    const snap = await getDoc(doc(db, "users", cred.user.uid))
+      console.log("[Login] Autenticación exitosa, redirigiendo...")
 
-    // 🔒 Modelo “solo creados por admin”
-    if (!snap.exists()) {
-      await signOut(auth)
-      setError("No autorizado. Tu usuario no fue creado por el administrador.")
-      return
+      // Redirigir a una página general que determinará el destino final
+      router.push("/app/redirect")
+    } catch (err: any) {
+      const code = err?.code ?? ""
+      console.error("[Login] Error en autenticación:", code, err)
+
+      if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
+        setError("Credenciales incorrectas")
+      } else if (code === "auth/user-not-found") {
+        setError("Usuario no existe")
+      } else if (code.includes("cors") || code.includes("firestore")) {
+        setError("Error de conexión con la base de datos. Intenta nuevamente.")
+      } else {
+        setError("Error en el inicio de sesión")
+      }
+    } finally {
+      setLoading(false)
     }
-
-    const role = snap.data().role as "admin" | "company" | "employee" | undefined
-
-    // Debug útil (borra luego)
-    console.log("LOGIN", { uid: cred.user.uid, role, data: snap.data() })
-
-    if (role === "admin") {
-      router.replace("/admin")
-      return
-    }
-
-    if (role === "company") {
-      router.replace("/dashboard")
-      return
-    }
-
-    await signOut(auth)
-    setError("No tienes permisos para acceder.")
-  } catch (err: any) {
-    const code = err?.code ?? ""
-    if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
-      setError("Credenciales incorrectas")
-    } else if (code === "auth/user-not-found") {
-      setError("Usuario no existe")
-    } else {
-      setError("Error en el inicio de sesión")
-    }
-  } finally {
-    setLoading(false)
   }
-}
 
   const fillDemoCredentials = () => {
     const creds = demoCredentials[userType]

@@ -66,8 +66,21 @@ export function AppSidebar({ userType, isAdmin = false }: AppSidebarProps) {
   ]
 
   const adminMenuItems = [
-    { title: "Empresas", icon: Shield, href: "/admin/companies" },
-    { title: "Usuarios", icon: Users, href: "/admin/users" },
+    {
+      title: "Empresas",
+      icon: Shield,
+      href: "/admin/companies",
+    },
+    {
+      title: "Usuarios",
+      icon: Users,
+      href: "/admin/users",
+    },
+    {
+      title: "Campañas",
+      icon: Target,
+      href: "/admin/campaigns",
+    },
   ]
 
   const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/")

@@ -1,0 +1,81 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && getUserRole() == 'admin';
+    }
+
+    function isEmployee() {
+      return isAuthenticated() && getUserRole() == 'employee';
+    }
+
+    function isCompany() {
+      return isAuthenticated() && getUserRole() == 'company';
+    }
+
+    // Users collection
+    match /users/{userId} {
+      // Admins can read and write all users
+      allow read, write: if isAdmin();
+
+      // Users can read their own document
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+
+      // Users can update their own document
+      allow update: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Companies collection
+    match /companies/{companyId} {
+      // Admins can do everything
+      allow read, write: if isAdmin();
+
+      // Companies can read their own document
+      allow read: if isCompany() &&
+                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.empresaActualId == companyId;
+
+      // Employees can read companies
+      allow read: if isEmployee();
+    }
+
+    // Campaigns collection
+    match /campaigns/{campaignId} {
+      // Admins have full access
+      allow read, write: if isAdmin();
+
+      // Employees can read campaigns they're responsible for
+      allow read: if isEmployee() &&
+                     resource.data.usuarioResponsableId == request.auth.uid;
+
+      // Companies can read their own campaigns
+      allow read: if isCompany() &&
+                     get(/databases/$(database)/documents/users/$(request.auth.uid)).data.empresaActualId == resource.data.empresaId;
+
+      // Subcollections: images
+      match /images/{imageId} {
+        allow read: if isAdmin() ||
+                      (isEmployee() && get(/databases/$(database)/documents/campaigns/$(campaignId)).data.usuarioResponsableId == request.auth.uid);
+        allow write: if isAdmin() ||
+                       (isEmployee() && get(/databases/$(database)/documents/campaigns/$(campaignId)).data.usuarioResponsableId == request.auth.uid);
+      }
+
+      // Subcollections: comments
+      match /comments/{commentId} {
+        allow read: if isAdmin() ||
+                      (isEmployee() && get(/databases/$(database)/documents/campaigns/$(campaignId)).data.usuarioResponsableId == request.auth.uid);
+        allow create: if isAuthenticated();
+        allow update, delete: if isAdmin();
+      }
+    }
+  }
+}

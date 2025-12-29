@@ -1,15 +1,13 @@
-// app/admin/companies/page.tsx
-
 "use client"
 
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { AdminLayout } from "@/components/admin/admin-layout"
-import { AdminView } from "@/components/views/admin-view"
+import Dashboard from "@/components/dashboard"
+import { DashboardLayout } from "@/components/dashboard-layout"
 import { useAuthRole } from "@/lib/auth/useAuthRole"
 import { Button } from "@/components/ui/button"
 
-export default function AdminCompaniesPage() {
+export default function CompanyPage() {
   const router = useRouter()
   const { user, role, loading, error } = useAuthRole()
 
@@ -17,10 +15,10 @@ export default function AdminCompaniesPage() {
     if (!loading) {
       if (!user) {
         router.push("/auth/login")
-      } else if (role !== "admin") {
-        // Si no es admin, redirigir según su rol
-        if (role === "company") {
-          router.push("/company")
+      } else if (role !== "company") {
+        // Si no es empresa, redirigir según su rol
+        if (role === "admin") {
+          router.push("/admin")
         } else {
           router.push("/dashboard")
         }
@@ -34,14 +32,14 @@ export default function AdminCompaniesPage() {
       <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
         <div className="text-center max-w-md p-6">
           <h2 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-4">
-            Error al cargar panel de administrador
+            Error al cargar panel de empresa
           </h2>
           <p className="text-slate-600 dark:text-slate-400 mb-6">
             {error.message}
           </p>
           <Button
             onClick={() => router.push("/auth/login")}
-            className="bg-amber-700 hover:bg-amber-800 text-white"
+            className="bg-red-600 hover:bg-red-700 text-white"
           >
             Volver al Login
           </Button>
@@ -61,13 +59,13 @@ export default function AdminCompaniesPage() {
     )
   }
 
-  if (!user || role !== "admin") {
+  if (!user || role !== "company") {
     return null
   }
 
   return (
-    <AdminLayout>
-      <AdminView />
-    </AdminLayout>
+    <DashboardLayout userType="company" isAdmin={false}>
+      <Dashboard activeView="overview" userType="company" />
+    </DashboardLayout>
   )
 }
