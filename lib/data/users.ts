@@ -62,7 +62,7 @@ export async function getAllUsers(): Promise<User[]> {
       empresaActualNombre: data.empresaActualNombre || null,
       campanaActualId: data.campanaActualId || null,
       campanaActualNombre: data.campanaActualNombre || null,
-      unidadesProductos: data.unidadesProductos || 0,
+      unidadesProductos: data.unidadesProductos || {},
       createdAt: timestampToString(data.createdAt),
       updatedAt: timestampToString(data.updatedAt),
     }
@@ -94,7 +94,7 @@ export async function createUser(data: UserFormData): Promise<string> {
     empresaActualNombre: data.empresaActualNombre || null,
     campanaActualId: null,
     campanaActualNombre: null,
-    unidadesProductos: data.unidadesProductos || 0,
+    unidadesProductos: data.unidadesProductos || {},
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   })

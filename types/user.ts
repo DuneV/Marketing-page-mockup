@@ -11,7 +11,7 @@ export interface User {
   empresaActualNombre?: string | null
   campanaActualId?: string | null
   campanaActualNombre?: string | null
-  unidadesProductos: number
+  unidadesProductos: Record<string, number>
   createdAt: string
   updatedAt?: string
 }
@@ -24,5 +24,5 @@ export interface UserFormData {
   role: UserRole
   empresaActualId?: string | null
   empresaActualNombre?: string | null
-  unidadesProductos: number
+  unidadesProductos: Record<string, number>
 }

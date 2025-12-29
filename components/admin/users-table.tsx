@@ -105,7 +105,9 @@ export function UsersTable({ users, onDelete, onCreateClick }: UsersTableProps) 
                   </Tooltip>
                 </TableCell>
                 <TableCell className="text-center font-medium">
-                  {(user.unidadesProductos || 0).toLocaleString()}
+                  {Object.values(user.unidadesProductos || {})
+                    .reduce((sum, qty) => sum + qty, 0)
+                    .toLocaleString()}
                 </TableCell>
                 <TableCell className="text-sm">{formatDate(user.createdAt)}</TableCell>
                 <TableCell className="text-right">

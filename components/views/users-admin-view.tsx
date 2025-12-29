@@ -104,7 +104,10 @@ export function UsersAdminView() {
   }, [users, searchQuery, roleFilter])
 
   const totalUsers = users.length
-  const totalUnits = users.reduce((sum, u) => sum + (u.unidadesProductos || 0), 0)
+  const totalUnits = users.reduce((sum, u) => {
+    const userTotal = Object.values(u.unidadesProductos || {}).reduce((s, qty) => s + qty, 0)
+    return sum + userTotal
+  }, 0)
   const uniqueCompanies = new Set(users.filter(u => u.empresaActualNombre).map((u) => u.empresaActualNombre)).size
 
   const userToDelete = deleteUserId ? users.find((u) => u.id === deleteUserId) || null : null
