@@ -4,9 +4,9 @@ export interface Campaign {
   id: string
   nombre: string
   empresaId: string
-  empresaNombre?: string // Denormalized for display
+  empresaNombre: string // Denormalized for display
   usuarioResponsableId: string
-  usuarioResponsableNombre?: string // Denormalized for display
+  usuarioResponsableNombre: string // Denormalized for display
   estado: "planificacion" | "activa" | "completada" | "cancelada"
   fechaInicio: string
   fechaFin: string

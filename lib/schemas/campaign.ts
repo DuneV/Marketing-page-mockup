@@ -12,7 +12,9 @@ export const CampaignStatusSchema = z.enum([
 export const CampaignDocSchema = z.object({
   nombre: z.string().min(1, "Nombre requerido"),
   empresaId: z.string().min(1, "Empresa requerida"),
+  empresaNombre: z.string().min(1, "Nombre de empresa requerido"),
   usuarioResponsableId: z.string().min(1, "Usuario responsable requerido"),
+  usuarioResponsableNombre: z.string().min(1, "Nombre de usuario requerido"),
   estado: CampaignStatusSchema,
   fechaInicio: z.string(), // ISO date string
   fechaFin: z.string().refine(

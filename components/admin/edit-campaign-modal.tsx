@@ -31,7 +31,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { updateCampaign } from "@/lib/data/campaigns"
-import { assignUserToCampaign } from "@/lib/data/users"
+import { assignUserToCampaign, getUser } from "@/lib/data/users"
+import { getCompany } from "@/lib/data/companies"
 import { collection, getDocs, query, where } from "firebase/firestore"
 import { db } from "@/lib/firebase/client"
 import { toast } from "sonner"
@@ -144,16 +145,18 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
       // Verificar si cambió el usuario responsable
       const oldUserId = campaign.usuarioResponsableId
       const newUserId = data.usuarioResponsableId
+      const userChanged = oldUserId !== newUserId
+      const companyChanged = campaign.empresaId !== data.empresaId
 
-      if (oldUserId !== newUserId) {
+      if (userChanged) {
         // Desasignar usuario anterior
         await assignUserToCampaign(oldUserId, null)
         // Asignar nuevo usuario
         await assignUserToCampaign(newUserId, campaign.id)
       }
 
-      // Actualizar campaña
-      await updateCampaign(campaign.id, {
+      // Preparar actualizaciones
+      const updates: any = {
         nombre: data.nombre,
         empresaId: data.empresaId,
         usuarioResponsableId: data.usuarioResponsableId,
@@ -164,7 +167,21 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
         descripcion: data.descripcion,
         objetivos: data.objetivos,
         productosAsociados: productos,
-      })
+      }
+
+      // Actualizar nombres denormalizados si cambiaron
+      if (userChanged) {
+        const newUser = await getUser(newUserId)
+        updates.usuarioResponsableNombre = newUser?.nombre || "Usuario desconocido"
+      }
+
+      if (companyChanged) {
+        const newCompany = await getCompany(data.empresaId)
+        updates.empresaNombre = newCompany?.nombre || "Empresa desconocida"
+      }
+
+      // Actualizar campaña
+      await updateCampaign(campaign.id, updates)
 
       toast.success("Campaña actualizada", {
         description: `${data.nombre} ha sido actualizada exitosamente`,

@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { assignUserToCampaign } from "@/lib/data/users"
+import { assignUserToCampaign, getUser } from "@/lib/data/users"
 import { updateCampaign } from "@/lib/data/campaigns"
 import { collection, getDocs, query, where } from "firebase/firestore"
 import { db } from "@/lib/firebase/client"
@@ -95,12 +95,15 @@ export function AssignUserToCampaignModal({ campaign, isOpen, onClose, onSuccess
         // Asignar nuevo usuario
         await assignUserToCampaign(selectedUserId, campaign.id)
 
-        // Actualizar campaña con nuevo usuario responsable
+        // Obtener nombre del nuevo usuario para denormalizar
+        const newUser = await getUser(selectedUserId)
+
+        // Actualizar campaña con nuevo usuario responsable y nombre
         await updateCampaign(campaign.id, {
           usuarioResponsableId: selectedUserId,
+          usuarioResponsableNombre: newUser?.nombre || "Usuario desconocido",
         })
 
-        const newUser = employees.find((e) => e.uid === selectedUserId)
         toast.success("Usuario asignado", {
           description: `${newUser?.nombre} ha sido asignado a la campaña`,
         })

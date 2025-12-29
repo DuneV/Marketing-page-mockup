@@ -5,8 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Target, Plus, TrendingUp, DollarSign, BarChart3 } from "lucide-react"
 import { getAllCampaigns, deleteCampaign, deleteAllCampaignImages, deleteAllCampaignComments } from "@/lib/data/campaigns"
-import { getAllCompanies, getCompany, decrementCompanyCampaignCount } from "@/lib/data/companies"
-import { getUser, assignUserToCampaign } from "@/lib/data/users"
+import { getAllCompanies, decrementCompanyCampaignCount } from "@/lib/data/companies"
+import { assignUserToCampaign } from "@/lib/data/users"
 import { AdminKPICard } from "@/components/admin/admin-kpi-card"
 import { CampaignsTable } from "@/components/admin/campaigns-table"
 import { CreateCampaignModal } from "@/components/admin/create-campaign-modal"
@@ -45,30 +45,8 @@ export function CampaignsAdminView() {
         getAllCompanies(),
       ])
 
-      // Enriquecer campañas con nombres denormalizados
-      const enrichedCampaigns = await Promise.all(
-        loadedCampaigns.map(async (campaign) => {
-          const company = loadedCompanies.find((c) => c.id === campaign.empresaId)
-          let usuarioNombre = "Usuario no encontrado"
-
-          try {
-            const user = await getUser(campaign.usuarioResponsableId)
-            if (user) {
-              usuarioNombre = user.nombre
-            }
-          } catch (error) {
-            console.error("Error cargando usuario:", error)
-          }
-
-          return {
-            ...campaign,
-            empresaNombre: company?.nombre || "Empresa no encontrada",
-            usuarioResponsableNombre: usuarioNombre,
-          } as Campaign
-        })
-      )
-
-      setCampaigns(enrichedCampaigns)
+      // Los nombres ya están denormalizados en el documento
+      setCampaigns(loadedCampaigns as Campaign[])
       setCompanies(loadedCompanies)
     } catch (error) {
       console.error("Error cargando datos:", error)

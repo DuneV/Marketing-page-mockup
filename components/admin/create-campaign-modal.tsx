@@ -31,8 +31,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { createCampaign } from "@/lib/data/campaigns"
-import { assignUserToCampaign } from "@/lib/data/users"
-import { incrementCompanyCampaignCount } from "@/lib/data/companies"
+import { assignUserToCampaign, getUser } from "@/lib/data/users"
+import { incrementCompanyCampaignCount, getCompany } from "@/lib/data/companies"
 import { collection, getDocs, query, where } from "firebase/firestore"
 import { db } from "@/lib/firebase/client"
 import { toast } from "sonner"
@@ -130,11 +130,19 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
         ? data.productosAsociados.split(",").map((p) => p.trim()).filter((p) => p.length > 0)
         : []
 
-      // Crear campaña
+      // Obtener nombres para denormalizar
+      const [selectedUser, selectedCompany] = await Promise.all([
+        getUser(data.usuarioResponsableId),
+        getCompany(data.empresaId)
+      ])
+
+      // Crear campaña con nombres denormalizados
       const campaignId = await createCampaign(currentUser.uid, {
         nombre: data.nombre,
         empresaId: data.empresaId,
+        empresaNombre: selectedCompany?.nombre || "Empresa desconocida",
         usuarioResponsableId: data.usuarioResponsableId,
+        usuarioResponsableNombre: selectedUser?.nombre || "Usuario desconocido",
         estado: data.estado,
         fechaInicio: data.fechaInicio,
         fechaFin: data.fechaFin,
