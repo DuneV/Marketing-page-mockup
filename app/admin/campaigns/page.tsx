@@ -1,14 +1,10 @@
 "use client"
 
-import { AdminLayout } from "@/components/admin/admin-layout"
-import { ImportWizard } from "@/components/admin/imports/ImportWizard"
-
+import { DashboardLayout } from "@/components/dashboard-layout"
+import { AdminCampaignsImportView } from "@/components/views/admin-campaigns-import-view"
 
 export default function AdminCampaignsPage() {
   return (
-    <AdminLayout>
-      <ImportWizard importType="campaigns" />
-    </AdminLayout>
+      <AdminCampaignsImportView />
   )
 }
-

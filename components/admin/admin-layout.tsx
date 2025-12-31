@@ -1,3 +1,5 @@
+// components/admin/admin-layout.tsx
+
 "use client"
 
 import { ReactNode } from "react"

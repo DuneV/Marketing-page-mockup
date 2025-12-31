@@ -1,20 +1,47 @@
-// app/page.tsx
-
 "use client"
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { onAuthStateChanged } from "firebase/auth"
-import { auth } from "@/lib/firebase/client"
+import { auth, db } from "@/lib/firebase/client"
+import { doc, getDoc } from "firebase/firestore"
+
+type Role = "admin" | "company" | "employee"
 
 export default function Page() {
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      router.replace(user ? "/dashboard" : "/auth/login")
-      setIsLoading(false)
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      try {
+        if (!user) {
+          router.replace("/auth/login")
+          return
+        }
+
+        const snap = await getDoc(doc(db, "users", user.uid))
+        const role = (snap.exists() ? (snap.data().role as Role | undefined) : undefined)
+
+        if (role === "admin") {
+          router.replace("/admin")
+          return
+        }
+
+        if (role === "company") {
+          router.replace("/dashboard")
+          return
+        }
+
+        if (role === "employee") {
+          router.replace("/dashboard")
+          return
+        }
+        
+        router.replace("/auth/login")
+      } finally {
+        setIsLoading(false)
+      }
     })
 
     return () => unsub()

@@ -1,9 +1,19 @@
 import pg from "pg"
 import type { QueryResultRow } from "pg"
-
 const { Pool } = pg
 
-export const pool = new Pool({ /* ... */ })
+const hasCloudSql = !!process.env.INSTANCE_CONNECTION_NAME
+
+export const pool = new Pool({
+  user: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME,
+  host: hasCloudSql
+    ? `/cloudsql/${process.env.INSTANCE_CONNECTION_NAME}`
+    : (process.env.DB_HOST ?? "127.0.0.1"),
+  port: hasCloudSql ? undefined : Number(process.env.DB_PORT ?? "5432"),
+  ssl: hasCloudSql ? undefined : { rejectUnauthorized: false },
+})
 
 export async function query<T extends QueryResultRow = QueryResultRow>(
   text: string,

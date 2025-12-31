@@ -1,7 +1,13 @@
 // app/admin/page.tsx
 
-import { redirect } from "next/navigation"
+"use client"
 
-export default function AdminIndexPage() {
-  redirect("/admin/dashboard")
+import { DashboardLayout } from "@/components/dashboard-layout"
+import { AdminDashboardView } from "@/components/views/admin-dashboard-view"
+
+export default function AdminDashboardPage() {
+  return (
+      <AdminDashboardView />
+  )
 }
+

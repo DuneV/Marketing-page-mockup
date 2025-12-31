@@ -1,11 +1,13 @@
+// app/admin/dashboard/page.tsx
+
 "use client"
 
-import { AdminLayout } from "@/components/admin/admin-layout"
+import { DashboardLayout } from "@/components/dashboard-layout"
+import { AdminDashboardView } from "@/components/views/admin-dashboard-view"
 
 export default function AdminDashboardPage() {
   return (
-    <AdminLayout>
-      <div>Dashboard (Admin)</div>
-    </AdminLayout>
+      <AdminDashboardView />
   )
 }
+

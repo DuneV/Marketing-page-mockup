@@ -1,12 +1,12 @@
-// app/admin/layout.tsx
-
 "use client"
 
+import type React from "react"
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useAuthRole } from "@/lib/auth/useAuthRole"
+import { AdminLayout } from "@/components/admin/admin-layout"
 
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
+export default function AdminRootLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const { user, role, loading } = useAuthRole()
 
@@ -25,5 +25,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   if (!user || role !== "admin") return null
-  return <>{children}</>
+
+  return <AdminLayout>{children}</AdminLayout>
 }

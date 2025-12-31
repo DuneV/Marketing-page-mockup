@@ -1,11 +1,11 @@
 "use client"
 
-import { AdminLayout } from "@/components/admin/admin-layout"
+import { DashboardLayout } from "@/components/dashboard-layout"
+import { AdminSettingsView } from "@/components/views/admin-settings-view"
 
 export default function AdminSettingsPage() {
   return (
-    <AdminLayout>
-      <div>Configuración (Admin)</div>
-    </AdminLayout>
+      <AdminSettingsView />
   )
 }
+
