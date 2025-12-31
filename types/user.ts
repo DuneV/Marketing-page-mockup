@@ -1,19 +1,28 @@
+export type UserRole = "admin" | "company" | "employee"
+
 export interface User {
   id: string
   username: string
-  empresa_campaña_actual: string
   nombre: string
   cedula: string
-  unidades_productos: number
   correo: string
-  fechaCreacion: string
+  role: UserRole
+  empresaActualId?: string | null
+  empresaActualNombre?: string | null
+  campanaActualId?: string | null
+  campanaActualNombre?: string | null
+  unidadesProductos: Record<string, number>
+  createdAt: string
+  updatedAt?: string
 }
 
 export interface UserFormData {
   username: string
-  empresa_campaña_actual: string
   nombre: string
   cedula: string
-  unidades_productos: number
   correo: string
+  role: UserRole
+  empresaActualId?: string | null
+  empresaActualNombre?: string | null
+  unidadesProductos: Record<string, number>
 }

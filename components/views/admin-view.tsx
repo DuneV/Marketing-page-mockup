@@ -2,11 +2,12 @@
 
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Shield, Plus, Building2, CheckCircle, Target, DollarSign, Database } from "lucide-react"
-import { CompaniesStorage } from "@/lib/companies-storage"
+import { Shield, Plus, Building2, CheckCircle, Target, DollarSign, Upload } from "lucide-react"
+import { getAllCompanies, createCompany, deleteCompany } from "@/lib/data/companies"
+import { migrateCompaniesToFirestore } from "@/lib/migrations/migrate-companies"
 import { AdminKPICard } from "@/components/admin/admin-kpi-card"
 import { CompaniesTable } from "@/components/admin/companies-table"
 import { CreateCompanyModal } from "@/components/admin/create-company-modal"
@@ -15,9 +16,14 @@ import { CompanyDetailModal } from "@/components/admin/company-detail-modal"
 import { TableSkeleton } from "@/components/admin/table-skeleton"
 import { KPISkeleton } from "@/components/admin/kpi-skeleton"
 import { Skeleton } from "@/components/ui/skeleton"
-import { initDemoData } from "@/lib/init-demo-data"
+import { TableSearch, type FilterOption } from "@/components/admin/table-search"
 import { toast } from "sonner"
 import type { Company } from "@/types/company"
+
+const statusFilterOptions: FilterOption[] = [
+  { value: "activa", label: "Activa" },
+  { value: "inactiva", label: "Inactiva" },
+]
 
 export function AdminView() {
   const [companies, setCompanies] = useState<Company[]>([])
@@ -26,31 +32,53 @@ export function AdminView() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [statusFilter, setStatusFilter] = useState("all")
 
   useEffect(() => {
-    CompaniesStorage.initialize()
-    const loadedCompanies = CompaniesStorage.getAll()
-    setCompanies(loadedCompanies)
-    setIsLoading(false)
+    loadCompanies()
   }, [])
 
-  const handleCreateCompany = (newCompany: Omit<Company, "id" | "fechaCreacion">) => {
-    const created = CompaniesStorage.create(newCompany)
-    setCompanies([...companies, created])
-    toast.success("Empresa creada", {
-      description: `${newCompany.nombre} ha sido agregada exitosamente`
-    })
+  const loadCompanies = async () => {
+    setIsLoading(true)
+    try {
+      const loadedCompanies = await getAllCompanies()
+      setCompanies(loadedCompanies)
+    } catch (error) {
+      console.error("Error cargando empresas:", error)
+      toast.error("Error al cargar empresas")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
-  const handleDeleteCompany = () => {
+  const handleCreateCompany = async (newCompany: Omit<Company, "id" | "fechaCreacion">) => {
+    try {
+      await createCompany(newCompany)
+      toast.success("Empresa creada", {
+        description: `${newCompany.nombre} ha sido agregada exitosamente`
+      })
+      await loadCompanies()
+    } catch (error) {
+      console.error("Error creando empresa:", error)
+      toast.error("Error al crear empresa")
+    }
+  }
+
+  const handleDeleteCompany = async () => {
     if (deleteCompanyId) {
       const companyName = companies.find(c => c.id === deleteCompanyId)?.nombre
-      CompaniesStorage.delete(deleteCompanyId)
-      setCompanies(companies.filter((c) => c.id !== deleteCompanyId))
-      setDeleteCompanyId(null)
-      toast.success("Empresa eliminada", {
-        description: `${companyName} ha sido eliminada permanentemente`
-      })
+      try {
+        await deleteCompany(deleteCompanyId)
+        setDeleteCompanyId(null)
+        toast.success("Empresa eliminada", {
+          description: `${companyName} ha sido eliminada permanentemente`
+        })
+        await loadCompanies()
+      } catch (error) {
+        console.error("Error eliminando empresa:", error)
+        toast.error("Error al eliminar empresa")
+      }
     }
   }
 
@@ -68,26 +96,49 @@ export function AdminView() {
     setSelectedCompanyId(null)
   }
 
-  const handleConfigChange = () => {
-    // Recargar empresas si es necesario
-    const loadedCompanies = CompaniesStorage.getAll()
-    setCompanies(loadedCompanies)
+  const handleConfigChange = async () => {
+    await loadCompanies()
   }
 
-  const handleInitDemoData = () => {
+  const handleMigrateCompanies = async () => {
     try {
-      initDemoData()
-      toast.success("Datos inicializados", {
-        description: "Todas las empresas tienen paquetes y configuraciones asignadas"
+      toast.info("Migrando empresas...", {
+        description: "Esto puede tomar unos momentos"
       })
-      handleConfigChange()
+
+      const result = await migrateCompaniesToFirestore()
+
+      if (result.success) {
+        toast.success("Migración completada", {
+          description: `${result.migrated} empresas migradas a Firestore`
+        })
+        await loadCompanies()
+      } else {
+        toast.error("Migración con errores", {
+          description: `${result.errors.length} errores encontrados`
+        })
+      }
     } catch (error) {
-      console.error("Error inicializando datos:", error)
-      toast.error("Error al inicializar", {
-        description: "No se pudieron cargar los datos de demostración"
+      console.error("Error en migración:", error)
+      toast.error("Error al migrar", {
+        description: "No se pudieron migrar las empresas"
       })
     }
   }
+
+  // Filtrado de empresas
+  const filteredCompanies = useMemo(() => {
+    return companies.filter((company) => {
+      const matchesSearch =
+        searchQuery === "" ||
+        company.nombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        company.tipo.toLowerCase().includes(searchQuery.toLowerCase())
+
+      const matchesStatus = statusFilter === "all" || company.estado === statusFilter
+
+      return matchesSearch && matchesStatus
+    })
+  }, [companies, searchQuery, statusFilter])
 
   const totalCompanies = companies.length
   const activeCompanies = companies.filter((c) => c.estado === "activa").length
@@ -143,9 +194,9 @@ export function AdminView() {
           <h2 className="text-2xl font-bold">Gestión de Empresas</h2>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={handleInitDemoData}>
-            <Database className="h-4 w-4 mr-2" />
-            Inicializar Datos Demo
+          <Button variant="outline" onClick={handleMigrateCompanies}>
+            <Upload className="h-4 w-4 mr-2" />
+            Migrar desde localStorage
           </Button>
           <Button onClick={() => setIsCreateModalOpen(true)} className="bg-amber-600 hover:bg-amber-700">
             <Plus className="h-4 w-4 mr-2" />
@@ -170,11 +221,27 @@ export function AdminView() {
       {/* Companies Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Empresas Clientes</CardTitle>
+          <CardTitle className="flex items-center justify-between">
+            <span>Empresas Clientes</span>
+            {filteredCompanies.length !== companies.length && (
+              <span className="text-sm font-normal text-muted-foreground">
+                Mostrando {filteredCompanies.length} de {companies.length}
+              </span>
+            )}
+          </CardTitle>
         </CardHeader>
         <CardContent>
+          <TableSearch
+            searchValue={searchQuery}
+            onSearchChange={setSearchQuery}
+            searchPlaceholder="Buscar por nombre o tipo..."
+            filterValue={statusFilter}
+            onFilterChange={setStatusFilter}
+            filterOptions={statusFilterOptions}
+            filterLabel="Estado"
+          />
           <CompaniesTable
-            companies={companies}
+            companies={filteredCompanies}
             onDelete={handleDeleteClick}
             onRowClick={handleRowClick}
             onConfigChange={handleConfigChange}
