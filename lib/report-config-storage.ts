@@ -252,15 +252,17 @@ export const reportConfigStorage = {
 
   // ==================== CONFIGURACIONES DE REPORTES ====================
 
+  // ==================== CONFIGURACIONES DE REPORTES ====================
+
   getAllConfigurations: (): ReportConfiguration[] => {
     if (typeof window === "undefined") return [];
     const data = localStorage.getItem(STORAGE_KEYS.REPORT_CONFIGS);
     return data ? JSON.parse(data) : [];
   },
 
-  getConfigurationByCompany: (empresaId: string): ReportConfiguration | null => {
+  getCampaignReportConfig: (campaignId: string): ReportConfiguration | null => {
     const configs = reportConfigStorage.getAllConfigurations();
-    return configs.find((c) => c.empresaId === empresaId && c.activa) || null;
+    return configs.find((c) => c.campaignId === campaignId && c.activa) || null;
   },
 
   createConfiguration: (
@@ -275,9 +277,9 @@ export const reportConfigStorage = {
 
     const configs = reportConfigStorage.getAllConfigurations();
 
-    // Desactivar configuraciones anteriores de la misma empresa
+    // Desactivar configuraciones anteriores de la misma campaña
     const updatedConfigs = configs.map((c) =>
-      c.empresaId === config.empresaId ? { ...c, activa: false } : c
+      c.campaignId === config.campaignId ? { ...c, activa: false } : c
     );
 
     updatedConfigs.push(newConfig);
@@ -332,6 +334,8 @@ export const reportConfigStorage = {
 
   createConfigFromTemplate: (
     templateId: string,
+    campaignId: string,
+    campaignNombre: string,
     empresaId: string,
     empresaNombre: string
   ): ReportConfiguration | null => {
@@ -339,6 +343,8 @@ export const reportConfigStorage = {
     if (!template) return null;
 
     return reportConfigStorage.createConfiguration({
+      campaignId,
+      campaignNombre,
       empresaId,
       empresaNombre,
       ...template.configuracion,
@@ -400,15 +406,14 @@ export const reportConfigStorage = {
     const assignment = reportConfigStorage.getCompanyServiceAssignment(empresaId);
 
     if (!assignment) {
-      errors.push("La empresa no tiene un paquete de servicio asignado");
-      return { valid: false, errors };
+      // Si no hay paquete asignado, no aplicamos límites (modo libre)
+      return { valid: true, errors: [] };
     }
 
     const servicePackage = reportConfigStorage.getServicePackageById(assignment.paqueteId);
 
     if (!servicePackage) {
-      errors.push("Paquete de servicio no encontrado");
-      return { valid: false, errors };
+      return { valid: true, errors: [] };
     }
 
     // Validar número de KPIs

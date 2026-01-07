@@ -5,6 +5,7 @@ import { Trash2, Edit, UserPlus, Target } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import type { Campaign } from "@/types/campaign"
 import { EmptyState } from "./empty-state"
+import { ReportConfigBuilderCampaign } from "./report-config-builder-campaign"
 
 interface CampaignsTableProps {
   campaigns: Campaign[]
@@ -12,6 +13,7 @@ interface CampaignsTableProps {
   onDelete: (campaignId: string) => void
   onRowClick: (campaignId: string) => void
   onAssignUser: (campaignId: string) => void
+  onReportConfig?: () => void
 }
 
 const statusColors = {
@@ -28,7 +30,7 @@ const statusLabels = {
   cancelada: "Cancelada",
 }
 
-export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssignUser }: CampaignsTableProps) {
+export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssignUser, onReportConfig }: CampaignsTableProps) {
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("es-ES", {
       year: "numeric",
@@ -115,6 +117,7 @@ export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssi
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                    <ReportConfigBuilderCampaign campaign={campaign} onSaved={onReportConfig} />
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button

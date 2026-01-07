@@ -49,13 +49,13 @@ export function AdminView() {
       setCompanies(Array.isArray(loadedCompanies) ? loadedCompanies : [])
     } catch (error: any) {
       console.warn("No hay empresas aún o endpoint vacío:", error)
-      setCompanies([]) 
+      setCompanies([])
     } finally {
       setIsLoading(false)
     }
   }
 
-    const handleCreateCompany = async (payload: CreateCompanyWithUserPayload) => {
+  const handleCreateCompany = async (payload: CreateCompanyWithUserPayload) => {
     try {
       await createCompanyWithUser(payload)
       toast.success("Empresa creada")
@@ -63,7 +63,7 @@ export function AdminView() {
     } catch (e: any) {
       console.error("Create company failed:", e)
       toast.error(e?.message ?? "Error al crear empresa")
-      throw e 
+      throw e
     }
   }
 
@@ -99,9 +99,7 @@ export function AdminView() {
     setSelectedCompanyId(null)
   }
 
-  const handleConfigChange = async () => {
-    await loadCompanies()
-  }
+
 
   // Filtrado de empresas
   const filteredCompanies = useMemo(() => {
@@ -220,7 +218,7 @@ export function AdminView() {
             companies={filteredCompanies}
             onDelete={handleDeleteClick}
             onRowClick={handleRowClick}
-            onConfigChange={handleConfigChange}
+
             onCreateClick={() => setIsCreateModalOpen(true)}
           />
         </CardContent>

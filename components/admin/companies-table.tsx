@@ -6,14 +6,12 @@ import { Button } from "@/components/ui/button"
 import { Trash2, Building2 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import type { Company } from "@/types/company"
-import { ReportConfigBuilderSimple } from "./report-config-builder-simple"
 import { EmptyState } from "./empty-state"
 
 interface CompaniesTableProps {
   companies: Company[]
   onDelete: (companyId: string) => void
   onRowClick: (companyId: string) => void
-  onConfigChange?: () => void
   onCreateClick?: () => void
 }
 
@@ -24,7 +22,7 @@ const sizeColors = {
   enterprise: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100",
 }
 
-export function CompaniesTable({ companies, onDelete, onRowClick, onConfigChange, onCreateClick }: CompaniesTableProps) {
+export function CompaniesTable({ companies, onDelete, onRowClick, onCreateClick }: CompaniesTableProps) {
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("es-ES", {
       year: "numeric",
@@ -109,7 +107,6 @@ export function CompaniesTable({ companies, onDelete, onRowClick, onConfigChange
                 <TableCell className="text-sm">{formatDate(company.fechaCreacion)}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                    <ReportConfigBuilderSimple company={company} onSaved={onConfigChange} />
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button

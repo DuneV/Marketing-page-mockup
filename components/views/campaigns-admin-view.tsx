@@ -260,7 +260,8 @@ export function CampaignsAdminView() {
             onEdit={handleEditClick}
             onDelete={handleDeleteClick}
             onRowClick={handleRowClick}
-            onAssignUser={() => {}} // No se usa en admin
+            onAssignUser={() => { }} // No se usa en admin
+            onReportConfig={loadData}
           />
         </CardContent>
       </Card>

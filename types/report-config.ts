@@ -78,10 +78,12 @@ export interface DashboardRow {
   graficos: ChartDefinition[];       // Gráficos en esta fila
 }
 
-// Configuración completa del reporte para una empresa
+// Configuración completa del reporte para una campaña
 export interface ReportConfiguration {
   id: string;                        // UUID de la configuración
-  empresaId: string;                 // ID de la empresa (debe existir)
+  campaignId: string;                // ID de la campaña (Nueva ubicación)
+  campaignNombre: string;            // Nombre de la campaña
+  empresaId: string;                 // ID de la empresa (Padre)
   empresaNombre: string;             // Nombre de la empresa para referencia
   filtros: {
     fechas?: DateFilter;             // Filtro de fechas opcional
@@ -159,7 +161,7 @@ export interface ReportTemplate {
   nombre: string;
   descripcion: string;
   categoria: "basico" | "avanzado" | "ejecutivo" | "operacional";
-  configuracion: Omit<ReportConfiguration, "id" | "empresaId" | "empresaNombre" | "fechaCreacion" | "fechaActualizacion">;
+  configuracion: Omit<ReportConfiguration, "id" | "campaignId" | "campaignNombre" | "empresaId" | "empresaNombre" | "fechaCreacion" | "fechaActualizacion">;
 }
 
 // Para la gestión de servicios disponibles por empresa
