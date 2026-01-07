@@ -97,10 +97,10 @@ export function AppSidebar({ userType, isAdmin = false }: AppSidebarProps) {
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className="p-0">
+      <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" className="h-16 group-data-[collapsible=icon]:!size-16 group-data-[collapsible=icon]:!p-0 group-data-[collapsible=icon]:!justify-center group-data-[collapsible=icon]:!items-center">
+            <SidebarMenuButton size="lg" className="h-16 group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-0 group-data-[collapsible=icon]:!justify-center group-data-[collapsible=icon]:!items-center">
               <div className="relative h-8 w-8 shrink-0 group-data-[collapsible=icon]:h-7 group-data-[collapsible=icon]:w-7 transition-all">
                 <Image src={LOGO} alt="Logo" fill className="object-contain" priority />
               </div>
