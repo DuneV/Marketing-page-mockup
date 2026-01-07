@@ -76,7 +76,22 @@ export function AdminDashboardView() {
           <CardTitle>Resumen</CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-slate-600 dark:text-slate-300">
-          Aquí puedes mostrar: últimos imports, estado del worker, validaciones, y links rápidos a campañas/configuración.
+          <div className="space-y-4">
+            {[
+              { text: "Empresa 'TechSolutions' importó 150 productos", time: "Hace 10 min", icon: UploadCloud, color: "text-blue-500" },
+              { text: "Campaña 'Verano 2025' completó el análisis", time: "Hace 45 min", icon: CheckCircle, color: "text-green-500" },
+              { text: "Nuevo usuario registrado: Juan Pérez", time: "Hace 2 horas", icon: Database, color: "text-amber-500" },
+              { text: "Error de validación en 'Importación Masiva #4'", time: "Hace 5 horas", icon: AlertCircle, color: "text-red-500" },
+            ].map((item, i) => (
+              <div key={i} className="flex items-start gap-3 p-3 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                <item.icon className={`h-5 w-5 mt-0.5 ${item.color}`} />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{item.text}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{item.time}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
     </div>
