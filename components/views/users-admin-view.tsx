@@ -162,12 +162,12 @@ export function UsersAdminView() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <Users className="h-6 w-6 text-amber-600" />
           <h2 className="text-2xl font-bold">Gestión de Usuarios</h2>
         </div>
-        <Button onClick={() => setIsCreateModalOpen(true)} className="bg-amber-600 hover:bg-amber-700">
+        <Button onClick={() => setIsCreateModalOpen(true)} className="bg-amber-600 hover:bg-amber-700 w-full sm:w-auto">
           <Plus className="h-4 w-4 mr-2" />
           Nuevo Usuario
         </Button>
