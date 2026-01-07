@@ -93,6 +93,11 @@ export interface ReportConfiguration {
   kpis: KPIDefinition[];             // KPIs configurados
   filas: DashboardRow[];             // Filas del dashboard con sus gráficos
   activa: boolean;                   // Si la configuración está activa
+  paletaColores?: {                  // Colores de la marca para el reporte
+    primario: string;
+    secundario: string;
+    acento: string;
+  };
   fechaCreacion: string;             // Fecha de creación de la config
   fechaActualizacion: string;        // Última actualización
 }

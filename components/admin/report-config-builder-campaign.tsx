@@ -31,6 +31,8 @@ import {
     AlertCircle,
     GripVertical,
     Save,
+    Palette,
+    Download,
     FileText,
 } from "lucide-react";
 import { reportConfigStorage } from "@/lib/report-config-storage";
@@ -123,6 +125,11 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                 inicio: campaign.fechaInicio,
                                 fin: campaign.fechaFin,
                             }
+                        },
+                        paletaColores: {
+                            primario: "#000000",
+                            secundario: "#ffffff",
+                            acento: "#FFB000",
                         },
                         kpis: [],
                         filas: [],
@@ -296,6 +303,18 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
         }
     };
 
+    const handleDownloadJSON = () => {
+        if (!config) return;
+
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(config, null, 2));
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", `reporte_config_${campaign.nombre.replace(/\s+/g, '_').toLowerCase()}.json`);
+        document.body.appendChild(downloadAnchorNode); // required for firefox
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
+    };
+
     return (
         <TooltipProvider>
             <Dialog open={open} onOpenChange={setOpen}>
@@ -315,7 +334,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                             <DialogHeader>
                                 <DialogTitle>Configurar Reporte - {campaign.nombre}</DialogTitle>
                                 <DialogDescription>
-                                    Personaliza los KPIs y gráficos del dashboard para esta campaña
+                                    Personaliza los KPIs, gráficos y colores de la marca para esta campaña
                                 </DialogDescription>
                             </DialogHeader>
                         </div>
@@ -334,6 +353,110 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                         </AlertDescription>
                                     </Alert>
                                 )}
+
+                                {/* Colores de Marca */}
+                                <Card>
+                                    <CardHeader>
+                                        <CardTitle className="text-sm flex items-center gap-2">
+                                            <Palette className="h-4 w-4" />
+                                            Colores de Marca
+                                        </CardTitle>
+                                    </CardHeader>
+                                    <CardContent>
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                                            <div className="space-y-2">
+                                                <Label className="text-xs">Color Primario</Label>
+                                                <div className="flex items-center gap-2">
+                                                    <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                                                        <input
+                                                            type="color"
+                                                            value={config.paletaColores?.primario || "#000000"}
+                                                            onChange={(e) => setConfig({
+                                                                ...config,
+                                                                paletaColores: {
+                                                                    ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
+                                                                    primario: e.target.value
+                                                                }
+                                                            })}
+                                                            className="h-full w-full p-0 border-0 cursor-pointer"
+                                                        />
+                                                    </div>
+                                                    <Input
+                                                        value={config.paletaColores?.primario || "#000000"}
+                                                        onChange={(e) => setConfig({
+                                                            ...config,
+                                                            paletaColores: {
+                                                                ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
+                                                                primario: e.target.value
+                                                            }
+                                                        })}
+                                                        className="h-8 font-mono text-xs"
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <Label className="text-xs">Color Secundario</Label>
+                                                <div className="flex items-center gap-2">
+                                                    <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                                                        <input
+                                                            type="color"
+                                                            value={config.paletaColores?.secundario || "#ffffff"}
+                                                            onChange={(e) => setConfig({
+                                                                ...config,
+                                                                paletaColores: {
+                                                                    ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
+                                                                    secundario: e.target.value
+                                                                }
+                                                            })}
+                                                            className="h-full w-full p-0 border-0 cursor-pointer"
+                                                        />
+                                                    </div>
+                                                    <Input
+                                                        value={config.paletaColores?.secundario || "#ffffff"}
+                                                        onChange={(e) => setConfig({
+                                                            ...config,
+                                                            paletaColores: {
+                                                                ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
+                                                                secundario: e.target.value
+                                                            }
+                                                        })}
+                                                        className="h-8 font-mono text-xs"
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <Label className="text-xs">Color de Acento</Label>
+                                                <div className="flex items-center gap-2">
+                                                    <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                                                        <input
+                                                            type="color"
+                                                            value={config.paletaColores?.acento || "#FFB000"}
+                                                            onChange={(e) => setConfig({
+                                                                ...config,
+                                                                paletaColores: {
+                                                                    ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
+                                                                    acento: e.target.value
+                                                                }
+                                                            })}
+                                                            className="h-full w-full p-0 border-0 cursor-pointer"
+                                                        />
+                                                    </div>
+                                                    <Input
+                                                        value={config.paletaColores?.acento || "#FFB000"}
+                                                        onChange={(e) => setConfig({
+                                                            ...config,
+                                                            paletaColores: {
+                                                                ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
+                                                                acento: e.target.value
+                                                            }
+                                                        })}
+                                                        className="h-8 font-mono text-xs"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </CardContent>
+                                </Card>
 
                                 {/* Plantillas */}
                                 <Card>
@@ -605,14 +728,20 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                         </ScrollArea>
 
                         <div className="px-6 py-4 border-t shrink-0">
-                            <DialogFooter>
-                                <Button variant="outline" onClick={() => setOpen(false)} disabled={isLoading}>
-                                    Cancelar
+                            <DialogFooter className="flex justify-between sm:justify-between w-full">
+                                <Button variant="outline" onClick={handleDownloadJSON} disabled={isLoading} className="gap-2">
+                                    <Download className="h-4 w-4" />
+                                    Descargar JSON
                                 </Button>
-                                <Button onClick={handleSave} disabled={isLoading}>
-                                    <Save className="h-4 w-4 mr-2" />
-                                    {isLoading ? "Guardando..." : "Guardar Configuración"}
-                                </Button>
+                                <div className="flex gap-2">
+                                    <Button variant="outline" onClick={() => setOpen(false)} disabled={isLoading}>
+                                        Cancelar
+                                    </Button>
+                                    <Button onClick={handleSave} disabled={isLoading}>
+                                        <Save className="h-4 w-4 mr-2" />
+                                        {isLoading ? "Guardando..." : "Guardar"}
+                                    </Button>
+                                </div>
                             </DialogFooter>
                         </div>
                     </DialogContent>
