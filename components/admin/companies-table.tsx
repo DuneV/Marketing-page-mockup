@@ -36,13 +36,13 @@ export function CompaniesTable({ companies, onDelete, onRowClick, onCreateClick 
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[25%]">Nombre</TableHead>
-            <TableHead className="w-[10%]">Tamaño</TableHead>
-            <TableHead className="w-[12%]">Tipo</TableHead>
-            <TableHead className="w-[10%] text-center">Prods.</TableHead>
-            <TableHead className="w-[10%]">Estado</TableHead>
-            <TableHead className="w-[13%]">Creación</TableHead>
-            <TableHead className="w-[20%] text-right">Acciones</TableHead>
+            <TableHead className="w-[50%] md:w-[25%]">Nombre</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[10%]">Tamaño</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[12%]">Tipo</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[10%] text-center">Prods.</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[10%]">Estado</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[13%]">Creación</TableHead>
+            <TableHead className="w-[50%] md:w-[20%] text-right">Acciones</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -68,18 +68,18 @@ export function CompaniesTable({ companies, onDelete, onRowClick, onCreateClick 
                 <TableCell className="font-medium">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="truncate max-w-[200px]">{company.nombre}</div>
+                      <div className="truncate max-w-[140px] md:max-w-[200px]">{company.nombre}</div>
                     </TooltipTrigger>
                     <TooltipContent>{company.nombre}</TooltipContent>
                   </Tooltip>
                 </TableCell>
-                <TableCell>
+                <TableCell className="hidden md:table-cell">
                   <Badge variant="outline" className={sizeColors[company.tamaño]}>
                     {company.tamaño.charAt(0).toUpperCase()}
                   </Badge>
                 </TableCell>
-                <TableCell className="truncate max-w-[100px]">{company.tipo}</TableCell>
-                <TableCell className="text-center">
+                <TableCell className="hidden md:table-cell truncate max-w-[100px]">{company.tipo}</TableCell>
+                <TableCell className="hidden md:table-cell text-center">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <span className="text-sm cursor-help">{company.cantidad}</span>
@@ -92,7 +92,7 @@ export function CompaniesTable({ companies, onDelete, onRowClick, onCreateClick 
                     </TooltipContent>
                   </Tooltip>
                 </TableCell>
-                <TableCell>
+                <TableCell className="hidden md:table-cell">
                   <Badge
                     variant={company.estado === "activa" ? "default" : "outline"}
                     className={
@@ -104,7 +104,7 @@ export function CompaniesTable({ companies, onDelete, onRowClick, onCreateClick 
                     {company.estado === "activa" ? "Activa" : "Inactiva"}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-sm">{formatDate(company.fechaCreacion)}</TableCell>
+                <TableCell className="hidden md:table-cell text-sm">{formatDate(company.fechaCreacion)}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                     <Tooltip>

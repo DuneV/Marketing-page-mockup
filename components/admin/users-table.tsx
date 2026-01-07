@@ -38,14 +38,14 @@ export function UsersTable({ users, onDelete, onCreateClick }: UsersTableProps) 
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[12%]">Usuario</TableHead>
-            <TableHead className="w-[18%]">Nombre</TableHead>
-            <TableHead className="w-[10%]">Rol</TableHead>
-            <TableHead className="w-[12%]">Cédula</TableHead>
-            <TableHead className="w-[18%]">Empresa Asignada</TableHead>
-            <TableHead className="w-[10%] text-center">Unidades</TableHead>
-            <TableHead className="w-[12%]">Creación</TableHead>
-            <TableHead className="w-[8%] text-right">Acciones</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[12%]">Usuario</TableHead>
+            <TableHead className="w-[60%] md:w-[18%]">Nombre</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[10%]">Rol</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[12%]">Cédula</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[18%]">Empresa Asignada</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[10%] text-center">Unidades</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[12%]">Creación</TableHead>
+            <TableHead className="w-[40%] md:w-[8%] text-right">Acciones</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -67,7 +67,7 @@ export function UsersTable({ users, onDelete, onCreateClick }: UsersTableProps) 
                 key={user.id}
                 className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
               >
-                <TableCell className="font-medium">
+                <TableCell className="hidden md:table-cell font-medium">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <div className="truncate max-w-[100px]">{user.username}</div>
@@ -78,7 +78,7 @@ export function UsersTable({ users, onDelete, onCreateClick }: UsersTableProps) 
                 <TableCell>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="truncate max-w-[150px]">{user.nombre}</div>
+                      <div className="truncate max-w-[160px] md:max-w-[150px]">{user.nombre}</div>
                     </TooltipTrigger>
                     <TooltipContent>
                       <div>
@@ -88,13 +88,13 @@ export function UsersTable({ users, onDelete, onCreateClick }: UsersTableProps) 
                     </TooltipContent>
                   </Tooltip>
                 </TableCell>
-                <TableCell>
+                <TableCell className="hidden md:table-cell">
                   <Badge variant="outline" className={roleColors[user.role]}>
                     {roleLabels[user.role]}
                   </Badge>
                 </TableCell>
-                <TableCell className="font-mono text-sm">{user.cedula}</TableCell>
-                <TableCell>
+                <TableCell className="hidden md:table-cell font-mono text-sm">{user.cedula}</TableCell>
+                <TableCell className="hidden md:table-cell">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <div className="truncate max-w-[140px]">
@@ -104,12 +104,12 @@ export function UsersTable({ users, onDelete, onCreateClick }: UsersTableProps) 
                     <TooltipContent>{user.empresaActualNombre || "Sin empresa asignada"}</TooltipContent>
                   </Tooltip>
                 </TableCell>
-                <TableCell className="text-center font-medium">
+                <TableCell className="hidden md:table-cell text-center font-medium">
                   {Object.values(user.unidadesProductos || {})
                     .reduce((sum, qty) => sum + qty, 0)
                     .toLocaleString()}
                 </TableCell>
-                <TableCell className="text-sm">{formatDate(user.createdAt)}</TableCell>
+                <TableCell className="hidden md:table-cell text-sm">{formatDate(user.createdAt)}</TableCell>
                 <TableCell className="text-right">
                   <Tooltip>
                     <TooltipTrigger asChild>

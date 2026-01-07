@@ -53,13 +53,13 @@ export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssi
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[18%]">Nombre</TableHead>
-            <TableHead className="w-[15%]">Empresa</TableHead>
-            <TableHead className="w-[15%]">Usuario Responsable</TableHead>
-            <TableHead className="w-[10%]">Estado</TableHead>
-            <TableHead className="w-[15%]">Fechas</TableHead>
-            <TableHead className="w-[12%] text-right">Presupuesto</TableHead>
-            <TableHead className="w-[15%] text-right">Acciones</TableHead>
+            <TableHead className="w-[45%] md:w-[18%]">Nombre</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[15%]">Empresa</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[15%]">Usuario Responsable</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[10%]">Estado</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[15%]">Fechas</TableHead>
+            <TableHead className="hidden md:table-cell md:w-[12%] text-right">Presupuesto</TableHead>
+            <TableHead className="w-[55%] md:w-[15%] text-right">Acciones</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -83,12 +83,12 @@ export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssi
                 <TableCell className="font-medium">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="truncate max-w-[180px]">{campaign.nombre}</div>
+                      <div className="truncate max-w-[120px] md:max-w-[180px]">{campaign.nombre}</div>
                     </TooltipTrigger>
                     <TooltipContent>{campaign.nombre}</TooltipContent>
                   </Tooltip>
                 </TableCell>
-                <TableCell>
+                <TableCell className="hidden md:table-cell">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <div className="truncate max-w-[150px]">{campaign.empresaNombre}</div>
@@ -96,7 +96,7 @@ export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssi
                     <TooltipContent>{campaign.empresaNombre}</TooltipContent>
                   </Tooltip>
                 </TableCell>
-                <TableCell>
+                <TableCell className="hidden md:table-cell">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <div className="truncate max-w-[150px]">{campaign.usuarioResponsableNombre}</div>
@@ -104,15 +104,15 @@ export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssi
                     <TooltipContent>{campaign.usuarioResponsableNombre}</TooltipContent>
                   </Tooltip>
                 </TableCell>
-                <TableCell>
+                <TableCell className="hidden md:table-cell">
                   <Badge variant="outline" className={statusColors[campaign.estado]}>
                     {statusLabels[campaign.estado]}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-sm text-slate-600 dark:text-slate-400">
+                <TableCell className="hidden md:table-cell text-sm text-slate-600 dark:text-slate-400">
                   {formatDate(campaign.fechaInicio)} - {formatDate(campaign.fechaFin)}
                 </TableCell>
-                <TableCell className="text-right font-medium">
+                <TableCell className="hidden md:table-cell text-right font-medium">
                   {formatCurrency(campaign.presupuesto)}
                 </TableCell>
                 <TableCell className="text-right">
