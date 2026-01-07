@@ -1,3 +1,5 @@
+// components/admin/report-config-builder-simple.tsx
+
 "use client";
 
 import { useState, useEffect } from "react";
@@ -34,6 +36,11 @@ import {
   FileText,
 } from "lucide-react";
 import { reportConfigStorage } from "@/lib/report-config-storage";
+import { 
+  DATA_SOURCE_LABELS, 
+  CHART_TYPE_LABELS, 
+  KPI_OPERATION_LABELS 
+} from "@/lib/report-config-labels";
 import type { Company } from "@/types/company";
 import type {
   ReportConfiguration,
@@ -43,8 +50,8 @@ import type {
   ChartType,
   DataSource,
   KPIOperation,
-  ServicePackage,
   ReportTemplate,
+  BootstrapCol,
 } from "@/types/report-config";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
@@ -53,10 +60,46 @@ interface ReportConfigBuilderProps {
   onSaved?: () => void;
 }
 
+// Configuración por defecto sin límites
+const DEFAULT_LIMITS = {
+  maxKPIs: 20,
+  maxFilas: 10,
+  maxGraficosPorFila: 4,
+};
+
+// Todas las fuentes de datos disponibles
+const ALL_DATA_SOURCES: DataSource[] = [
+  "ventas_clubcolombia",
+  "ventas_aguila",
+  "ventas_poker",
+  "ventas_ponymalta",
+  "engagement_social",
+  "impresiones_totales",
+  "roi_campana",
+  "costo_adquisicion",
+  "tasa_conversion",
+  "alcance_total",
+];
+
+// Todos los tipos de gráficos disponibles
+const ALL_CHART_TYPES: ChartType[] = [
+  "torta",
+  "barras",
+  "spline",
+  "plot",
+  "scatter",
+  "area",
+  "radar",
+  "funnel",
+  "gauge",
+  "heatmap",
+  "treemap",
+  "tabla",
+];
+
 export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuilderProps) {
   const [open, setOpen] = useState(false);
   const [config, setConfig] = useState<Omit<ReportConfiguration, "id" | "fechaCreacion" | "fechaActualizacion"> | null>(null);
-  const [servicePackage, setServicePackage] = useState<ServicePackage | null>(null);
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -65,11 +108,6 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
     if (open) {
       try {
         reportConfigStorage.initialize();
-        const assignment = reportConfigStorage.getCompanyServiceAssignment(company.id);
-        if (assignment) {
-          const pkg = reportConfigStorage.getServicePackageById(assignment.paqueteId);
-          setServicePackage(pkg);
-        }
         const allTemplates = reportConfigStorage.getAllTemplates();
         setTemplates(allTemplates);
         const existingConfig = reportConfigStorage.getConfigurationByCompany(company.id);
@@ -103,16 +141,16 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
   };
 
   const addKPI = () => {
-    if (!config || !servicePackage) return;
-    if (config.kpis.length >= servicePackage.maxKPIs) {
-      alert(`Límite de KPIs alcanzado (${servicePackage.maxKPIs})`);
+    if (!config) return;
+    if (config.kpis.length >= DEFAULT_LIMITS.maxKPIs) {
+      alert(`Límite de KPIs alcanzado (${DEFAULT_LIMITS.maxKPIs})`);
       return;
     }
     const newKPI: KPIDefinition = {
       id: crypto.randomUUID(),
       nombre: "Nuevo KPI",
       operacion: "mean",
-      fuente: servicePackage.fuentesDatos[0],
+      fuente: ALL_DATA_SOURCES[0],
     };
     setConfig({ ...config, kpis: [...config.kpis, newKPI] });
   };
@@ -134,9 +172,9 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
   };
 
   const addRow = () => {
-    if (!config || !servicePackage) return;
-    if (config.filas.length >= servicePackage.maxFilas) {
-      alert(`Límite de filas alcanzado (${servicePackage.maxFilas})`);
+    if (!config) return;
+    if (config.filas.length >= DEFAULT_LIMITS.maxFilas) {
+      alert(`Límite de filas alcanzado (${DEFAULT_LIMITS.maxFilas})`);
       return;
     }
     const newRow: DashboardRow = {
@@ -155,19 +193,19 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
   };
 
   const addChartToRow = (rowId: string) => {
-    if (!config || !servicePackage) return;
+    if (!config) return;
     const row = config.filas.find((r) => r.id === rowId);
     if (!row) return;
-    if (row.graficos.length >= servicePackage.maxGraficosPorFila) {
-      alert(`Límite de gráficos por fila alcanzado (${servicePackage.maxGraficosPorFila})`);
+    if (row.graficos.length >= DEFAULT_LIMITS.maxGraficosPorFila) {
+      alert(`Límite de gráficos por fila alcanzado (${DEFAULT_LIMITS.maxGraficosPorFila})`);
       return;
     }
     const newChart: ChartDefinition = {
       id: crypto.randomUUID(),
-      tipo: servicePackage.graficosPermitidos[0],
+      tipo: ALL_CHART_TYPES[0],
       titulo: "Nuevo Gráfico",
-      fuente: servicePackage.fuentesDatos[0],
-      columnas: 6,
+      fuente: ALL_DATA_SOURCES[0],
+      columnas: 6 as BootstrapCol,
     };
     setConfig({
       ...config,
@@ -247,44 +285,32 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
           </TooltipTrigger>
           <TooltipContent>Configurar Reporte</TooltipContent>
         </Tooltip>
-      {config && (
-        <DialogContent className="max-w-[90vw] sm:max-w-4xl lg:max-w-5xl max-h-[85vh] flex flex-col p-0">
-        <div className="px-6 pt-6 pb-4 shrink-0">
-          <DialogHeader>
-            <DialogTitle>Configurar Reporte - {company.nombre}</DialogTitle>
-            <DialogDescription>
-              Personaliza los KPIs y gráficos del dashboard para esta empresa
-            </DialogDescription>
-          </DialogHeader>
-        </div>
+        {config && (
+          <DialogContent className="max-w-[90vw] sm:max-w-4xl lg:max-w-5xl max-h-[85vh] flex flex-col p-0">
+            <div className="px-6 pt-6 pb-4 shrink-0">
+              <DialogHeader>
+                <DialogTitle>Configurar Reporte - {company.nombre}</DialogTitle>
+                <DialogDescription>
+                  Personaliza los KPIs y gráficos del dashboard para esta empresa
+                </DialogDescription>
+              </DialogHeader>
+            </div>
 
-        <ScrollArea className="flex-1 px-6 overflow-y-auto">
-          <div className="space-y-6 py-4">
-            {!servicePackage && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  Esta empresa no tiene un paquete de servicio asignado. Por favor, asigna un
-                  paquete primero.
-                </AlertDescription>
-              </Alert>
-            )}
+            <ScrollArea className="flex-1 px-6 overflow-y-auto">
+              <div className="space-y-6 py-4">
+                {validationErrors.length > 0 && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      <ul className="list-disc pl-4">
+                        {validationErrors.map((error, i) => (
+                          <li key={i}>{error}</li>
+                        ))}
+                      </ul>
+                    </AlertDescription>
+                  </Alert>
+                )}
 
-            {validationErrors.length > 0 && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  <ul className="list-disc pl-4">
-                    {validationErrors.map((error, i) => (
-                      <li key={i}>{error}</li>
-                    ))}
-                  </ul>
-                </AlertDescription>
-              </Alert>
-            )}
-
-            {servicePackage && (
-              <>
                 {/* Plantillas */}
                 <Card>
                   <CardHeader>
@@ -317,7 +343,7 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
                   <CardHeader>
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-sm">
-                        KPIs ({config.kpis.length}/{servicePackage.maxKPIs})
+                        KPIs ({config.kpis.length}/{DEFAULT_LIMITS.maxKPIs})
                       </CardTitle>
                       <Button size="sm" onClick={addKPI}>
                         <Plus className="h-4 w-4 md:mr-1" />
@@ -361,9 +387,9 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {["mean", "sum", "count", "max", "min"].map((op) => (
+                                  {["mean", "sum", "count", "max", "min", "median", "std", "variance"].map((op) => (
                                     <SelectItem key={op} value={op}>
-                                      {op}
+                                      {KPI_OPERATION_LABELS[op as KPIOperation]}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
@@ -381,9 +407,9 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {servicePackage.fuentesDatos.map((fuente) => (
+                                  {ALL_DATA_SOURCES.map((fuente) => (
                                     <SelectItem key={fuente} value={fuente}>
-                                      {fuente}
+                                      {DATA_SOURCE_LABELS[fuente]}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
@@ -411,7 +437,7 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
                   <CardHeader>
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-sm">
-                        Dashboard ({config.filas.length}/{servicePackage.maxFilas} filas)
+                        Dashboard ({config.filas.length}/{DEFAULT_LIMITS.maxFilas} filas)
                       </CardTitle>
                       <Button size="sm" onClick={addRow}>
                         <Plus className="h-4 w-4 md:mr-1" />
@@ -433,7 +459,7 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
                               <GripVertical className="h-4 w-4 text-muted-foreground" />
                               <span className="font-medium text-sm">Fila {row.orden}</span>
                               <Badge variant="outline" className="text-xs">
-                                {row.graficos.length}/{servicePackage.maxGraficosPorFila}{" "}
+                                {row.graficos.length}/{DEFAULT_LIMITS.maxGraficosPorFila}{" "}
                                 gráficos
                               </Badge>
                             </div>
@@ -486,9 +512,9 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
                                         <SelectValue />
                                       </SelectTrigger>
                                       <SelectContent>
-                                        {servicePackage.graficosPermitidos.map((tipo) => (
+                                        {ALL_CHART_TYPES.map((tipo) => (
                                           <SelectItem key={tipo} value={tipo}>
-                                            {tipo}
+                                            {CHART_TYPE_LABELS[tipo]}
                                           </SelectItem>
                                         ))}
                                       </SelectContent>
@@ -508,9 +534,9 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
                                         <SelectValue />
                                       </SelectTrigger>
                                       <SelectContent>
-                                        {servicePackage.fuentesDatos.map((fuente) => (
+                                        {ALL_DATA_SOURCES.map((fuente) => (
                                           <SelectItem key={fuente} value={fuente}>
-                                            {fuente}
+                                            {DATA_SOURCE_LABELS[fuente]}
                                           </SelectItem>
                                         ))}
                                       </SelectContent>
@@ -523,11 +549,12 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
                                       min={1}
                                       max={12}
                                       value={chart.columnas}
-                                      onChange={(e) =>
+                                      onChange={(e) => {
+                                        const val = parseInt(e.target.value)
                                         updateChart(row.id, chart.id, {
-                                          columnas: parseInt(e.target.value) as any,
+                                          columnas: (val >= 1 && val <= 12 ? val : 6) as BootstrapCol,
                                         })
-                                      }
+                                      }}
                                       className="h-8"
                                     />
                                   </div>
@@ -550,24 +577,22 @@ export function ReportConfigBuilderSimple({ company, onSaved }: ReportConfigBuil
                     )}
                   </CardContent>
                 </Card>
-              </>
-            )}
-          </div>
-        </ScrollArea>
+              </div>
+            </ScrollArea>
 
-        <div className="px-6 py-4 border-t shrink-0">
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)} disabled={isLoading}>
-              Cancelar
-            </Button>
-            <Button onClick={handleSave} disabled={!servicePackage || isLoading}>
-              <Save className="h-4 w-4 mr-2" />
-              {isLoading ? "Guardando..." : "Guardar Configuración"}
-            </Button>
-          </DialogFooter>
-        </div>
-      </DialogContent>
-      )}
+            <div className="px-6 py-4 border-t shrink-0">
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setOpen(false)} disabled={isLoading}>
+                  Cancelar
+                </Button>
+                <Button onClick={handleSave} disabled={isLoading}>
+                  <Save className="h-4 w-4 mr-2" />
+                  {isLoading ? "Guardando..." : "Guardar Configuración"}
+                </Button>
+              </DialogFooter>
+            </div>
+          </DialogContent>
+        )}
       </Dialog>
     </TooltipProvider>
   );

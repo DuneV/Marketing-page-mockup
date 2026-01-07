@@ -1,3 +1,5 @@
+//lib\data\campaigns.ts
+
 import {
   collection,
   doc,

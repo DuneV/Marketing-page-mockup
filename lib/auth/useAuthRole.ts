@@ -2,21 +2,35 @@
 "use client"
 
 import { useEffect, useState, useRef } from "react"
-import { onAuthStateChanged, type User } from "firebase/auth"
+import { onAuthStateChanged, type User as FirebaseUser } from "firebase/auth"
 import { doc, getDoc } from "firebase/firestore"
 import { auth, db } from "@/lib/firebase/client"
 
 export type Role = "admin" | "company" | "employee" | null
 
+// Extender User con datos adicionales de Firestore
+export interface ExtendedUser extends FirebaseUser {
+  nombre?: string
+  companyId?: string
+  role?: Role
+}
+
 interface AuthRoleState {
-  user: User | null
+  user: ExtendedUser | null
   role: Role
   loading: boolean
   error: Error | null
 }
 
 // Cache global para evitar llamadas duplicadas
-const roleCache = new Map<string, { role: Role; timestamp: number }>()
+interface CachedUserData {
+  role: Role
+  nombre?: string
+  companyId?: string
+  timestamp: number
+}
+
+const userCache = new Map<string, CachedUserData>()
 const CACHE_DURATION = 5 * 60 * 1000 // 5 minutos
 
 export function useAuthRole() {
@@ -31,9 +45,9 @@ export function useAuthRole() {
   const isFetchingRef = useRef(false)
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
+    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       // Usuario no autenticado
-      if (!u) {
+      if (!firebaseUser) {
         console.log("[useAuthRole] Usuario no autenticado")
         setState({ user: null, role: null, loading: false, error: null })
         return
@@ -49,24 +63,30 @@ export function useAuthRole() {
         isFetchingRef.current = true
 
         // Verificar cache
-        const cached = roleCache.get(u.uid)
+        const cached = userCache.get(firebaseUser.uid)
         if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
-          console.log("[useAuthRole] Usando rol cacheado:", cached.role)
-          setState({ user: u, role: cached.role, loading: false, error: null })
+          console.log("[useAuthRole] Usando datos cacheados")
+          const extendedUser: ExtendedUser = {
+            ...firebaseUser,
+            role: cached.role,
+            nombre: cached.nombre,
+            companyId: cached.companyId,
+          }
+          setState({ user: extendedUser, role: cached.role, loading: false, error: null })
           return
         }
 
-        console.log("[useAuthRole] Obteniendo rol desde Firestore para uid:", u.uid)
+        console.log("[useAuthRole] Obteniendo datos desde Firestore para uid:", firebaseUser.uid)
 
-        // Esperar un momento para asegurar que el token esté sincronizado
+        // Esperar un momento para asegurar sincronización
         await new Promise((resolve) => setTimeout(resolve, 100))
 
-        const snap = await getDoc(doc(db, "users", u.uid))
+        const snap = await getDoc(doc(db, "users", firebaseUser.uid))
 
         if (!snap.exists()) {
-          console.warn("[useAuthRole] Documento de usuario no existe:", u.uid)
+          console.warn("[useAuthRole] Documento de usuario no existe:", firebaseUser.uid)
           setState({
-            user: u,
+            user: firebaseUser as ExtendedUser,
             role: null,
             loading: false,
             error: new Error("User document not found"),
@@ -75,16 +95,36 @@ export function useAuthRole() {
         }
 
         const data = snap.data()
-        const r = data.role as Role
+        const role = data.role as Role
+        const nombre = data.nombre || data.name || firebaseUser.displayName || ""
+        const companyId = data.companyId || data.empresaId || undefined
 
-        console.log("[useAuthRole] Rol obtenido:", r)
+        console.log("[useAuthRole] Datos obtenidos:", { role, nombre, companyId })
 
         // Guardar en cache
-        roleCache.set(u.uid, { role: r, timestamp: Date.now() })
+        userCache.set(firebaseUser.uid, {
+          role,
+          nombre,
+          companyId,
+          timestamp: Date.now(),
+        })
 
-        setState({ user: u, role: r ?? null, loading: false, error: null })
+        // Crear usuario extendido
+        const extendedUser: ExtendedUser = {
+          ...firebaseUser,
+          role,
+          nombre,
+          companyId,
+        }
+
+        setState({
+          user: extendedUser,
+          role: role ?? null,
+          loading: false,
+          error: null,
+        })
       } catch (err) {
-        console.error("[useAuthRole] Error obteniendo rol:", err)
+        console.error("[useAuthRole] Error obteniendo datos:", err)
 
         // Logging detallado del error
         if (err instanceof Error) {
@@ -94,7 +134,7 @@ export function useAuthRole() {
         }
 
         setState({
-          user: u,
+          user: firebaseUser as ExtendedUser,
           role: null,
           loading: false,
           error: err instanceof Error ? err : new Error(String(err)),
@@ -111,7 +151,7 @@ export function useAuthRole() {
 }
 
 // Función auxiliar para limpiar cache (útil en logout)
-export function clearRoleCache() {
-  roleCache.clear()
+export function clearUserCache() {
+  userCache.clear()
   console.log("[useAuthRole] Cache limpiado")
 }

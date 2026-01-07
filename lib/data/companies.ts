@@ -1,226 +1,68 @@
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  query,
-  orderBy,
-  limit,
-  startAfter,
-  getCountFromServer,
-  serverTimestamp,
-  type QueryDocumentSnapshot,
-  type DocumentData,
-} from "firebase/firestore"
-import { db } from "@/lib/firebase/client"
-import { CompanyDocSchema } from "@/lib/schemas/company"
-import type { CompanyDoc } from "@/lib/schemas/company"
+// lib/data/companies.ts
 import type { Company } from "@/types/company"
+import {
+  apiGetAllCompanies,
+  apiCreateCompanyWithUser,
+  apiDeleteCompany,
+  apiGetCompany,
+  apiUpdateCompanyCampaignStats,
+  apiDecrementCompanyCampaignCount,
+} from "@/lib/api/companiesApi"
 
-/**
- * Convertir timestamp de Firestore a ISO string
- */
-function timestampToISO(timestamp: any): string {
-  if (!timestamp) return new Date().toISOString()
-  if (typeof timestamp === "string") return timestamp
-  if (timestamp.toDate) return timestamp.toDate().toISOString()
-  return new Date().toISOString()
+// Helper para convertir valores a números seguros
+const toSafeNumber = (value: any): number => {
+  if (value === null || value === undefined || value === '') return 0
+  const num = typeof value === 'number' ? value : parseFloat(value)
+  return isNaN(num) ? 0 : num
 }
 
-/**
- * Crear una nueva empresa en Firestore
- */
-export async function createCompany(data: Omit<Company, "id" | "fechaCreacion">): Promise<string> {
-  const companyData = {
-    ...data,
-    fechaCreacion: new Date().toISOString(),
-    totalCampañas: data.totalCampañas || 0,
-    inversionTotal: data.inversionTotal || 0,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  }
-
-  const parsed = CompanyDocSchema.parse(companyData)
-  const docRef = doc(collection(db, "companies"))
-  await setDoc(docRef, parsed)
-
-  return docRef.id
-}
-
-/**
- * Obtener una empresa por ID (sin contraseña por seguridad)
- */
-export async function getCompany(companyId: string): Promise<Company | null> {
-  const snap = await getDoc(doc(db, "companies", companyId))
-  if (!snap.exists()) return null
-
-  const data = snap.data()
+// Helper para mapear una empresa desde la API
+function mapCompany(c: any): Company {
   return {
-    id: snap.id,
-    nombre: data.nombre,
-    tamaño: data.tamaño,
-    tipo: data.tipo,
-    productos: data.productos || [],
-    cantidad: data.cantidad,
-    username: data.username,
-    contraseña: "••••••••", // Ocultar contraseña por seguridad
-    estado: data.estado,
-    fechaCreacion: data.fechaCreacion || timestampToISO(data.createdAt),
-    totalCampañas: data.totalCampañas || 0,
-    inversionTotal: data.inversionTotal || 0,
+    id: c.id ?? c.companyId ?? c.company_id,
+    nombre: c.name ?? c.nombre,
+    tamaño: c.size ?? c.tamaño ?? c.tamano ?? "mediano",
+    tipo: c.type ?? c.tipo ?? "",
+    productos: Array.isArray(c.products) ? c.products : (Array.isArray(c.productos) ? c.productos : []),
+    cantidad: toSafeNumber(c.quantity ?? c.cantidad ?? (Array.isArray(c.products) ? c.products.length : 0)),
+    username: c.username ?? "",
+    contraseña: "••••••••",
+    estado: c.status ?? c.estado ?? "activa",
+    fechaCreacion: c.fechaCreacion ?? c.createdAt ?? c.created_at ?? new Date().toISOString(),
+    totalCampañas: toSafeNumber(c.total_campaigns ?? c.totalCampañas),
+    inversionTotal: toSafeNumber(c.total_investment ?? c.inversionTotal),
   }
 }
 
-/**
- * Obtener todas las empresas (sin contraseñas por seguridad)
- */
 export async function getAllCompanies(): Promise<Company[]> {
-  const q = query(collection(db, "companies"), orderBy("createdAt", "desc"))
-  const snapshot = await getDocs(q)
-
-  return snapshot.docs.map((doc) => {
-    const data = doc.data()
-    return {
-      id: doc.id,
-      nombre: data.nombre,
-      tamaño: data.tamaño,
-      tipo: data.tipo,
-      productos: data.productos || [],
-      cantidad: data.cantidad,
-      username: data.username,
-      contraseña: "••••••••", // Ocultar contraseña por seguridad
-      estado: data.estado,
-      fechaCreacion: data.fechaCreacion || timestampToISO(data.createdAt),
-      totalCampañas: data.totalCampañas || 0,
-      inversionTotal: data.inversionTotal || 0,
-    }
-  })
+  const data = await apiGetAllCompanies()
+  const rows = Array.isArray(data) ? data : Array.isArray(data?.companies) ? data.companies : []
+  return rows.map(mapCompany)
 }
 
-/**
- * Resultado paginado de empresas
- */
-export interface PaginatedCompaniesResult {
-  companies: Company[]
-  lastDoc: QueryDocumentSnapshot<DocumentData> | null
-  hasMore: boolean
-  total: number
+export async function createCompanyWithUser(payload: any) {
+  return apiCreateCompanyWithUser(payload)
 }
 
-/**
- * Obtener empresas con paginación
- */
-export async function getCompaniesPaginated(
-  pageSize: number = 20,
-  lastDoc?: QueryDocumentSnapshot<DocumentData> | null
-): Promise<PaginatedCompaniesResult> {
-  const companiesRef = collection(db, "companies")
-
-  // Get total count
-  const countSnapshot = await getCountFromServer(companiesRef)
-  const total = countSnapshot.data().count
-
-  // Build query with pagination
-  let q = query(companiesRef, orderBy("createdAt", "desc"), limit(pageSize))
-
-  if (lastDoc) {
-    q = query(companiesRef, orderBy("createdAt", "desc"), startAfter(lastDoc), limit(pageSize))
-  }
-
-  const snapshot = await getDocs(q)
-
-  const companies = snapshot.docs.map((doc) => {
-    const data = doc.data()
-    return {
-      id: doc.id,
-      nombre: data.nombre,
-      tamaño: data.tamaño,
-      tipo: data.tipo,
-      productos: data.productos || [],
-      cantidad: data.cantidad,
-      username: data.username,
-      contraseña: "••••••••",
-      estado: data.estado,
-      fechaCreacion: data.fechaCreacion || timestampToISO(data.createdAt),
-      totalCampañas: data.totalCampañas || 0,
-      inversionTotal: data.inversionTotal || 0,
-    }
-  })
-
-  const lastVisible = snapshot.docs[snapshot.docs.length - 1] || null
-  const hasMore = snapshot.docs.length === pageSize
-
-  return {
-    companies,
-    lastDoc: lastVisible,
-    hasMore,
-    total,
-  }
-}
-
-/**
- * Actualizar una empresa
- */
-export async function updateCompany(companyId: string, data: Partial<Company>): Promise<void> {
-  const updateData: any = { ...data }
-  delete updateData.id
-  delete updateData.fechaCreacion
-
-  await updateDoc(doc(db, "companies", companyId), {
-    ...updateData,
-    updatedAt: serverTimestamp(),
-  })
-}
-
-/**
- * Eliminar una empresa
- */
 export async function deleteCompany(companyId: string): Promise<void> {
-  await deleteDoc(doc(db, "companies", companyId))
+  await apiDeleteCompany(companyId)
 }
 
-/**
- * Actualizar estadísticas de campañas de una empresa
- */
-export async function updateCompanyCampaignStats(
-  companyId: string,
-  totalCampañas: number,
-  inversionTotal: number
-): Promise<void> {
-  await updateDoc(doc(db, "companies", companyId), {
-    totalCampañas,
-    inversionTotal,
-    updatedAt: serverTimestamp(),
+export async function decrementCompanyCampaignCount(companyId: string, budget: number): Promise<void> {
+  await apiDecrementCompanyCampaignCount(companyId, budget)
+}
+
+export async function getCompany(companyId: string): Promise<Company | null> {
+  if (!companyId) return null
+  const data = await apiGetCompany(companyId)
+  const company = (data as any)?.company ?? data
+  if (!company) return null
+  return mapCompany(company)
+}
+
+export async function incrementCompanyCampaignCount(companyId: string, budget: number): Promise<void> {
+  await apiUpdateCompanyCampaignStats(companyId, { 
+    deltaCampaigns: 1, 
+    deltaBudget: Math.abs(budget || 0) 
   })
-}
-
-/**
- * Incrementar contadores de campaña
- */
-export async function incrementCompanyCampaignCount(companyId: string, inversionAmount: number): Promise<void> {
-  const company = await getCompany(companyId)
-  if (!company) return
-
-  await updateCompanyCampaignStats(
-    companyId,
-    (company.totalCampañas || 0) + 1,
-    (company.inversionTotal || 0) + inversionAmount
-  )
-}
-
-/**
- * Decrementar contadores de campaña
- */
-export async function decrementCompanyCampaignCount(companyId: string, inversionAmount: number): Promise<void> {
-  const company = await getCompany(companyId)
-  if (!company) return
-
-  await updateCompanyCampaignStats(
-    companyId,
-    Math.max(0, (company.totalCampañas || 0) - 1),
-    Math.max(0, (company.inversionTotal || 0) - inversionAmount)
-  )
 }

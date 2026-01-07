@@ -1,10 +1,11 @@
 import type { Company } from "@/types/company"
+import { v4 as uuidv4 } from 'uuid';
 
 const STORAGE_KEY = "companies"
 
 const initialCompanies: Company[] = [
   {
-    id: crypto.randomUUID(),
+    id: uuidv4(),
     nombre: "Distribuidora Central",
     tamaño: "grande",
     tipo: "Distribución",
@@ -18,7 +19,7 @@ const initialCompanies: Company[] = [
     inversionTotal: 450000,
   },
   {
-    id: crypto.randomUUID(),
+    id: uuidv4(),
     nombre: "SuperMercados del Norte",
     tamaño: "mediano",
     tipo: "Retail",
@@ -32,7 +33,7 @@ const initialCompanies: Company[] = [
     inversionTotal: 280000,
   },
   {
-    id: crypto.randomUUID(),
+    id: uuidv4(),
     nombre: "Comercializadora Express",
     tamaño: "pequeño",
     tipo: "Comercio",
@@ -46,7 +47,7 @@ const initialCompanies: Company[] = [
     inversionTotal: 120000,
   },
   {
-    id: crypto.randomUUID(),
+    id: uuidv4(),
     nombre: "Grupo Empresarial Bavaria",
     tamaño: "enterprise",
     tipo: "Corporativo",
@@ -60,7 +61,7 @@ const initialCompanies: Company[] = [
     inversionTotal: 850000,
   },
   {
-    id: crypto.randomUUID(),
+    id: uuidv4(),
     nombre: "Tiendas la Esquina",
     tamaño: "pequeño",
     tipo: "Retail",

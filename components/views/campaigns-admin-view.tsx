@@ -1,3 +1,5 @@
+// components/views/campaigns-admin-view.tsx
+
 "use client"
 
 import { useEffect, useState, useMemo } from "react"
@@ -13,12 +15,12 @@ import { CreateCampaignModal } from "@/components/admin/create-campaign-modal"
 import { EditCampaignModal } from "@/components/admin/edit-campaign-modal"
 import { DeleteCampaignDialog } from "@/components/admin/delete-campaign-dialog"
 import { CampaignDetailModal } from "@/components/admin/campaign-detail-modal"
-import { AssignUserToCampaignModal } from "@/components/admin/assign-user-to-campaign-modal"
 import { TableSkeleton } from "@/components/admin/table-skeleton"
 import { KPISkeleton } from "@/components/admin/kpi-skeleton"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TableSearch, type FilterOption } from "@/components/admin/table-search"
 import { toast } from "sonner"
+import { useAuthRole, type ExtendedUser } from "@/lib/auth/useAuthRole"
 import type { Campaign } from "@/types/campaign"
 import type { Company } from "@/types/company"
 
@@ -30,6 +32,7 @@ const statusFilterOptions: FilterOption[] = [
 ]
 
 export function CampaignsAdminView() {
+  const { user, role } = useAuthRole()
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [companies, setCompanies] = useState<Company[]>([])
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
@@ -37,8 +40,6 @@ export function CampaignsAdminView() {
   const [deleteCampaignId, setDeleteCampaignId] = useState<string | null>(null)
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
-  const [isAssignModalOpen, setIsAssignModalOpen] = useState(false)
-  const [assignCampaignId, setAssignCampaignId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
@@ -55,7 +56,6 @@ export function CampaignsAdminView() {
         getAllCompanies(),
       ])
 
-      // Los nombres ya están denormalizados en el documento
       setCampaigns(loadedCampaigns as Campaign[])
       setCompanies(loadedCompanies)
     } catch (error) {
@@ -73,19 +73,14 @@ export function CampaignsAdminView() {
     if (!campaign) return
 
     try {
-      // 1. Desasignar usuario
       if (campaign.usuarioResponsableId) {
         await assignUserToCampaign(campaign.usuarioResponsableId, null)
       }
 
-      // 2. Eliminar imágenes y comentarios
       await deleteAllCampaignImages(deleteCampaignId)
       await deleteAllCampaignComments(deleteCampaignId)
-
-      // 3. Eliminar campaña
       await deleteCampaign(deleteCampaignId)
 
-      // 4. Actualizar stats de empresa
       if (campaign.empresaId && campaign.presupuesto) {
         await decrementCompanyCampaignCount(campaign.empresaId, campaign.presupuesto)
       }
@@ -115,11 +110,6 @@ export function CampaignsAdminView() {
     setIsDetailModalOpen(true)
   }
 
-  const handleAssignUserClick = (campaignId: string) => {
-    setAssignCampaignId(campaignId)
-    setIsAssignModalOpen(true)
-  }
-
   const handleCloseDetailModal = () => {
     setIsDetailModalOpen(false)
     setSelectedCampaignId(null)
@@ -130,14 +120,17 @@ export function CampaignsAdminView() {
     setSelectedCampaignId(null)
   }
 
-  const handleCloseAssignModal = () => {
-    setIsAssignModalOpen(false)
-    setAssignCampaignId(null)
-  }
+  // Filtrado por empresa (si es usuario company)
+  const campaignsByCompany = useMemo(() => {
+    if (role === "company" && user?.companyId) {
+      return campaigns.filter(c => c.empresaId === user.companyId)
+    }
+    return campaigns // Admin ve todas
+  }, [campaigns, role, user])
 
-  // Filtrado de campañas
+  // Filtrado de campañas por búsqueda y estado
   const filteredCampaigns = useMemo(() => {
-    return campaigns.filter((campaign) => {
+    return campaignsByCompany.filter((campaign) => {
       const matchesSearch =
         searchQuery === "" ||
         campaign.nombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -148,18 +141,18 @@ export function CampaignsAdminView() {
 
       return matchesSearch && matchesStatus
     })
-  }, [campaigns, searchQuery, statusFilter])
+  }, [campaignsByCompany, searchQuery, statusFilter])
 
-  // KPI calculations (usando todos los datos, no los filtrados)
-  const totalCampaigns = campaigns.length
-  const activeCampaigns = campaigns.filter((c) => c.estado === "activa").length
-  const totalBudget = campaigns.reduce((sum, c) => sum + (c.presupuesto || 0), 0)
+  // KPIs (usando campaignsByCompany para respetar filtro de empresa)
+  const totalCampaigns = campaignsByCompany.length
+  const activeCampaigns = campaignsByCompany.filter((c) => c.estado === "activa").length
+  const totalBudget = campaignsByCompany.reduce((sum, c) => sum + (c.presupuesto || 0), 0)
 
   const campaignsByStatus = {
-    planificacion: campaigns.filter((c) => c.estado === "planificacion").length,
-    activa: campaigns.filter((c) => c.estado === "activa").length,
-    completada: campaigns.filter((c) => c.estado === "completada").length,
-    cancelada: campaigns.filter((c) => c.estado === "cancelada").length,
+    planificacion: campaignsByCompany.filter((c) => c.estado === "planificacion").length,
+    activa: campaignsByCompany.filter((c) => c.estado === "activa").length,
+    completada: campaignsByCompany.filter((c) => c.estado === "completada").length,
+    cancelada: campaignsByCompany.filter((c) => c.estado === "cancelada").length,
   }
 
   const formatCurrency = (amount: number) => {
@@ -176,27 +169,21 @@ export function CampaignsAdminView() {
   const selectedCampaign = selectedCampaignId
     ? campaigns.find((c) => c.id === selectedCampaignId) || null
     : null
-  const assignCampaign = assignCampaignId
-    ? campaigns.find((c) => c.id === assignCampaignId) || null
-    : null
 
   if (isLoading) {
     return (
       <div className="space-y-6">
-        {/* Header Skeleton */}
         <div className="flex items-center justify-between">
           <Skeleton className="h-8 w-64" />
           <Skeleton className="h-10 w-40" />
         </div>
 
-        {/* KPI Skeletons */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <KPISkeleton key={i} />
           ))}
         </div>
 
-        {/* Table Skeleton */}
         <Card>
           <CardHeader>
             <Skeleton className="h-6 w-40" />
@@ -251,9 +238,9 @@ export function CampaignsAdminView() {
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
             <span>Campañas</span>
-            {filteredCampaigns.length !== campaigns.length && (
+            {filteredCampaigns.length !== campaignsByCompany.length && (
               <span className="text-sm font-normal text-muted-foreground">
-                Mostrando {filteredCampaigns.length} de {campaigns.length}
+                Mostrando {filteredCampaigns.length} de {campaignsByCompany.length}
               </span>
             )}
           </CardTitle>
@@ -273,7 +260,7 @@ export function CampaignsAdminView() {
             onEdit={handleEditClick}
             onDelete={handleDeleteClick}
             onRowClick={handleRowClick}
-            onAssignUser={handleAssignUserClick}
+            onAssignUser={() => {}} // No se usa en admin
           />
         </CardContent>
       </Card>
@@ -305,13 +292,6 @@ export function CampaignsAdminView() {
         campaign={selectedCampaign}
         isOpen={isDetailModalOpen}
         onClose={handleCloseDetailModal}
-      />
-
-      <AssignUserToCampaignModal
-        campaign={assignCampaign}
-        isOpen={isAssignModalOpen}
-        onClose={handleCloseAssignModal}
-        onSuccess={loadData}
       />
     </div>
   )

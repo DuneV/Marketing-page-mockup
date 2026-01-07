@@ -66,8 +66,6 @@ export default function CampaignsAdminPage() {
   }
 
   return (
-    <AdminLayout>
-      <CampaignsAdminView />
-    </AdminLayout>
+    <CampaignsAdminView />
   )
 }

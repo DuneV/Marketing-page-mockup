@@ -66,8 +66,6 @@ export default function AdminCompaniesPage() {
   }
 
   return (
-    <AdminLayout>
       <AdminView />
-    </AdminLayout>
   )
 }

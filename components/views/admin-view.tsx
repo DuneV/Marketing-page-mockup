@@ -2,23 +2,24 @@
 
 "use client"
 
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Shield, Plus, Building2, CheckCircle, Target, DollarSign, Upload } from "lucide-react"
-import { getAllCompanies, createCompany, deleteCompany } from "@/lib/data/companies"
-import { migrateCompaniesToFirestore } from "@/lib/migrations/migrate-companies"
+import { Skeleton } from "@/components/ui/skeleton"
+import { TableSearch, type FilterOption } from "@/components/admin/table-search"
 import { AdminKPICard } from "@/components/admin/admin-kpi-card"
 import { CompaniesTable } from "@/components/admin/companies-table"
+import type { CreateCompanyWithUserPayload } from "@/components/admin/create-company-modal"
 import { CreateCompanyModal } from "@/components/admin/create-company-modal"
 import { DeleteCompanyDialog } from "@/components/admin/delete-company-dialog"
 import { CompanyDetailModal } from "@/components/admin/company-detail-modal"
 import { TableSkeleton } from "@/components/admin/table-skeleton"
 import { KPISkeleton } from "@/components/admin/kpi-skeleton"
-import { Skeleton } from "@/components/ui/skeleton"
-import { TableSearch, type FilterOption } from "@/components/admin/table-search"
 import { toast } from "sonner"
+import { Shield, Plus, Building2, CheckCircle, Target, DollarSign, Upload } from "lucide-react"
+
 import type { Company } from "@/types/company"
+import { getAllCompanies, createCompanyWithUser, deleteCompany } from "@/lib/data/companies"
 
 const statusFilterOptions: FilterOption[] = [
   { value: "activa", label: "Activa" },
@@ -32,53 +33,55 @@ export function AdminView() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
 
   useEffect(() => {
     loadCompanies()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const loadCompanies = async () => {
     setIsLoading(true)
     try {
       const loadedCompanies = await getAllCompanies()
-      setCompanies(loadedCompanies)
-    } catch (error) {
-      console.error("Error cargando empresas:", error)
-      toast.error("Error al cargar empresas")
+      setCompanies(Array.isArray(loadedCompanies) ? loadedCompanies : [])
+    } catch (error: any) {
+      console.warn("No hay empresas aún o endpoint vacío:", error)
+      setCompanies([]) 
     } finally {
       setIsLoading(false)
     }
   }
 
-  const handleCreateCompany = async (newCompany: Omit<Company, "id" | "fechaCreacion">) => {
+    const handleCreateCompany = async (payload: CreateCompanyWithUserPayload) => {
     try {
-      await createCompany(newCompany)
-      toast.success("Empresa creada", {
-        description: `${newCompany.nombre} ha sido agregada exitosamente`
-      })
+      await createCompanyWithUser(payload)
+      toast.success("Empresa creada")
       await loadCompanies()
-    } catch (error) {
-      console.error("Error creando empresa:", error)
-      toast.error("Error al crear empresa")
+    } catch (e: any) {
+      console.error("Create company failed:", e)
+      toast.error(e?.message ?? "Error al crear empresa")
+      throw e 
     }
   }
 
   const handleDeleteCompany = async () => {
-    if (deleteCompanyId) {
-      const companyName = companies.find(c => c.id === deleteCompanyId)?.nombre
-      try {
-        await deleteCompany(deleteCompanyId)
-        setDeleteCompanyId(null)
-        toast.success("Empresa eliminada", {
-          description: `${companyName} ha sido eliminada permanentemente`
-        })
-        await loadCompanies()
-      } catch (error) {
-        console.error("Error eliminando empresa:", error)
-        toast.error("Error al eliminar empresa")
-      }
+    if (!deleteCompanyId) return
+
+    const companyName = companies.find((c) => c.id === deleteCompanyId)?.nombre
+
+    try {
+      await deleteCompany(deleteCompanyId)
+      setDeleteCompanyId(null)
+      toast.success("Empresa eliminada", {
+        description: `${companyName ?? "La empresa"} ha sido eliminada permanentemente`,
+      })
+      await loadCompanies()
+    } catch (error) {
+      console.error("Error eliminando empresa:", error)
+      toast.error("Error al eliminar empresa")
     }
   }
 
@@ -98,32 +101,6 @@ export function AdminView() {
 
   const handleConfigChange = async () => {
     await loadCompanies()
-  }
-
-  const handleMigrateCompanies = async () => {
-    try {
-      toast.info("Migrando empresas...", {
-        description: "Esto puede tomar unos momentos"
-      })
-
-      const result = await migrateCompaniesToFirestore()
-
-      if (result.success) {
-        toast.success("Migración completada", {
-          description: `${result.migrated} empresas migradas a Firestore`
-        })
-        await loadCompanies()
-      } else {
-        toast.error("Migración con errores", {
-          description: `${result.errors.length} errores encontrados`
-        })
-      }
-    } catch (error) {
-      console.error("Error en migración:", error)
-      toast.error("Error al migrar", {
-        description: "No se pudieron migrar las empresas"
-      })
-    }
   }
 
   // Filtrado de empresas
@@ -193,11 +170,8 @@ export function AdminView() {
           <Shield className="h-6 w-6 text-amber-600" />
           <h2 className="text-2xl font-bold">Gestión de Empresas</h2>
         </div>
+
         <div className="flex gap-2">
-          <Button variant="outline" onClick={handleMigrateCompanies}>
-            <Upload className="h-4 w-4 mr-2" />
-            Migrar desde localStorage
-          </Button>
           <Button onClick={() => setIsCreateModalOpen(true)} className="bg-amber-600 hover:bg-amber-700">
             <Plus className="h-4 w-4 mr-2" />
             Nueva Empresa
@@ -230,6 +204,7 @@ export function AdminView() {
             )}
           </CardTitle>
         </CardHeader>
+
         <CardContent>
           <TableSearch
             searchValue={searchQuery}
@@ -240,6 +215,7 @@ export function AdminView() {
             filterOptions={statusFilterOptions}
             filterLabel="Estado"
           />
+
           <CompaniesTable
             companies={filteredCompanies}
             onDelete={handleDeleteClick}
@@ -264,11 +240,7 @@ export function AdminView() {
         onConfirm={handleDeleteCompany}
       />
 
-      <CompanyDetailModal
-        company={selectedCompany}
-        isOpen={isDetailModalOpen}
-        onClose={handleCloseDetailModal}
-      />
+      <CompanyDetailModal company={selectedCompany} isOpen={isDetailModalOpen} onClose={handleCloseDetailModal} />
     </div>
   )
 }

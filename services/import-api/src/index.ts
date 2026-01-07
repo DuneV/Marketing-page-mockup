@@ -4,6 +4,7 @@ import express from "express"
 import cors from "cors"
 import { importsRouter } from "./routes/imports.js"
 import { templatesRouter } from "./routes/templates.js"
+import { adminCompaniesRouter } from "./routes/admin-companies.js";
 
 const app = express()
 
@@ -17,6 +18,7 @@ app.get("/health", (_req, res) => res.json({ ok: true }))
 
 app.use("/imports", importsRouter)
 app.use("/templates", templatesRouter)
+app.use("/admin/companies", adminCompaniesRouter);
 app.get("/debug/firebase", (_req, res) => {
   res.json({
     FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID ?? null,

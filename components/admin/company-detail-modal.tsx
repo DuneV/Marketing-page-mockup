@@ -1,3 +1,5 @@
+// components\admin\company-detail-modal.tsx
+
 "use client"
 
 import {

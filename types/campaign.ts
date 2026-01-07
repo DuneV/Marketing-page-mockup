@@ -1,4 +1,4 @@
-// TypeScript interfaces para campañas
+// types/campaign.ts
 
 export interface Campaign {
   id: string
@@ -14,6 +14,7 @@ export interface Campaign {
   descripcion: string
   objetivos?: string
   productosAsociados: string[]
+  bucketPath?: string
   createdAt: string
   updatedAt: string
   createdBy?: string
@@ -33,6 +34,7 @@ export interface CampaignFormData {
   descripcion: string
   objetivos?: string
   productosAsociados: string[]
+  bucketPath?: string // ✅ Opcional al crear, se genera automáticamente si no se proporciona
 }
 
 export interface CampaignImage {
@@ -60,4 +62,16 @@ export interface CampaignFilters {
   usuarioResponsableId?: string
   fechaInicio?: string
   fechaFin?: string
+}
+
+export interface CampaignStats {
+  total: number
+  porEstado: {
+    planificacion: number
+    activa: number
+    completada: number
+    cancelada: number
+  }
+  presupuestoTotal: number
+  presupuestoPromedio: number
 }

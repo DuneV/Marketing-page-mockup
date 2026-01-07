@@ -1,3 +1,5 @@
+// components/admin/edit-campaign-modal.tsx
+
 "use client"
 
 import { useForm } from "react-hook-form"
@@ -31,18 +33,14 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { updateCampaign } from "@/lib/data/campaigns"
-import { assignUserToCampaign, getUser } from "@/lib/data/users"
 import { getCompany } from "@/lib/data/companies"
-import { collection, getDocs, query, where } from "firebase/firestore"
-import { db } from "@/lib/firebase/client"
 import { toast } from "sonner"
-import type { Company } from "@/types/company"
 import type { Campaign } from "@/types/campaign"
+import type { Company } from "@/types/company"
 
 const campaignSchema = z.object({
   nombre: z.string().min(1, "Nombre requerido"),
   empresaId: z.string().min(1, "Empresa requerida"),
-  usuarioResponsableId: z.string().min(1, "Usuario responsable requerido"),
   estado: z.enum(["planificacion", "activa", "completada", "cancelada"]),
   fechaInicio: z.string().min(1, "Fecha de inicio requerida"),
   fechaFin: z.string().min(1, "Fecha fin requerida"),
@@ -50,6 +48,7 @@ const campaignSchema = z.object({
   descripcion: z.string().min(1, "Descripción requerida"),
   objetivos: z.string().optional(),
   productosAsociados: z.string().optional(),
+  bucketPath: z.string().optional(),
 }).refine((data) => {
   if (data.fechaInicio && data.fechaFin) {
     return new Date(data.fechaFin) >= new Date(data.fechaInicio)
@@ -68,22 +67,25 @@ interface EditCampaignModalProps {
   companies: Company[]
 }
 
-interface User {
-  uid: string
-  nombre: string
-  role: string
-}
-
 export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, companies }: EditCampaignModalProps) {
-  const [employees, setEmployees] = useState<User[]>([])
   const [isLoading, setIsLoading] = useState(false)
 
-  const form = useForm<{ nombre: string; empresaId: string; usuarioResponsableId: string; estado: "planificacion" | "activa" | "completada" | "cancelada"; fechaInicio: string; fechaFin: string; presupuesto: number; descripcion: string; objetivos?: string; productosAsociados: string }>({
+  const form = useForm<{
+    nombre: string
+    empresaId: string
+    estado: "planificacion" | "activa" | "completada" | "cancelada"
+    fechaInicio: string
+    fechaFin: string
+    presupuesto: number
+    descripcion: string
+    objetivos?: string
+    productosAsociados: string
+    bucketPath?: string
+  }>({
     resolver: zodResolver(campaignSchema),
     defaultValues: {
       nombre: "",
       empresaId: "",
-      usuarioResponsableId: "",
       estado: "planificacion",
       fechaInicio: "",
       fechaFin: "",
@@ -91,75 +93,60 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
       descripcion: "",
       objetivos: "",
       productosAsociados: "",
+      bucketPath: "",
     },
   })
 
   useEffect(() => {
-    if (isOpen) {
-      loadEmployees()
-    }
-  }, [isOpen])
-
-  useEffect(() => {
-    if (campaign) {
+    if (campaign && isOpen) {
       form.reset({
         nombre: campaign.nombre,
         empresaId: campaign.empresaId,
-        usuarioResponsableId: campaign.usuarioResponsableId,
         estado: campaign.estado,
         fechaInicio: campaign.fechaInicio,
         fechaFin: campaign.fechaFin,
         presupuesto: campaign.presupuesto,
         descripcion: campaign.descripcion,
         objetivos: campaign.objetivos || "",
-        productosAsociados: campaign.productosAsociados?.join(", ") || "",
+        productosAsociados: campaign.productosAsociados.join(", "),
+        bucketPath: campaign.bucketPath || "",
       })
     }
-  }, [campaign, form])
+  }, [campaign, isOpen, form])
 
-  const loadEmployees = async () => {
-    try {
-      const q = query(collection(db, "users"), where("role", "==", "employee"))
-      const snapshot = await getDocs(q)
-      const employeesList = snapshot.docs.map((doc) => ({
-        uid: doc.id,
-        nombre: doc.data().nombre,
-        role: doc.data().role,
-      }))
-      setEmployees(employeesList)
-    } catch (error) {
-      console.error("Error cargando empleados:", error)
-      toast.error("Error al cargar empleados")
-    }
-  }
-
-  const handleSubmit = async (data: { nombre: string; empresaId: string; usuarioResponsableId: string; estado: "planificacion" | "activa" | "completada" | "cancelada"; fechaInicio: string; fechaFin: string; presupuesto: number; descripcion: string; objetivos?: string; productosAsociados: string }) => {
+  const handleSubmit = async (data: {
+    nombre: string
+    empresaId: string
+    estado: "planificacion" | "activa" | "completada" | "cancelada"
+    fechaInicio: string
+    fechaFin: string
+    presupuesto: number
+    descripcion: string
+    objetivos?: string
+    productosAsociados: string
+    bucketPath?: string
+  }) => {
     if (!campaign) return
 
     setIsLoading(true)
     try {
+      // Parsear productos asociados
       const productos = data.productosAsociados
         ? data.productosAsociados.split(",").map((p) => p.trim()).filter((p) => p.length > 0)
         : []
 
-      // Verificar si cambió el usuario responsable
-      const oldUserId = campaign.usuarioResponsableId
-      const newUserId = data.usuarioResponsableId
-      const userChanged = oldUserId !== newUserId
-      const companyChanged = campaign.empresaId !== data.empresaId
-
-      if (userChanged) {
-        // Desasignar usuario anterior
-        await assignUserToCampaign(oldUserId, null)
-        // Asignar nuevo usuario
-        await assignUserToCampaign(newUserId, campaign.id)
+      // Obtener nombre de empresa si cambió
+      let empresaNombre = campaign.empresaNombre
+      if (data.empresaId !== campaign.empresaId) {
+        const selectedCompany = await getCompany(data.empresaId)
+        empresaNombre = selectedCompany?.nombre || "Empresa desconocida"
       }
 
-      // Preparar actualizaciones
-      const updates: any = {
+      // Actualizar campaña
+      await updateCampaign(campaign.id, {
         nombre: data.nombre,
         empresaId: data.empresaId,
-        usuarioResponsableId: data.usuarioResponsableId,
+        empresaNombre,
         estado: data.estado,
         fechaInicio: data.fechaInicio,
         fechaFin: data.fechaFin,
@@ -167,21 +154,8 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
         descripcion: data.descripcion,
         objetivos: data.objetivos,
         productosAsociados: productos,
-      }
-
-      // Actualizar nombres denormalizados si cambiaron
-      if (userChanged) {
-        const newUser = await getUser(newUserId)
-        updates.usuarioResponsableNombre = newUser?.nombre || "Usuario desconocido"
-      }
-
-      if (companyChanged) {
-        const newCompany = await getCompany(data.empresaId)
-        updates.empresaNombre = newCompany?.nombre || "Empresa desconocida"
-      }
-
-      // Actualizar campaña
-      await updateCampaign(campaign.id, updates)
+        bucketPath: data.bucketPath?.trim() || campaign.bucketPath,
+      })
 
       toast.success("Campaña actualizada", {
         description: `${data.nombre} ha sido actualizada exitosamente`,
@@ -202,15 +176,13 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
     onClose()
   }
 
-  if (!campaign) return null
-
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Editar Campaña</DialogTitle>
           <DialogDescription>
-            Modifica los detalles de la campaña
+            Modifica los datos de la campaña
           </DialogDescription>
         </DialogHeader>
 
@@ -222,9 +194,9 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
                 name="nombre"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Nombre de la Campaña</FormLabel>
+                    <FormLabel>Nombre de la Campaña *</FormLabel>
                     <FormControl>
-                      <Input {...field} />
+                      <Input placeholder="Ej: Campaña Verano 2025" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -236,11 +208,11 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
                 name="empresaId"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Empresa</FormLabel>
+                    <FormLabel>Empresa *</FormLabel>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue />
+                          <SelectValue placeholder="Selecciona empresa" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -260,39 +232,14 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
-                name="usuarioResponsableId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Usuario Responsable</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {employees.map((employee) => (
-                          <SelectItem key={employee.uid} value={employee.uid}>
-                            {employee.nombre}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
                 name="estado"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Estado</FormLabel>
+                    <FormLabel>Estado *</FormLabel>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue />
+                          <SelectValue placeholder="Selecciona estado" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -306,15 +253,29 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
                   </FormItem>
                 )}
               />
+
+              <FormField
+                control={form.control}
+                name="presupuesto"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Presupuesto (COP) *</FormLabel>
+                    <FormControl>
+                      <Input type="number" min={0} placeholder="0" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
                 name="fechaInicio"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Fecha de Inicio</FormLabel>
+                    <FormLabel>Fecha de Inicio *</FormLabel>
                     <FormControl>
                       <Input type="date" {...field} />
                     </FormControl>
@@ -328,23 +289,9 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
                 name="fechaFin"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Fecha de Fin</FormLabel>
+                    <FormLabel>Fecha de Fin *</FormLabel>
                     <FormControl>
                       <Input type="date" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="presupuesto"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Presupuesto (COP)</FormLabel>
-                    <FormControl>
-                      <Input type="number" min={0} {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -354,12 +301,36 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
 
             <FormField
               control={form.control}
+              name="bucketPath"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Ruta del Bucket</FormLabel>
+                  <FormControl>
+                    <Input 
+                      placeholder="campaigns/empresa123/verano2025" 
+                      {...field} 
+                    />
+                  </FormControl>
+                  <FormMessage />
+                  <p className="text-xs text-muted-foreground">
+                    Ruta donde se almacenan los archivos de la campaña en GCS
+                  </p>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
               name="descripcion"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Descripción</FormLabel>
+                  <FormLabel>Descripción *</FormLabel>
                   <FormControl>
-                    <Textarea rows={3} {...field} />
+                    <Textarea
+                      placeholder="Describe la campaña y sus características principales"
+                      rows={3}
+                      {...field}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -373,7 +344,11 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
                 <FormItem>
                   <FormLabel>Objetivos (Opcional)</FormLabel>
                   <FormControl>
-                    <Textarea rows={2} {...field} />
+                    <Textarea
+                      placeholder="Objetivos y metas de la campaña"
+                      rows={2}
+                      {...field}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -387,7 +362,11 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
                 <FormItem>
                   <FormLabel>Productos Asociados (separados por coma)</FormLabel>
                   <FormControl>
-                    <Textarea rows={2} {...field} />
+                    <Textarea
+                      placeholder="Ej: Águila, Poker, Club Colombia"
+                      rows={2}
+                      {...field}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -399,7 +378,7 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
                 Cancelar
               </Button>
               <Button type="submit" className="bg-amber-600 hover:bg-amber-700" disabled={isLoading}>
-                {isLoading ? "Actualizando..." : "Actualizar Campaña"}
+                {isLoading ? "Guardando..." : "Guardar Cambios"}
               </Button>
             </DialogFooter>
           </form>

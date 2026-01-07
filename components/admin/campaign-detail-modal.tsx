@@ -1,8 +1,28 @@
+// components/admin/campaign-detail-modal.tsx
+
+"use client"
+
+import { useState, useRef } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Calendar, DollarSign, Building2, User, FileText, Target } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { 
+  Calendar, 
+  DollarSign, 
+  Building2, 
+  User, 
+  FileText, 
+  Target,
+  Download,
+  Upload,
+  CheckCircle,
+  AlertCircle,
+} from "lucide-react"
+import { toast } from "sonner"
+import { downloadTemplate, createImport, analyzeImport, commitImport } from "@/lib/api/importApi"
 import type { Campaign } from "@/types/campaign"
 
 interface CampaignDetailModalProps {
@@ -26,7 +46,19 @@ const statusLabels = {
 }
 
 export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetailModalProps) {
+  const [file, setFile] = useState<File | null>(null)
+  const [importId, setImportId] = useState<string | null>(null)
+  const [preview, setPreview] = useState<any>(null)
+  const [mapping, setMapping] = useState<Record<string, string>>({})
+  const [uploadLog, setUploadLog] = useState<string>("")
+  const [isUploading, setIsUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
   if (!campaign) return null
+
+  const appendLog = (message: string) => {
+    setUploadLog(prev => `${prev}${message}\n`)
+  }
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("es-ES", {
@@ -44,9 +76,139 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
     }).format(amount)
   }
 
+  // Descargar plantilla específica para esta campaña
+  const handleDownloadTemplate = async () => {
+    try {
+      setIsUploading(true)
+      const blob = await downloadTemplate(campaign.empresaId, "campaigns")
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `${campaign.nombre.replace(/\s+/g, '_')}_plantilla.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success("Plantilla descargada", {
+        description: `Plantilla para ${campaign.nombre}`
+      })
+    } catch (e: any) {
+      toast.error(e?.message ?? "Error al descargar plantilla")
+      appendLog(`ERROR: ${e?.message ?? e}`)
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  // Seleccionar archivo
+  const handleFileSelect = () => {
+    fileInputRef.current?.click()
+  }
+
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0]
+    if (!selectedFile) return
+
+    if (!selectedFile.name.toLowerCase().endsWith(".xlsx")) {
+      toast.error("Solo se permiten archivos .xlsx")
+      e.target.value = ""
+      return
+    }
+
+    setFile(selectedFile)
+    setImportId(null)
+    setPreview(null)
+    setMapping({})
+    setUploadLog("")
+    appendLog(`✓ Archivo seleccionado: ${selectedFile.name}`)
+  }
+
+  // Subir y analizar archivo
+  const handleUploadFile = async () => {
+    if (!file) {
+      toast.error("Selecciona un archivo primero")
+      return
+    }
+
+    try {
+      setIsUploading(true)
+      appendLog("1) Creando importación...")
+      
+      const { importId: newImportId, uploadUrl } = await createImport({
+        clientId: campaign.empresaId,
+        importType: "campaigns",
+        filename: file.name,
+      })
+      
+      setImportId(newImportId)
+      appendLog("✓ Importación creada")
+
+      appendLog("2) Subiendo archivo a GCS...")
+      const uploadResponse = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+        body: file,
+      })
+
+      if (!uploadResponse.ok) {
+        throw new Error(await uploadResponse.text())
+      }
+      appendLog("✓ Archivo subido correctamente")
+
+      appendLog("3) Analizando datos...")
+      const analyzed = await analyzeImport(newImportId)
+      setPreview(analyzed)
+      setMapping(analyzed.suggestions ?? {})
+      appendLog("✓ Análisis completado")
+      
+      toast.success("Archivo analizado", {
+        description: "Revisa el mapeo de columnas y confirma"
+      })
+    } catch (e: any) {
+      toast.error(e?.message ?? "Error al procesar archivo")
+      appendLog(`ERROR: ${e?.message ?? e}`)
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  // Confirmar importación
+  const handleConfirmImport = async () => {
+    if (!importId) return
+
+    try {
+      setIsUploading(true)
+      appendLog("4) Confirmando importación...")
+      
+      await commitImport(importId, mapping)
+      
+      appendLog("✓ Importación confirmada")
+      appendLog("Los datos se procesarán en segundo plano")
+      
+      toast.success("Importación iniciada", {
+        description: "Los datos se están procesando"
+      })
+
+      // Limpiar estado después de un momento
+      setTimeout(() => {
+        setFile(null)
+        setImportId(null)
+        setPreview(null)
+        setMapping({})
+      }, 2000)
+    } catch (e: any) {
+      toast.error(e?.message ?? "Error al confirmar importación")
+      appendLog(`ERROR: ${e?.message ?? e}`)
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  const schemaFields = Object.keys(preview?.schema?.canonicalFields ?? {})
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center justify-between">
             <DialogTitle className="text-2xl">{campaign.nombre}</DialogTitle>
@@ -57,13 +219,17 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
         </DialogHeader>
 
         <Tabs defaultValue="detalles" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="detalles">Detalles</TabsTrigger>
             <TabsTrigger value="info">Información Adicional</TabsTrigger>
+            <TabsTrigger value="excel">
+              <FileText className="h-4 w-4 mr-2" />
+              Datos Excel
+            </TabsTrigger>
           </TabsList>
 
+          {/* TAB: Detalles */}
           <TabsContent value="detalles" className="space-y-4">
-            {/* Info General */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">Información General</CardTitle>
@@ -115,7 +281,6 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
               </CardContent>
             </Card>
 
-            {/* Descripción */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
@@ -130,7 +295,6 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
               </CardContent>
             </Card>
 
-            {/* Objetivos */}
             {campaign.objetivos && (
               <Card>
                 <CardHeader>
@@ -148,8 +312,8 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
             )}
           </TabsContent>
 
+          {/* TAB: Información Adicional */}
           <TabsContent value="info" className="space-y-4">
-            {/* Productos Asociados */}
             {campaign.productosAsociados && campaign.productosAsociados.length > 0 && (
               <Card>
                 <CardHeader>
@@ -167,7 +331,6 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
               </Card>
             )}
 
-            {/* Estadísticas */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">Estadísticas</CardTitle>
@@ -177,6 +340,12 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                   <span className="text-sm text-slate-600 dark:text-slate-400">ID de Campaña</span>
                   <span className="text-sm font-mono font-medium">{campaign.id}</span>
                 </div>
+                {campaign.bucketPath && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-slate-600 dark:text-slate-400">Ruta Bucket</span>
+                    <span className="text-sm font-mono font-medium">{campaign.bucketPath}</span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-slate-600 dark:text-slate-400">Creada el</span>
                   <span className="text-sm font-medium">
@@ -189,6 +358,149 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                     {campaign.updatedAt ? formatDate(campaign.updatedAt) : "N/A"}
                   </span>
                 </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* TAB: Datos Excel */}
+          <TabsContent value="excel" className="space-y-4">
+            {/* Descargar Plantilla */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Plantilla de Datos</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Descarga la plantilla Excel para esta campaña y complétala con los datos requeridos.
+                </p>
+                <Button onClick={handleDownloadTemplate} disabled={isUploading} variant="outline">
+                  <Download className="h-4 w-4 mr-2" />
+                  Descargar Plantilla
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Subir Archivo */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Subir Datos</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  onChange={onFileChange}
+                  className="hidden"
+                />
+                
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" onClick={handleFileSelect} disabled={isUploading}>
+                    Seleccionar Archivo
+                  </Button>
+                  <span className="text-sm text-muted-foreground truncate">
+                    {file ? file.name : "Ningún archivo seleccionado"}
+                  </span>
+                </div>
+
+                <div className="flex gap-2">
+                  <Button 
+                    onClick={handleUploadFile} 
+                    disabled={!file || isUploading}
+                    className="bg-amber-600 hover:bg-amber-700"
+                  >
+                    <Upload className="h-4 w-4 mr-2" />
+                    Subir y Analizar
+                  </Button>
+                  
+                  {preview && (
+                    <Button 
+                      onClick={handleConfirmImport} 
+                      disabled={!importId || isUploading}
+                      className="bg-emerald-600 hover:bg-emerald-700"
+                    >
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      Confirmar Importación
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Vista Previa */}
+            {preview && (
+              <>
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Resumen del Análisis</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-4 gap-4">
+                      <div className="text-center">
+                        <p className="text-2xl font-bold">{preview.headers?.length || 0}</p>
+                        <p className="text-sm text-muted-foreground">Columnas</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-2xl font-bold">{preview.previewRows?.length || 0}</p>
+                        <p className="text-sm text-muted-foreground">Filas</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-2xl font-bold text-amber-600">{preview.missingRequired?.length || 0}</p>
+                        <p className="text-sm text-muted-foreground">Faltantes</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-2xl font-bold text-blue-600">{preview.extraColumns?.length || 0}</p>
+                        <p className="text-sm text-muted-foreground">Extra</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Mapeo de Columnas</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2 max-h-[300px] overflow-y-auto">
+                    {(preview.headers ?? []).map((header: string) => (
+                      <div key={header} className="flex items-center gap-2">
+                        <span className="w-1/3 text-sm font-medium truncate">{header}</span>
+                        <select
+                          className="flex-1 border rounded px-2 py-1 text-sm bg-background"
+                          value={mapping[header] ?? ""}
+                          onChange={(e) => setMapping(m => ({ ...m, [header]: e.target.value }))}
+                        >
+                          <option value="">(ignorar)</option>
+                          {schemaFields.map((field: string) => (
+                            <option key={field} value={field}>
+                              {field}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                    
+                    {preview.missingRequired?.length > 0 && (
+                      <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded">
+                        <p className="text-sm text-amber-800 dark:text-amber-200 flex items-center gap-2">
+                          <AlertCircle className="h-4 w-4" />
+                          Faltan campos requeridos: {preview.missingRequired.join(", ")}
+                        </p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            )}
+
+            {/* Log */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Log de Actividad</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <pre className="text-xs whitespace-pre-wrap bg-slate-50 dark:bg-slate-900 p-4 rounded min-h-[100px] max-h-[200px] overflow-y-auto font-mono">
+                  {uploadLog || "No hay actividad aún..."}
+                </pre>
               </CardContent>
             </Card>
           </TabsContent>

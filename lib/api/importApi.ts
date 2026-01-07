@@ -1,16 +1,6 @@
-// lib/importApi.ts
+// lib/api/importApi.ts
 
-import { getAuth } from "firebase/auth"
-
-async function authHeaders() {
-  const user = getAuth().currentUser
-  if (!user) throw new Error("No auth user")
-  const token = await user.getIdToken()
-  return {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-  }
-}
+import { authHeaders } from "@/lib/api/authHeaders"
 
 export async function createImport(params: { clientId: string; importType: string; filename: string }) {
   const headers = await authHeaders()
@@ -42,13 +32,12 @@ export async function commitImport(importId: string, mapping: Record<string, str
 }
 
 export async function downloadTemplate(clientId: string, importType: string) {
-  const user = getAuth().currentUser
-  if (!user) throw new Error("No auth user")
-  const token = await user.getIdToken()
-
-  const res = await fetch(`/api/templates?clientId=${encodeURIComponent(clientId)}&type=${encodeURIComponent(importType)}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
+  // template usa token igual, sin content-type
+  const headers = await authHeaders()
+  const res = await fetch(
+    `/api/templates?clientId=${encodeURIComponent(clientId)}&type=${encodeURIComponent(importType)}`,
+    { headers: { Authorization: headers.Authorization } }
+  )
   if (!res.ok) throw new Error(await res.text())
   return res.blob()
 }

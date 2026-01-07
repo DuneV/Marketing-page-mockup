@@ -1,3 +1,5 @@
+// services/import-api/src/routes/import.ts
+
 import { Router } from "express"
 import { requireAdmin } from "../middleware/requireAdmin.js"
 import { createSignedUploadUrl } from "../lib/gcs.js"
@@ -87,7 +89,6 @@ importsRouter.post("/:id/commit", async (req, res) => {
     const imp = await queryOne<any>(`select * from imports.imports where id=$1`, [importId])
     if (!imp) return res.status(404).json({ error: "IMPORT_NOT_FOUND" })
 
-    // ✅ guarda mapping en imports.import_mappings
     await query(`delete from imports.import_mappings where import_id=$1`, [importId])
 
     for (const [source_column, canonical_field] of Object.entries(mapping ?? {})) {

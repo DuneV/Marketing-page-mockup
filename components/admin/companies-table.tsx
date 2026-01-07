@@ -1,10 +1,11 @@
+// components/admin/companies-table.tsx
+
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Trash2, Building2 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import type { Company } from "@/types/company"
-import { AssignServiceModal } from "./assign-service-modal"
 import { ReportConfigBuilderSimple } from "./report-config-builder-simple"
 import { EmptyState } from "./empty-state"
 
@@ -108,7 +109,6 @@ export function CompaniesTable({ companies, onDelete, onRowClick, onConfigChange
                 <TableCell className="text-sm">{formatDate(company.fechaCreacion)}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                    <AssignServiceModal company={company} onAssigned={onConfigChange} />
                     <ReportConfigBuilderSimple company={company} onSaved={onConfigChange} />
                     <Tooltip>
                       <TooltipTrigger asChild>

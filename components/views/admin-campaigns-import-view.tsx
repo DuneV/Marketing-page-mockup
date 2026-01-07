@@ -1,3 +1,5 @@
+// components\views\admin-campaigns-import-view.tsx
+
 "use client"
 
 import { useMemo, useRef, useState } from "react"
@@ -6,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AdminKPICard } from "@/components/admin/admin-kpi-card"
 import { UploadCloud, FileDown, CheckCircle, AlertCircle } from "lucide-react"
-import { createImport, analyzeImport, commitImport, downloadTemplate } from "@/lib/importApi"
+import { createImport, analyzeImport, commitImport, downloadTemplate } from "@/lib/api/importApi"
 
 export function AdminCampaignsImportView() {
   const [clientId, setClientId] = useState("demo-client")
