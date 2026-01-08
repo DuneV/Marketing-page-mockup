@@ -78,7 +78,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
   const [step, setStep] = useState<Step>("campaign")
   const [isLoading, setIsLoading] = useState(false)
   const [createdCampaignId, setCreatedCampaignId] = useState<string | null>(null)
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("")
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("")  // ✅ Este es el UUID/ID
   const [campaignName, setCampaignName] = useState<string>("")
   
   // Estados para Excel
@@ -123,6 +123,12 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
         : []
 
       const selectedCompany = await getCompany(data.empresaId)
+      
+      console.log("🏢 Empresa seleccionada:", {
+        empresaId: data.empresaId,
+        empresaNombre: selectedCompany?.nombre
+      })
+
       const bucketPath = data.bucketPath?.trim() || 
         `campaigns/${data.empresaId}/${Date.now()}_${data.nombre.replace(/\s+/g, '_').toLowerCase()}`
 
@@ -146,14 +152,15 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
       await incrementCompanyCampaignCount(data.empresaId, data.presupuesto)
 
       setCreatedCampaignId(campaignId)
-      setSelectedCompanyId(data.empresaId)
+      setSelectedCompanyId(data.empresaId)  // ✅ Guardar el ID (UUID) de la empresa
       setCampaignName(data.nombre)
+      
+      console.log("✅ Campaña creada, empresa ID guardado:", data.empresaId)
       
       toast.success("Campaña creada", {
         description: `${data.nombre} - Ahora sube el archivo Excel`
       })
 
-      // Cambiar automáticamente al paso de Excel
       setStep("excel")
     } catch (error) {
       console.error("Error creando campaña:", error)
@@ -165,10 +172,15 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
 
   // === FUNCIONES DE EXCEL ===
   const handleDownloadTemplate = async () => {
-    if (!selectedCompanyId) return
+    if (!selectedCompanyId) {
+      toast.error("No hay empresa seleccionada")
+      return
+    }
 
     try {
       setIsUploading(true)
+      console.log("📥 Descargando plantilla para empresa:", selectedCompanyId)
+      
       const blob = await downloadTemplate(selectedCompanyId, "campaigns")
       const url = URL.createObjectURL(blob)
       const a = document.createElement("a")
@@ -178,6 +190,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
       URL.revokeObjectURL(url)
       toast.success("Plantilla descargada")
     } catch (e: any) {
+      console.error("Error descargando plantilla:", e)
       toast.error(e?.message ?? "Error al descargar plantilla")
       appendLog(`ERROR: ${e?.message ?? e}`)
     } finally {
@@ -207,51 +220,83 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
     appendLog(`✓ Archivo seleccionado: ${selectedFile.name}`)
   }
 
-  const handleUploadFile = async () => {
-    if (!file || !selectedCompanyId) {
-      toast.error("Selecciona un archivo primero")
-      return
+
+const handleUploadFile = async () => {
+  if (!file || !selectedCompanyId) {
+    toast.error("Selecciona un archivo primero")
+    return
+  }
+
+  try {
+    setIsUploading(true)
+    
+    console.log("📤 Iniciando upload con:", {
+      companyId: selectedCompanyId,
+      importType: "campaigns",
+      filename: file.name
+    })
+    
+    appendLog("1) Creando importación...")
+    appendLog(`   Company ID: ${selectedCompanyId}`)
+    
+    const { importId: newImportId, uploadUrl } = await createImport({
+      companyId: selectedCompanyId,
+      importType: "campaigns",
+      filename: file.name,
+    })
+    
+    setImportId(newImportId)
+    appendLog("✓ Importación creada")
+
+    appendLog("2) Subiendo archivo a GCS...")
+    console.log("📤 Uploading file via proxy")
+    
+    const uploadResponse = await fetch("/api/upload-proxy", {
+      method: "PUT",
+      headers: {
+        "x-upload-url": uploadUrl,
+      },
+      body: file,
+    })
+
+    console.log("📥 Upload response:", {
+      status: uploadResponse.status,
+      ok: uploadResponse.ok
+    })
+
+    if (!uploadResponse.ok) {
+      const errorData = await uploadResponse.json()
+      throw new Error(errorData.error || `Upload failed: ${uploadResponse.status}`)
     }
+    
+    appendLog("✓ Archivo subido correctamente")
 
+    appendLog("3) Analizando datos...")
+    console.log("🔍 Starting analysis for import:", newImportId)
+    
     try {
-      setIsUploading(true)
-      appendLog("1) Creando importación...")
-      
-      const { importId: newImportId, uploadUrl } = await createImport({
-        clientId: selectedCompanyId,
-        importType: "campaigns",
-        filename: file.name,
-      })
-      
-      setImportId(newImportId)
-      appendLog("✓ Importación creada")
-
-      appendLog("2) Subiendo archivo a GCS...")
-      const uploadResponse = await fetch(uploadUrl, {
-        method: "PUT",
-        headers: {
-          "Content-Type": file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        },
-        body: file,
-      })
-
-      if (!uploadResponse.ok) throw new Error(await uploadResponse.text())
-      appendLog("✓ Archivo subido correctamente")
-
-      appendLog("3) Analizando datos...")
       const analyzed = await analyzeImport(newImportId)
+      console.log("✅ Analysis result:", analyzed)
+      
       setPreview(analyzed)
       setMapping(analyzed.suggestions ?? {})
       appendLog("✓ Análisis completado")
       
       toast.success("Archivo analizado correctamente")
-    } catch (e: any) {
-      toast.error(e?.message ?? "Error al procesar archivo")
-      appendLog(`ERROR: ${e?.message ?? e}`)
-    } finally {
-      setIsUploading(false)
+    } catch (analyzeError: any) {
+      console.error("❌ Analysis failed:", analyzeError)
+      appendLog(`ERROR en análisis: ${analyzeError.message}`)
+      throw analyzeError
     }
+    
+  } catch (e: any) {
+    console.error("Error procesando archivo:", e)
+    toast.error(e?.message ?? "Error al procesar archivo")
+    appendLog(`ERROR: ${e?.message ?? e}`)
+  } finally {
+    setIsUploading(false)
   }
+}
 
   const handleConfirmImport = async () => {
     if (!importId) return
@@ -265,7 +310,6 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
       appendLog("✓ Importación confirmada")
       toast.success("Campaña y datos creados exitosamente")
 
-      // Cerrar modal y limpiar
       setTimeout(() => {
         handleClose()
         onSuccess()
@@ -591,51 +635,51 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
                     {(preview.headers ?? []).map((h: string) => (
                       <div key={h} className="flex items-center gap-2">
                         <span className="w-1/3 text-sm font-medium truncate">{h}</span>
-                        <select
-                          className="flex-1 border rounded px-2 py-1 text-sm bg-background"
-                          value={mapping[h] ?? ""}
-                          onChange={(e) => setMapping(m => ({ ...m, [h]: e.target.value }))}
-                        >
-                          <option value="">(ignorar)</option>
-                          {schemaFields.map((f: string) => (
-                            <option key={f} value={f}>{f}</option>
-                          ))}
-                        </select>
-                      </div>
-                    ))}
-                    
-                    {preview.missingRequired?.length > 0 && (
-                      <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded">
-                        <p className="text-sm text-amber-800 dark:text-amber-200 flex items-center gap-2">
-                          <AlertCircle className="h-4 w-4" />
-                          Faltan campos requeridos: {preview.missingRequired.join(", ")}
-                        </p>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              </>
-            )}
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Log de Actividad</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <pre className="text-xs whitespace-pre-wrap bg-slate-50 dark:bg-slate-900 p-4 rounded min-h-[100px] max-h-[150px] overflow-y-auto font-mono">
-                  {uploadLog || "Esperando acción..."}
-                </pre>
+                    <select
+                      className="flex-1 border rounded px-2 py-1 text-sm bg-background"
+                      value={mapping[h] ?? ""}
+                      onChange={(e) => setMapping(m => ({ ...m, [h]: e.target.value }))}
+                    >
+                      <option value="">(ignorar)</option>
+                      {schemaFields.map((f: string) => (
+                        <option key={f} value={f}>{f}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+                
+                {preview.missingRequired?.length > 0 && (
+                  <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded">
+                    <p className="text-sm text-amber-800 dark:text-amber-200 flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4" />
+                      Faltan campos requeridos: {preview.missingRequired.join(", ")}
+                    </p>
+                  </div>
+                )}
               </CardContent>
             </Card>
-
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="outline" onClick={handleSkipExcel} disabled={isUploading}>
-                Omitir Excel
-              </Button>
-            </div>
-          </div>
+          </>
         )}
-      </DialogContent>
-    </Dialog>
-  )
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Log de Actividad</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <pre className="text-xs whitespace-pre-wrap bg-slate-50 dark:bg-slate-900 p-4 rounded min-h-[100px] max-h-[150px] overflow-y-auto font-mono">
+              {uploadLog || "Esperando acción..."}
+            </pre>
+          </CardContent>
+        </Card>
+
+        <div className="flex justify-end gap-2 pt-4">
+          <Button variant="outline" onClick={handleSkipExcel} disabled={isUploading}>
+            Omitir Excel
+          </Button>
+        </div>
+      </div>
+    )}
+  </DialogContent>
+</Dialog>
+)
 }

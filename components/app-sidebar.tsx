@@ -105,7 +105,9 @@ export function AppSidebar({ userType, isAdmin = false }: AppSidebarProps) {
                 <Image src={LOGO} alt="Logo" fill className="object-contain" priority />
               </div>
               <div className="flex flex-col group-data-[collapsible=icon]:hidden">
-                <span className="font-bold text-base text-sidebar-foreground">MARATHON</span>
+                <span className="font-bold italic text-base text-sidebar-foreground">
+                MARATHON
+              </span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>

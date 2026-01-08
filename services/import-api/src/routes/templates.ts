@@ -11,23 +11,69 @@ templatesRouter.get("/", async (req, res) => {
   try {
     await requireAdmin(req)
 
-    const clientId = String(req.query.clientId ?? "")
+    // Cambiar clientId a companyId para coincidir con el frontend
+    const companyId = String(req.query.companyId ?? "")
     const type = String(req.query.type ?? "")
 
-    if (!clientId || !type) {
-      return res.status(400).json({ error: "Missing clientId/type" })
+    console.log("📥 Template request:", { companyId, type })
+
+    if (!companyId || !type) {
+      return res.status(400).json({ error: "Missing companyId or type" })
     }
 
-    // 👇 SOLO depende del tipo (campaigns, etc.)
+    // Obtener el esquema activo
     const schemaRow = await getActiveSchema(type)
 
+    console.log("📋 Schema retrieved:", {
+      importType: schemaRow.importType,
+      version: schemaRow.version,
+      fieldsCount: Object.keys(schemaRow.canonical_fields ?? {}).length
+    })
+
     const canonicalFields = schemaRow.canonical_fields ?? {}
+    
+    // Extraer solo las claves (nombres de campos canónicos)
     const headers = Object.keys(canonicalFields)
 
-    const wb = new ExcelJS.Workbook()
-    const ws = wb.addWorksheet("Template")
+    if (headers.length === 0) {
+      return res.status(400).json({ error: "No fields defined in schema" })
+    }
 
-    ws.addRow(headers)
+    console.log("Template headers:", headers)
+
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet("Data")
+
+    const headerRow = ws.addRow(headers)
+    
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+    headerRow.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF4472C4' }
+    }
+    headerRow.alignment = { vertical: 'middle', horizontal: 'center' }
+
+    const exampleRow: string[] = headers.map(header => {
+      const fieldMeta = canonicalFields[header]
+      // Usa el primer alias como ejemplo, o el nombre del campo si no hay alias
+      const firstAlias = fieldMeta?.aliases?.[0]
+      return firstAlias || header
+    })
+    ws.addRow(exampleRow)
+
+    ws.columns = headers.map(h => ({ 
+      width: Math.max(h.length + 4, 20) 
+    }))
+
+    headers.forEach((header, index) => {
+      const fieldMeta = canonicalFields[header]
+      if (fieldMeta?.required) {
+        const colLetter = String.fromCharCode(65 + index) // A, B, C, etc.
+        const cell = ws.getCell(`${colLetter}1`)
+        cell.note = 'Campo requerido'
+      }
+    })
 
     const buf = await wb.xlsx.writeBuffer()
 
@@ -37,11 +83,17 @@ templatesRouter.get("/", async (req, res) => {
     )
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${type}-${clientId}-template.xlsx"`
+      `attachment; filename="${type}_${companyId}_template.xlsx"`
     )
+
+    console.log("✅ Template created successfully")
 
     res.send(Buffer.from(buf))
   } catch (e: any) {
-    res.status(e?.status ?? 500).json({ error: e?.message ?? "error" })
+    console.error("Error creating template:", e)
+    res.status(e?.status ?? 500).json({ 
+      error: e?.message ?? "error",
+      details: e?.toString()
+    })
   }
 })
