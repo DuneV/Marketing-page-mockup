@@ -25,6 +25,7 @@ import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage
 import { db, storage } from "@/lib/firebase/client"
 import { CampaignDocSchema, CampaignImageSchema, CampaignCommentSchema } from "@/lib/schemas/campaign"
 import type { CampaignDoc, CampaignImage, CampaignComment } from "@/lib/schemas/campaign"
+import { ZodError } from "zod"
 
 /**
  * Crear una nueva campaña en Firestore

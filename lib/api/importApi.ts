@@ -5,7 +5,8 @@ import { authHeaders } from "@/lib/api/authHeaders"
 export async function createImport(params: { 
   companyId: string
   importType: string
-  filename: string 
+  filename: string
+  campaignId?: string
 }) {
   const headers = await authHeaders()
   const res = await fetch(`/api/imports`, {

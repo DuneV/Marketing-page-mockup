@@ -1,6 +1,9 @@
+// components/admin/report-config-builder-campaign.tsx
+
 "use client";
 
 import { useState, useEffect } from "react";
+import { getAvailableFields, getValidOperations, type AvailableField } from "@/lib/api/campaignApi";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -103,44 +106,87 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
     const [templates, setTemplates] = useState<ReportTemplate[]>([]);
     const [validationErrors, setValidationErrors] = useState<string[]>([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [availableFields, setAvailableFields] = useState<AvailableField[]>([]);
+    const [isLoadingFields, setIsLoadingFields] = useState(false);
+    const [lastImportId, setLastImportId] = useState<string | null>(null);
+
 
     useEffect(() => {
-        if (open) {
-            try {
-                reportConfigStorage.initialize();
-                const allTemplates = reportConfigStorage.getAllTemplates();
-                setTemplates(allTemplates);
-                const existingConfig = reportConfigStorage.getCampaignReportConfig(campaign.id);
-                if (existingConfig) {
-                    setConfig(existingConfig);
-                } else {
-                    setConfig({
-                        campaignId: campaign.id,
-                        campaignNombre: campaign.nombre,
-                        empresaId: campaign.empresaId,
-                        empresaNombre: campaign.empresaNombre,
-                        filtros: {
-                            campanas: [campaign.id],
-                            fechas: {
-                                inicio: campaign.fechaInicio,
-                                fin: campaign.fechaFin,
-                            }
-                        },
-                        paletaColores: {
-                            primario: "#000000",
-                            secundario: "#ffffff",
-                            acento: "#FFB000",
-                        },
-                        kpis: [],
-                        filas: [],
-                        activa: true,
-                    });
-                }
-            } catch (error) {
-                console.error("Error loading config:", error);
+        if (!open) return;
+
+        try {
+            reportConfigStorage.initialize();
+            const allTemplates = reportConfigStorage.getAllTemplates();
+            setTemplates(allTemplates);
+
+            const existingConfig = reportConfigStorage.getCampaignReportConfig(campaign.id);
+            if (existingConfig) {
+            setConfig(existingConfig);
+            } else {
+            setConfig({
+                campaignId: campaign.id,
+                campaignNombre: campaign.nombre,
+                empresaId: campaign.empresaId,
+                empresaNombre: campaign.empresaNombre,
+                filtros: {
+                campanas: [campaign.id],
+                fechas: {
+                    inicio: campaign.fechaInicio,
+                    fin: campaign.fechaFin,
+                },
+                },
+                paletaColores: {
+                primario: "#000000",
+                secundario: "#ffffff",
+                acento: "#FFB000",
+                },
+                kpis: [],
+                filas: [],
+                activa: true,
+            });
             }
+        } catch (error) {
+            console.error("Error loading config:", error);
         }
-    }, [open, campaign.id, campaign.nombre, campaign.empresaId, campaign.empresaNombre, campaign.fechaInicio, campaign.fechaFin]);
+
+        const controller = new AbortController();
+        loadAvailableFields(controller.signal);
+
+        return () => controller.abort();
+        }, [
+        open,
+        campaign.id,
+        campaign.nombre,
+        campaign.empresaId,
+        campaign.empresaNombre,
+        campaign.fechaInicio,
+        campaign.fechaFin,
+        ]);
+    
+    const loadAvailableFields = async (signal?: AbortSignal) => {
+        if (!campaign?.id) return;
+
+        setIsLoadingFields(true);
+        try {
+            const { fields, importId } = await getAvailableFields(campaign.id);
+
+            if (signal?.aborted) return;
+
+            setAvailableFields(fields ?? []);
+            setLastImportId(importId ?? null);
+
+            console.log("Available fields loaded:", { campaignId: campaign.id, importId, fields });
+        } catch (error) {
+            if (signal?.aborted) return;
+
+            console.error("Error loading available fields:", error);
+            setAvailableFields([]);
+            setLastImportId(null);
+        } finally {
+            if (!signal?.aborted) setIsLoadingFields(false);
+        }
+        };
+
 
     const loadTemplate = (templateId: string) => {
         const template = templates.find((t) => t.id === templateId);
@@ -176,13 +222,21 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
             alert(`Límite de KPIs alcanzado (${DEFAULT_LIMITS.maxKPIs})`);
             return;
         }
+        
+        const firstField = availableFields[0];
         const newKPI: KPIDefinition = {
             id: crypto.randomUUID(),
             nombre: "Nuevo KPI",
-            operacion: "mean",
-            fuente: ALL_DATA_SOURCES[0],
+            operacion: firstField?.type === "number" ? "sum" : "count",
+            fuente: (firstField?.name as DataSource) || ALL_DATA_SOURCES[0],
         };
         setConfig({ ...config, kpis: [...config.kpis, newKPI] });
+    };
+    
+    const getOperationsForField = (fieldName: string) => {
+        const field = availableFields.find(f => f.name === fieldName);
+        if (!field) return ["count"];
+        return getValidOperations(field.type);
     };
 
     const updateKPI = (id: string, updates: Partial<KPIDefinition>) => {
@@ -316,72 +370,60 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
     };
 
     return (
-        <TooltipProvider>
-            <Dialog open={open} onOpenChange={setOpen}>
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <DialogTrigger asChild>
-                            <Button variant="outline" size="sm">
-                                <LayoutDashboard className="h-4 w-4" />
-                            </Button>
-                        </DialogTrigger>
-                    </TooltipTrigger>
-                    <TooltipContent>Configurar Reporte</TooltipContent>
-                </Tooltip>
-                {config && (
-                    <DialogContent className="max-w-[90vw] sm:max-w-4xl lg:max-w-5xl max-h-[85vh] flex flex-col p-0">
-                        <div className="px-6 pt-6 pb-4 shrink-0">
-                            <DialogHeader>
-                                <DialogTitle>Configurar Reporte - {campaign.nombre}</DialogTitle>
-                                <DialogDescription>
-                                    Personaliza los KPIs, gráficos y colores de la marca para esta campaña
-                                </DialogDescription>
-                            </DialogHeader>
-                        </div>
+    <TooltipProvider>
+        <Dialog open={open} onOpenChange={setOpen}>
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <DialogTrigger asChild>
+                        <Button variant="outline" size="sm">
+                            <LayoutDashboard className="h-4 w-4" />
+                        </Button>
+                    </DialogTrigger>
+                </TooltipTrigger>
+                <TooltipContent>Configurar Reporte</TooltipContent>
+            </Tooltip>
+            {config && (
+                <DialogContent className="max-w-[90vw] sm:max-w-4xl lg:max-w-5xl max-h-[85vh] flex flex-col p-0">
+                    <div className="px-6 pt-6 pb-4 shrink-0">
+                        <DialogHeader>
+                            <DialogTitle>Configurar Reporte - {campaign.nombre}</DialogTitle>
+                            <DialogDescription>
+                                Personaliza los KPIs, gráficos y colores de la marca para esta campaña
+                            </DialogDescription>
+                        </DialogHeader>
+                    </div>
 
-                        <ScrollArea className="flex-1 px-6 overflow-y-auto">
-                            <div className="space-y-6 py-4">
-                                {validationErrors.length > 0 && (
-                                    <Alert variant="destructive">
-                                        <AlertCircle className="h-4 w-4" />
-                                        <AlertDescription>
-                                            <ul className="list-disc pl-4">
-                                                {validationErrors.map((error, i) => (
-                                                    <li key={i}>{error}</li>
-                                                ))}
-                                            </ul>
-                                        </AlertDescription>
-                                    </Alert>
-                                )}
+                    <ScrollArea className="flex-1 px-6 overflow-y-auto">
+                        <div className="space-y-6 py-4">
+                            {validationErrors.length > 0 && (
+                                <Alert variant="destructive">
+                                    <AlertCircle className="h-4 w-4" />
+                                    <AlertDescription>
+                                        <ul className="list-disc pl-4">
+                                            {validationErrors.map((error, i) => (
+                                                <li key={i}>{error}</li>
+                                            ))}
+                                        </ul>
+                                    </AlertDescription>
+                                </Alert>
+                            )}
 
-                                {/* Colores de Marca */}
-                                <Card>
-                                    <CardHeader>
-                                        <CardTitle className="text-sm flex items-center gap-2">
-                                            <Palette className="h-4 w-4" />
-                                            Colores de Marca
-                                        </CardTitle>
-                                    </CardHeader>
-                                    <CardContent>
-                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                                            <div className="space-y-2">
-                                                <Label className="text-xs">Color Primario</Label>
-                                                <div className="flex items-center gap-2">
-                                                    <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
-                                                        <input
-                                                            type="color"
-                                                            value={config.paletaColores?.primario || "#000000"}
-                                                            onChange={(e) => setConfig({
-                                                                ...config,
-                                                                paletaColores: {
-                                                                    ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
-                                                                    primario: e.target.value
-                                                                }
-                                                            })}
-                                                            className="h-full w-full p-0 border-0 cursor-pointer"
-                                                        />
-                                                    </div>
-                                                    <Input
+                            {/* Colores de Marca */}
+                            <Card>
+                                <CardHeader>
+                                    <CardTitle className="text-sm flex items-center gap-2">
+                                        <Palette className="h-4 w-4" />
+                                        Colores de Marca
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                                        <div className="space-y-2">
+                                            <Label className="text-xs">Color Primario</Label>
+                                            <div className="flex items-center gap-2">
+                                                <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                                                    <input
+                                                        type="color"
                                                         value={config.paletaColores?.primario || "#000000"}
                                                         onChange={(e) => setConfig({
                                                             ...config,
@@ -390,28 +432,28 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                                                 primario: e.target.value
                                                             }
                                                         })}
-                                                        className="h-8 font-mono text-xs"
+                                                        className="h-full w-full p-0 border-0 cursor-pointer"
                                                     />
                                                 </div>
+                                                <Input
+                                                    value={config.paletaColores?.primario || "#000000"}
+                                                    onChange={(e) => setConfig({
+                                                        ...config,
+                                                        paletaColores: {
+                                                            ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
+                                                            primario: e.target.value
+                                                        }
+                                                    })}
+                                                    className="h-8 font-mono text-xs"
+                                                />
                                             </div>
-                                            <div className="space-y-2">
-                                                <Label className="text-xs">Color Secundario</Label>
-                                                <div className="flex items-center gap-2">
-                                                    <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
-                                                        <input
-                                                            type="color"
-                                                            value={config.paletaColores?.secundario || "#ffffff"}
-                                                            onChange={(e) => setConfig({
-                                                                ...config,
-                                                                paletaColores: {
-                                                                    ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
-                                                                    secundario: e.target.value
-                                                                }
-                                                            })}
-                                                            className="h-full w-full p-0 border-0 cursor-pointer"
-                                                        />
-                                                    </div>
-                                                    <Input
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label className="text-xs">Color Secundario</Label>
+                                            <div className="flex items-center gap-2">
+                                                <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                                                    <input
+                                                        type="color"
                                                         value={config.paletaColores?.secundario || "#ffffff"}
                                                         onChange={(e) => setConfig({
                                                             ...config,
@@ -420,28 +462,28 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                                                 secundario: e.target.value
                                                             }
                                                         })}
-                                                        className="h-8 font-mono text-xs"
+                                                        className="h-full w-full p-0 border-0 cursor-pointer"
                                                     />
                                                 </div>
+                                                <Input
+                                                    value={config.paletaColores?.secundario || "#ffffff"}
+                                                    onChange={(e) => setConfig({
+                                                        ...config,
+                                                        paletaColores: {
+                                                            ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
+                                                            secundario: e.target.value
+                                                        }
+                                                    })}
+                                                    className="h-8 font-mono text-xs"
+                                                />
                                             </div>
-                                            <div className="space-y-2">
-                                                <Label className="text-xs">Color de Acento</Label>
-                                                <div className="flex items-center gap-2">
-                                                    <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
-                                                        <input
-                                                            type="color"
-                                                            value={config.paletaColores?.acento || "#FFB000"}
-                                                            onChange={(e) => setConfig({
-                                                                ...config,
-                                                                paletaColores: {
-                                                                    ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
-                                                                    acento: e.target.value
-                                                                }
-                                                            })}
-                                                            className="h-full w-full p-0 border-0 cursor-pointer"
-                                                        />
-                                                    </div>
-                                                    <Input
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label className="text-xs">Color de Acento</Label>
+                                            <div className="flex items-center gap-2">
+                                                <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                                                    <input
+                                                        type="color"
                                                         value={config.paletaColores?.acento || "#FFB000"}
                                                         onChange={(e) => setConfig({
                                                             ...config,
@@ -450,68 +492,96 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                                                 acento: e.target.value
                                                             }
                                                         })}
-                                                        className="h-8 font-mono text-xs"
+                                                        className="h-full w-full p-0 border-0 cursor-pointer"
                                                     />
                                                 </div>
+                                                <Input
+                                                    value={config.paletaColores?.acento || "#FFB000"}
+                                                    onChange={(e) => setConfig({
+                                                        ...config,
+                                                        paletaColores: {
+                                                            ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
+                                                            acento: e.target.value
+                                                        }
+                                                    })}
+                                                    className="h-8 font-mono text-xs"
+                                                />
                                             </div>
                                         </div>
-                                    </CardContent>
-                                </Card>
+                                    </div>
+                                </CardContent>
+                            </Card>
 
-                                {/* Plantillas */}
-                                <Card>
-                                    <CardHeader>
-                                        <CardTitle className="text-sm">Cargar desde Plantilla</CardTitle>
-                                    </CardHeader>
-                                    <CardContent>
-                                        <Select onValueChange={loadTemplate}>
-                                            <SelectTrigger>
-                                                <SelectValue placeholder="Seleccionar plantilla..." />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {templates.map((template) => (
-                                                    <SelectItem key={template.id} value={template.id}>
-                                                        <div className="flex items-center gap-2">
-                                                            <FileText className="h-4 w-4" />
-                                                            <span>{template.nombre}</span>
-                                                            <Badge variant="outline" className="ml-2">
-                                                                {template.categoria}
-                                                            </Badge>
-                                                        </div>
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </CardContent>
-                                </Card>
+                            {/* Plantillas */}
+                            <Card>
+                                <CardHeader>
+                                    <CardTitle className="text-sm">Cargar desde Plantilla</CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                    <Select onValueChange={loadTemplate}>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Seleccionar plantilla..." />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {templates.map((template) => (
+                                                <SelectItem key={template.id} value={template.id}>
+                                                    <div className="flex items-center gap-2">
+                                                        <FileText className="h-4 w-4" />
+                                                        <span>{template.nombre}</span>
+                                                        <Badge variant="outline" className="ml-2">
+                                                            {template.categoria}
+                                                        </Badge>
+                                                    </div>
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </CardContent>
+                            </Card>
 
-                                {/* KPIs */}
-                                <Card>
-                                    <CardHeader>
-                                        <div className="flex items-center justify-between">
-                                            <CardTitle className="text-sm">
-                                                KPIs ({config.kpis.length}/{DEFAULT_LIMITS.maxKPIs})
-                                            </CardTitle>
-                                            <Button size="sm" onClick={addKPI}>
-                                                <Plus className="h-4 w-4 md:mr-1" />
-                                                <span className="hidden md:inline">Agregar KPI</span>
-                                                <span className="md:hidden">KPI</span>
-                                            </Button>
-                                        </div>
-                                    </CardHeader>
-                                    <CardContent className="space-y-3">
-                                        {config.kpis.length === 0 ? (
-                                            <p className="text-sm text-muted-foreground text-center py-4">
-                                                No hay KPIs configurados
-                                            </p>
-                                        ) : (
-                                            config.kpis.map((kpi) => (
+                            {/* KPIs */}
+                            <Card>
+                                <CardHeader>
+                                    <div className="flex items-center justify-between">
+                                        <CardTitle className="text-sm">
+                                            KPIs ({config.kpis.length}/{DEFAULT_LIMITS.maxKPIs})
+                                            {isLoadingFields && (
+                                                <span className="ml-2 text-xs text-muted-foreground">
+                                                    Cargando campos...
+                                                </span>
+                                            )}
+                                        </CardTitle>
+                                        <Button size="sm" onClick={addKPI} disabled={isLoadingFields || availableFields.length === 0}>
+                                            <Plus className="h-4 w-4 md:mr-1" />
+                                            <span className="hidden md:inline">Agregar KPI</span>
+                                            <span className="md:hidden">KPI</span>
+                                        </Button>
+                                    </div>
+                                </CardHeader>
+                                <CardContent className="space-y-3">
+                                    {availableFields.length === 0 && !isLoadingFields ? (
+                                        <Alert>
+                                            <AlertCircle className="h-4 w-4" />
+                                            <AlertDescription>
+                                                No hay datos importados para esta campaña. Sube un archivo Excel primero.
+                                            </AlertDescription>
+                                        </Alert>
+                                    ) : config.kpis.length === 0 ? (
+                                        <p className="text-sm text-muted-foreground text-center py-4">
+                                            No hay KPIs configurados
+                                        </p>
+                                    ) : (
+                                        config.kpis.map((kpi) => {
+                                            const validOps = getOperationsForField(kpi.fuente);
+                                            const fieldInfo = availableFields.find(f => f.name === kpi.fuente);
+                                            
+                                            return (
                                                 <div
                                                     key={kpi.id}
                                                     className="border rounded-lg p-2 sm:p-3 space-y-2 hover:bg-muted/50"
                                                 >
                                                     <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
-                                                        <div className="col-span-1 md:col-span-5">
+                                                        <div className="col-span-1 md:col-span-4">
                                                             <Label className="text-xs">Nombre</Label>
                                                             <Input
                                                                 value={kpi.nombre}
@@ -521,6 +591,45 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                                                 placeholder="Nombre del KPI"
                                                                 className="h-8"
                                                             />
+                                                        </div>
+                                                        <div className="col-span-1 md:col-span-4">
+                                                            <Label className="text-xs">
+                                                                Fuente de Datos
+                                                                {fieldInfo && (
+                                                                    <Badge variant="outline" className="ml-2 text-xs">
+                                                                        {fieldInfo.type}
+                                                                    </Badge>
+                                                                )}
+                                                            </Label>
+                                                            <Select
+                                                                value={kpi.fuente}
+                                                                onValueChange={(value) => {
+                                                                    const field = availableFields.find(f => f.name === value);
+                                                                    const newOps = field ? getValidOperations(field.type) : ["count"];
+                                                                    const currentOpValid = newOps.includes(kpi.operacion);
+                                                                    
+                                                                    updateKPI(kpi.id, { 
+                                                                        fuente: value as DataSource,
+                                                                        operacion: currentOpValid ? kpi.operacion : newOps[0] as KPIOperation
+                                                                    });
+                                                                }}
+                                                            >
+                                                                <SelectTrigger className="h-8">
+                                                                    <SelectValue />
+                                                                </SelectTrigger>
+                                                                <SelectContent>
+                                                                    {availableFields.map((field) => (
+                                                                        <SelectItem key={field.name} value={field.name}>
+                                                                            <div className="flex items-center gap-2">
+                                                                                <span>{DATA_SOURCE_LABELS[field.name as DataSource] || field.name}</span>
+                                                                                <Badge variant="outline" className="text-xs">
+                                                                                    {field.type}
+                                                                                </Badge>
+                                                                            </div>
+                                                                        </SelectItem>
+                                                                    ))}
+                                                                </SelectContent>
+                                                            </Select>
                                                         </div>
                                                         <div className="col-span-1 md:col-span-3">
                                                             <Label className="text-xs">Operación</Label>
@@ -534,29 +643,9 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                                                     <SelectValue />
                                                                 </SelectTrigger>
                                                                 <SelectContent>
-                                                                    {["mean", "sum", "count", "max", "min", "median", "std", "variance"].map((op) => (
+                                                                    {validOps.map((op) => (
                                                                         <SelectItem key={op} value={op}>
                                                                             {KPI_OPERATION_LABELS[op as KPIOperation]}
-                                                                        </SelectItem>
-                                                                    ))}
-                                                                </SelectContent>
-                                                            </Select>
-                                                        </div>
-                                                        <div className="col-span-1 md:col-span-3">
-                                                            <Label className="text-xs">Fuente</Label>
-                                                            <Select
-                                                                value={kpi.fuente}
-                                                                onValueChange={(value) =>
-                                                                    updateKPI(kpi.id, { fuente: value as DataSource })
-                                                                }
-                                                            >
-                                                                <SelectTrigger className="h-8">
-                                                                    <SelectValue />
-                                                                </SelectTrigger>
-                                                                <SelectContent>
-                                                                    {ALL_DATA_SOURCES.map((fuente) => (
-                                                                        <SelectItem key={fuente} value={fuente}>
-                                                                            {DATA_SOURCE_LABELS[fuente]}
                                                                         </SelectItem>
                                                                     ))}
                                                                 </SelectContent>
@@ -574,66 +663,76 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                                         </div>
                                                     </div>
                                                 </div>
-                                            ))
-                                        )}
-                                    </CardContent>
-                                </Card>
+                                            );
+                                        })
+                                    )}
+                                </CardContent>
+                            </Card>
 
-                                {/* Filas y Gráficos */}
-                                <Card>
-                                    <CardHeader>
-                                        <div className="flex items-center justify-between">
-                                            <CardTitle className="text-sm">
-                                                Dashboard ({config.filas.length}/{DEFAULT_LIMITS.maxFilas} filas)
-                                            </CardTitle>
-                                            <Button size="sm" onClick={addRow}>
-                                                <Plus className="h-4 w-4 md:mr-1" />
-                                                <span className="hidden md:inline">Agregar Fila</span>
-                                                <span className="md:hidden">Fila</span>
-                                            </Button>
-                                        </div>
-                                    </CardHeader>
-                                    <CardContent className="space-y-4">
-                                        {config.filas.length === 0 ? (
-                                            <p className="text-sm text-muted-foreground text-center py-4">
-                                                No hay filas configuradas
-                                            </p>
-                                        ) : (
-                                            config.filas.map((row) => (
-                                                <div key={row.id} className="border rounded-lg p-4 space-y-3">
-                                                    <div className="flex items-center justify-between">
-                                                        <div className="flex items-center gap-2">
-                                                            <GripVertical className="h-4 w-4 text-muted-foreground" />
-                                                            <span className="font-medium text-sm">Fila {row.orden}</span>
-                                                            <Badge variant="outline" className="text-xs">
-                                                                {row.graficos.length}/{DEFAULT_LIMITS.maxGraficosPorFila}{" "}
-                                                                gráficos
-                                                            </Badge>
-                                                        </div>
-                                                        <div className="flex gap-2">
-                                                            <Button size="sm" onClick={() => addChartToRow(row.id)}>
-                                                                <Plus className="h-4 w-4 md:mr-1" />
-                                                                <span className="hidden md:inline">Gráfico</span>
-                                                                <span className="md:hidden">+</span>
-                                                            </Button>
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="sm"
-                                                                onClick={() => deleteRow(row.id)}
-                                                            >
-                                                                <Trash2 className="h-4 w-4 text-destructive" />
-                                                            </Button>
-                                                        </div>
+                            {/* Filas y Gráficos */}
+                            <Card>
+                                <CardHeader>
+                                    <div className="flex items-center justify-between">
+                                        <CardTitle className="text-sm">
+                                            Dashboard ({config.filas.length}/{DEFAULT_LIMITS.maxFilas} filas)
+                                        </CardTitle>
+                                        <Button size="sm" onClick={addRow} disabled={availableFields.length === 0}>
+                                            <Plus className="h-4 w-4 md:mr-1" />
+                                            <span className="hidden md:inline">Agregar Fila</span>
+                                            <span className="md:hidden">Fila</span>
+                                        </Button>
+                                    </div>
+                                </CardHeader>
+                                <CardContent className="space-y-4">
+                                    {availableFields.length === 0 && !isLoadingFields ? (
+                                        <Alert>
+                                            <AlertCircle className="h-4 w-4" />
+                                            <AlertDescription>
+                                                No hay datos importados. Sube un archivo Excel para poder crear gráficos.
+                                            </AlertDescription>
+                                        </Alert>
+                                    ) : config.filas.length === 0 ? (
+                                        <p className="text-sm text-muted-foreground text-center py-4">
+                                            No hay filas configuradas
+                                        </p>
+                                    ) : (
+                                        config.filas.map((row) => (
+                                            <div key={row.id} className="border rounded-lg p-4 space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-2">
+                                                        <GripVertical className="h-4 w-4 text-muted-foreground" />
+                                                        <span className="font-medium text-sm">Fila {row.orden}</span>
+                                                        <Badge variant="outline" className="text-xs">
+                                                            {row.graficos.length}/{DEFAULT_LIMITS.maxGraficosPorFila} gráficos
+                                                        </Badge>
                                                     </div>
+                                                    <div className="flex gap-2">
+                                                        <Button size="sm" onClick={() => addChartToRow(row.id)}>
+                                                            <Plus className="h-4 w-4 md:mr-1" />
+                                                            <span className="hidden md:inline">Gráfico</span>
+                                                            <span className="md:hidden">+</span>
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onClick={() => deleteRow(row.id)}
+                                                        >
+                                                            <Trash2 className="h-4 w-4 text-destructive" />
+                                                        </Button>
+                                                    </div>
+                                                </div>
 
-                                                    <div className="grid grid-cols-1 gap-3 pl-2 sm:pl-6">
-                                                        {row.graficos.map((chart) => (
+                                                <div className="grid grid-cols-1 gap-3 pl-2 sm:pl-6">
+                                                    {row.graficos.map((chart) => {
+                                                        const fieldInfo = availableFields.find(f => f.name === chart.fuente);
+                                                        
+                                                        return (
                                                             <div
                                                                 key={chart.id}
                                                                 className="border rounded p-2 sm:p-3 bg-muted/30 space-y-2"
                                                             >
                                                                 <div className="grid grid-cols-1 sm:grid-cols-6 lg:grid-cols-12 gap-2">
-                                                                    <div className="col-span-1 sm:col-span-6 lg:col-span-4">
+                                                                    <div className="col-span-1 sm:col-span-6 lg:col-span-3">
                                                                         <Label className="text-xs">Título</Label>
                                                                         <Input
                                                                             value={chart.titulo}
@@ -646,7 +745,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                                                         />
                                                                     </div>
                                                                     <div className="col-span-1 sm:col-span-3 lg:col-span-3">
-                                                                        <Label className="text-xs">Tipo</Label>
+                                                                        <Label className="text-xs">Tipo de Gráfico</Label>
                                                                         <Select
                                                                             value={chart.tipo}
                                                                             onValueChange={(value) =>
@@ -667,8 +766,15 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                                                             </SelectContent>
                                                                         </Select>
                                                                     </div>
-                                                                    <div className="col-span-1 sm:col-span-3 lg:col-span-3">
-                                                                        <Label className="text-xs">Fuente</Label>
+                                                                    <div className="col-span-1 sm:col-span-3 lg:col-span-4">
+                                                                        <Label className="text-xs">
+                                                                            Fuente de Datos
+                                                                            {fieldInfo && (
+                                                                                <Badge variant="outline" className="ml-2 text-xs">
+                                                                                    {fieldInfo.type}
+                                                                                </Badge>
+                                                                            )}
+                                                                        </Label>
                                                                         <Select
                                                                             value={chart.fuente}
                                                                             onValueChange={(value) =>
@@ -681,9 +787,14 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                                                                 <SelectValue />
                                                                             </SelectTrigger>
                                                                             <SelectContent>
-                                                                                {ALL_DATA_SOURCES.map((fuente) => (
-                                                                                    <SelectItem key={fuente} value={fuente}>
-                                                                                        {DATA_SOURCE_LABELS[fuente]}
+                                                                                {availableFields.map((field) => (
+                                                                                    <SelectItem key={field.name} value={field.name}>
+                                                                                        <div className="flex items-center gap-2">
+                                                                                            <span>{DATA_SOURCE_LABELS[field.name as DataSource] || field.name}</span>
+                                                                                            <Badge variant="outline" className="text-xs">
+                                                                                                {field.type}
+                                                                                            </Badge>
+                                                                                        </div>
                                                                                     </SelectItem>
                                                                                 ))}
                                                                             </SelectContent>
@@ -717,36 +828,37 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                                                     </div>
                                                                 </div>
                                                             </div>
-                                                        ))}
-                                                    </div>
+                                                        );
+                                                    })}
                                                 </div>
-                                            ))
-                                        )}
-                                    </CardContent>
-                                </Card>
-                            </div>
-                        </ScrollArea>
-
-                        <div className="px-6 py-4 border-t shrink-0">
-                            <DialogFooter className="flex justify-between sm:justify-between w-full">
-                                <Button variant="outline" onClick={handleDownloadJSON} disabled={isLoading} className="gap-2">
-                                    <Download className="h-4 w-4" />
-                                    Descargar JSON
-                                </Button>
-                                <div className="flex gap-2">
-                                    <Button variant="outline" onClick={() => setOpen(false)} disabled={isLoading}>
-                                        Cancelar
-                                    </Button>
-                                    <Button onClick={handleSave} disabled={isLoading}>
-                                        <Save className="h-4 w-4 mr-2" />
-                                        {isLoading ? "Guardando..." : "Guardar"}
-                                    </Button>
-                                </div>
-                            </DialogFooter>
+                                            </div>
+                                        ))
+                                    )}
+                                </CardContent>
+                            </Card>
                         </div>
-                    </DialogContent>
-                )}
-            </Dialog>
-        </TooltipProvider>
-    );
+                    </ScrollArea>
+
+                    <div className="px-6 py-4 border-t shrink-0">
+                        <DialogFooter className="flex justify-between sm:justify-between w-full">
+                            <Button variant="outline" onClick={handleDownloadJSON} disabled={isLoading} className="gap-2">
+                                <Download className="h-4 w-4" />
+                                Descargar JSON
+                            </Button>
+                            <div className="flex gap-2">
+                                <Button variant="outline" onClick={() => setOpen(false)} disabled={isLoading}>
+                                    Cancelar
+                                </Button>
+                                <Button onClick={handleSave} disabled={isLoading || availableFields.length === 0}>
+                                    <Save className="h-4 w-4 mr-2" />
+                                    {isLoading ? "Guardando..." : "Guardar"}
+                                </Button>
+                            </div>
+                        </DialogFooter>
+                    </div>
+                </DialogContent>
+            )}
+        </Dialog>
+    </TooltipProvider>
+);
 }

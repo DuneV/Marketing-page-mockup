@@ -14,10 +14,11 @@ importsRouter.post("/", async (req, res) => {
   try {
     const user = await requireAdmin(req)
 
-    const { companyId, importType, filename } = req.body as {
+    const { companyId, importType, filename, campaignId } = req.body as {
       companyId: string
       importType: string
       filename: string
+      campaignId?: string
     }
 
     console.log("📥 Request body:", { companyId, importType, filename })
@@ -68,10 +69,19 @@ importsRouter.post("/", async (req, res) => {
 
     await query(
       `INSERT INTO imports.imports
-        (id, company_id, import_type, schema_version, uploaded_by, original_filename, gcs_uri, status, created_at, updated_at)
-       VALUES
-        ($1, $2, $3, $4, $5, $6, $7, 'UPLOADED', now(), now())`,
-      [importId, companyId, importType, schema.version, user.uid, safeFilename, gcsUri]
+        (id, company_id, campaign_id, import_type, schema_version, uploaded_by, original_filename, gcs_uri, status, created_at, updated_at)
+      VALUES
+        ($1, $2, $3, $4, $5, $6, $7, $8, 'UPLOADED', now(), now())`,
+      [
+        importId,
+        companyId,
+        campaignId ?? null,
+        importType,
+        schema.version,
+        user.uid,
+        safeFilename,
+        gcsUri,
+      ]
     )
 
     console.log("✅ Import created successfully:", importId)

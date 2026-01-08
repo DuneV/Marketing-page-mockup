@@ -19,7 +19,7 @@ app.post("/pubsub/import", async (req, res) => {
     const importId = decoded?.importId
     if (!importId) return res.status(400).send("missing importId")
 
-    await query(`update imports set status='PROCESSING', updated_at=now() where id=$1`, [importId])
+    await query(`update imports.imports set status='PROCESSING', updated_at=now() where id=$1`, [importId])
     await processImport(importId)
 
     res.status(204).send("")

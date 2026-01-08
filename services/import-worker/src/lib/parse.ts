@@ -13,11 +13,13 @@ function cellToString(v: CellValue | null | undefined) {
 }
 
 export async function processImport(importId: string) {
-  const imp = await queryOne(`select * from imports.imports.imports where id=$1`, [importId])
+  const imp = await queryOne(`select * from imports.imports where id=$1`, [importId])
   if (!imp) throw new Error("IMPORT_NOT_FOUND")
 
   const mappings = await query(
-    `select source_column, canonical_field from import_mappings where import_id=$1`,
+    `select source_column, canonical_field
+    from imports.import_mappings
+    where import_id=$1`,
     [importId]
   )
   const map: Record<string, string> = {}

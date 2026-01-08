@@ -1,4 +1,4 @@
-// services/import-api/src/lib/db.ts
+// services/import-worker/src/lib/db.ts
 
 import pg from "pg"
 import type { QueryResultRow } from "pg"
@@ -14,7 +14,7 @@ export const pool = new Pool({
     ? `/cloudsql/${process.env.INSTANCE_CONNECTION_NAME}`
     : (process.env.DB_HOST ?? "127.0.0.1"),
   port: hasCloudSql ? undefined : Number(process.env.DB_PORT ?? "5432"),
-  ssl: hasCloudSql ? undefined : { rejectUnauthorized: false },
+  ssl: hasCloudSql ? false : { rejectUnauthorized: false },
 })
 
 export async function query<T extends QueryResultRow = QueryResultRow>(

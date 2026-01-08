@@ -80,7 +80,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
   const [createdCampaignId, setCreatedCampaignId] = useState<string | null>(null)
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>("")  // ✅ Este es el UUID/ID
   const [campaignName, setCampaignName] = useState<string>("")
-  
+  const createdCampaignIdRef = useRef<string | null>(null);
   // Estados para Excel
   const [file, setFile] = useState<File | null>(null)
   const [importId, setImportId] = useState<string | null>(null)
@@ -150,7 +150,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
 
       await assignUserToCampaign(currentUser.uid, campaignId)
       await incrementCompanyCampaignCount(data.empresaId, data.presupuesto)
-
+      createdCampaignIdRef.current = campaignId;
       setCreatedCampaignId(campaignId)
       setSelectedCompanyId(data.empresaId)  // ✅ Guardar el ID (UUID) de la empresa
       setCampaignName(data.nombre)
@@ -221,82 +221,86 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
   }
 
 
-const handleUploadFile = async () => {
-  if (!file || !selectedCompanyId) {
-    toast.error("Selecciona un archivo primero")
-    return
-  }
+  const handleUploadFile = async () => {
+    const campaignIdToSend = createdCampaignIdRef.current;
 
-  try {
-    setIsUploading(true)
-    
-    console.log("📤 Iniciando upload con:", {
-      companyId: selectedCompanyId,
-      importType: "campaigns",
-      filename: file.name
-    })
-    
-    appendLog("1) Creando importación...")
-    appendLog(`   Company ID: ${selectedCompanyId}`)
-    
-    const { importId: newImportId, uploadUrl } = await createImport({
-      companyId: selectedCompanyId,
-      importType: "campaigns",
-      filename: file.name,
-    })
-    
-    setImportId(newImportId)
-    appendLog("✓ Importación creada")
-
-    appendLog("2) Subiendo archivo a GCS...")
-    console.log("📤 Uploading file via proxy")
-    
-    const uploadResponse = await fetch("/api/upload-proxy", {
-      method: "PUT",
-      headers: {
-        "x-upload-url": uploadUrl,
-      },
-      body: file,
-    })
-
-    console.log("📥 Upload response:", {
-      status: uploadResponse.status,
-      ok: uploadResponse.ok
-    })
-
-    if (!uploadResponse.ok) {
-      const errorData = await uploadResponse.json()
-      throw new Error(errorData.error || `Upload failed: ${uploadResponse.status}`)
+    if (!file || !selectedCompanyId || !campaignIdToSend) {
+      toast.error("Faltan datos: archivo/empresa/campaña")
+      return
     }
-    
-    appendLog("✓ Archivo subido correctamente")
 
-    appendLog("3) Analizando datos...")
-    console.log("🔍 Starting analysis for import:", newImportId)
-    
     try {
-      const analyzed = await analyzeImport(newImportId)
-      console.log("✅ Analysis result:", analyzed)
+      setIsUploading(true)
       
-      setPreview(analyzed)
-      setMapping(analyzed.suggestions ?? {})
-      appendLog("✓ Análisis completado")
+      console.log("📤 Iniciando upload con:", {
+        companyId: selectedCompanyId,
+        importType: "campaigns",
+        filename: file.name,
+        campaignId: campaignIdToSend
+      })
       
-      toast.success("Archivo analizado correctamente")
-    } catch (analyzeError: any) {
-      console.error("❌ Analysis failed:", analyzeError)
-      appendLog(`ERROR en análisis: ${analyzeError.message}`)
-      throw analyzeError
+      appendLog("1) Creando importación...")
+      appendLog(`   Company ID: ${selectedCompanyId}`)
+      
+      const { importId: newImportId, uploadUrl } = await createImport({
+        companyId: selectedCompanyId,
+        importType: "campaigns",
+        filename: file.name,
+        campaignId: campaignIdToSend,
+      })
+      
+      setImportId(newImportId)
+      appendLog("✓ Importación creada")
+
+      appendLog("2) Subiendo archivo a GCS...")
+      console.log("📤 Uploading file via proxy")
+      
+      const uploadResponse = await fetch("/api/upload-proxy", {
+        method: "PUT",
+        headers: {
+          "x-upload-url": uploadUrl,
+        },
+        body: file,
+      })
+
+      console.log("📥 Upload response:", {
+        status: uploadResponse.status,
+        ok: uploadResponse.ok
+      })
+
+      if (!uploadResponse.ok) {
+        const errorData = await uploadResponse.json()
+        throw new Error(errorData.error || `Upload failed: ${uploadResponse.status}`)
+      }
+      
+      appendLog("✓ Archivo subido correctamente")
+
+      appendLog("3) Analizando datos...")
+      console.log("🔍 Starting analysis for import:", newImportId)
+      
+      try {
+        const analyzed = await analyzeImport(newImportId)
+        console.log("✅ Analysis result:", analyzed)
+        
+        setPreview(analyzed)
+        setMapping(analyzed.suggestions ?? {})
+        appendLog("✓ Análisis completado")
+        
+        toast.success("Archivo analizado correctamente")
+      } catch (analyzeError: any) {
+        console.error("❌ Analysis failed:", analyzeError)
+        appendLog(`ERROR en análisis: ${analyzeError.message}`)
+        throw analyzeError
+      }
+      
+    } catch (e: any) {
+      console.error("Error procesando archivo:", e)
+      toast.error(e?.message ?? "Error al procesar archivo")
+      appendLog(`ERROR: ${e?.message ?? e}`)
+    } finally {
+      setIsUploading(false)
     }
-    
-  } catch (e: any) {
-    console.error("Error procesando archivo:", e)
-    toast.error(e?.message ?? "Error al procesar archivo")
-    appendLog(`ERROR: ${e?.message ?? e}`)
-  } finally {
-    setIsUploading(false)
   }
-}
 
   const handleConfirmImport = async () => {
     if (!importId) return
