@@ -73,15 +73,21 @@ export function CampaignsAdminView() {
     if (!campaign) return
 
     try {
+      console.log("🗑️ Iniciando eliminación de campaña:", deleteCampaignId)
       if (campaign.usuarioResponsableId) {
+        console.log("👤 Desasignando usuario responsable:", campaign.usuarioResponsableId)
         await assignUserToCampaign(campaign.usuarioResponsableId, null)
       }
 
+      console.log("🖼️ Eliminando imágenes...")
       await deleteAllCampaignImages(deleteCampaignId)
+      console.log("💬 Eliminando comentarios...")
       await deleteAllCampaignComments(deleteCampaignId)
+      console.log("📑 Eliminando documento de campaña...")
       await deleteCampaign(deleteCampaignId)
 
       if (campaign.empresaId && campaign.presupuesto) {
+        console.log("📊 Decrementando contador de campañas para empresa:", campaign.empresaId)
         await decrementCompanyCampaignCount(campaign.empresaId, campaign.presupuesto)
       }
 
@@ -89,9 +95,10 @@ export function CampaignsAdminView() {
       toast.success("Campaña eliminada", {
         description: `${campaign.nombre} ha sido eliminada permanentemente`,
       })
+      console.log("✅ Campaña eliminada con éxito. Recargando datos...")
       await loadData()
     } catch (error) {
-      console.error("Error eliminando campaña:", error)
+      console.error("❌ Error eliminando campaña:", error)
       toast.error("Error al eliminar campaña")
     }
   }

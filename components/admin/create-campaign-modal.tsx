@@ -1,8 +1,6 @@
-// components/admin/create-campaign-modal.tsx
-
 "use client"
 
-import { useForm } from "react-hook-form"
+import { useForm, type Resolver } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
 import { useState, useRef } from "react"
@@ -73,6 +71,11 @@ interface CreateCampaignModalProps {
 
 type Step = "campaign" | "excel"
 
+interface FormValues extends CampaignFormData {
+  productosAsociados: string
+  bucketPath?: string
+}
+
 export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: CreateCampaignModalProps) {
   const { user: currentUser } = useAuthRole()
   const [step, setStep] = useState<Step>("campaign")
@@ -80,7 +83,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
   const [createdCampaignId, setCreatedCampaignId] = useState<string | null>(null)
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>("")  // ✅ Este es el UUID/ID
   const [campaignName, setCampaignName] = useState<string>("")
-  
+
   // Estados para Excel
   const [file, setFile] = useState<File | null>(null)
   const [importId, setImportId] = useState<string | null>(null)
@@ -90,8 +93,37 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
   const [isUploading, setIsUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-  const form = useForm<CampaignFormData & { productosAsociados: string; bucketPath?: string }>({
-    resolver: zodResolver(campaignSchema),
+  // Custom resolver to handle Zod 4 compatibility issues where zodResolver might crash
+  const customResolver: Resolver<FormValues> = async (values) => {
+    try {
+      // Usar safeParseAsync para manejar refinamientos asíncronos si los hubiera
+      const result = await campaignSchema.safeParseAsync(values)
+
+      if (result.success) {
+        return { values: result.data as FormValues, errors: {} }
+      }
+
+      // Transformar errores de Zod a formato de React Hook Form
+      const errors: Record<string, any> = {}
+      result.error.issues.forEach((issue) => {
+        const path = issue.path[0] // Asumimos estructura plana o manejamos el primer nivel
+        if (path) {
+          errors[path.toString()] = {
+            type: issue.code,
+            message: issue.message,
+          }
+        }
+      })
+
+      return { values: {}, errors }
+    } catch (error) {
+      console.error("Validation error:", error)
+      return { values: {}, errors: { root: { type: "server", message: "Error de validación" } } }
+    }
+  }
+
+  const form = useForm<FormValues>({
+    resolver: customResolver,
     defaultValues: {
       nombre: "",
       empresaId: "",
@@ -110,7 +142,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
     setUploadLog(prev => `${prev}${message}\n`)
   }
 
-  const handleSubmit = async (data: CampaignFormData & { productosAsociados: string; bucketPath?: string }) => {
+  const handleSubmit = async (data: FormValues) => {
     if (!currentUser) {
       toast.error("Usuario no autenticado")
       return
@@ -123,13 +155,13 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
         : []
 
       const selectedCompany = await getCompany(data.empresaId)
-      
+
       console.log("🏢 Empresa seleccionada:", {
         empresaId: data.empresaId,
         empresaNombre: selectedCompany?.nombre
       })
 
-      const bucketPath = data.bucketPath?.trim() || 
+      const bucketPath = data.bucketPath?.trim() ||
         `campaigns/${data.empresaId}/${Date.now()}_${data.nombre.replace(/\s+/g, '_').toLowerCase()}`
 
       const campaignId = await createCampaign(currentUser.uid, {
@@ -154,9 +186,9 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
       setCreatedCampaignId(campaignId)
       setSelectedCompanyId(data.empresaId)  // ✅ Guardar el ID (UUID) de la empresa
       setCampaignName(data.nombre)
-      
+
       console.log("✅ Campaña creada, empresa ID guardado:", data.empresaId)
-      
+
       toast.success("Campaña creada", {
         description: `${data.nombre} - Ahora sube el archivo Excel`
       })
@@ -180,7 +212,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
     try {
       setIsUploading(true)
       console.log("📥 Descargando plantilla para empresa:", selectedCompanyId)
-      
+
       const blob = await downloadTemplate(selectedCompanyId, "campaigns")
       const url = URL.createObjectURL(blob)
       const a = document.createElement("a")
@@ -221,82 +253,82 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
   }
 
 
-const handleUploadFile = async () => {
-  if (!file || !selectedCompanyId) {
-    toast.error("Selecciona un archivo primero")
-    return
-  }
-
-  try {
-    setIsUploading(true)
-    
-    console.log("📤 Iniciando upload con:", {
-      companyId: selectedCompanyId,
-      importType: "campaigns",
-      filename: file.name
-    })
-    
-    appendLog("1) Creando importación...")
-    appendLog(`   Company ID: ${selectedCompanyId}`)
-    
-    const { importId: newImportId, uploadUrl } = await createImport({
-      companyId: selectedCompanyId,
-      importType: "campaigns",
-      filename: file.name,
-    })
-    
-    setImportId(newImportId)
-    appendLog("✓ Importación creada")
-
-    appendLog("2) Subiendo archivo a GCS...")
-    console.log("📤 Uploading file via proxy")
-    
-    const uploadResponse = await fetch("/api/upload-proxy", {
-      method: "PUT",
-      headers: {
-        "x-upload-url": uploadUrl,
-      },
-      body: file,
-    })
-
-    console.log("📥 Upload response:", {
-      status: uploadResponse.status,
-      ok: uploadResponse.ok
-    })
-
-    if (!uploadResponse.ok) {
-      const errorData = await uploadResponse.json()
-      throw new Error(errorData.error || `Upload failed: ${uploadResponse.status}`)
+  const handleUploadFile = async () => {
+    if (!file || !selectedCompanyId) {
+      toast.error("Selecciona un archivo primero")
+      return
     }
-    
-    appendLog("✓ Archivo subido correctamente")
 
-    appendLog("3) Analizando datos...")
-    console.log("🔍 Starting analysis for import:", newImportId)
-    
     try {
-      const analyzed = await analyzeImport(newImportId)
-      console.log("✅ Analysis result:", analyzed)
-      
-      setPreview(analyzed)
-      setMapping(analyzed.suggestions ?? {})
-      appendLog("✓ Análisis completado")
-      
-      toast.success("Archivo analizado correctamente")
-    } catch (analyzeError: any) {
-      console.error("❌ Analysis failed:", analyzeError)
-      appendLog(`ERROR en análisis: ${analyzeError.message}`)
-      throw analyzeError
+      setIsUploading(true)
+
+      console.log("📤 Iniciando upload con:", {
+        companyId: selectedCompanyId,
+        importType: "campaigns",
+        filename: file.name
+      })
+
+      appendLog("1) Creando importación...")
+      appendLog(`   Company ID: ${selectedCompanyId}`)
+
+      const { importId: newImportId, uploadUrl } = await createImport({
+        companyId: selectedCompanyId,
+        importType: "campaigns",
+        filename: file.name,
+      })
+
+      setImportId(newImportId)
+      appendLog("✓ Importación creada")
+
+      appendLog("2) Subiendo archivo a GCS...")
+      console.log("📤 Uploading file via proxy")
+
+      const uploadResponse = await fetch("/api/upload-proxy", {
+        method: "PUT",
+        headers: {
+          "x-upload-url": uploadUrl,
+        },
+        body: file,
+      })
+
+      console.log("📥 Upload response:", {
+        status: uploadResponse.status,
+        ok: uploadResponse.ok
+      })
+
+      if (!uploadResponse.ok) {
+        const errorData = await uploadResponse.json()
+        throw new Error(errorData.error || `Upload failed: ${uploadResponse.status}`)
+      }
+
+      appendLog("✓ Archivo subido correctamente")
+
+      appendLog("3) Analizando datos...")
+      console.log("🔍 Starting analysis for import:", newImportId)
+
+      try {
+        const analyzed = await analyzeImport(newImportId)
+        console.log("✅ Analysis result:", analyzed)
+
+        setPreview(analyzed)
+        setMapping(analyzed.suggestions ?? {})
+        appendLog("✓ Análisis completado")
+
+        toast.success("Archivo analizado correctamente")
+      } catch (analyzeError: any) {
+        console.error("❌ Analysis failed:", analyzeError)
+        appendLog(`ERROR en análisis: ${analyzeError.message}`)
+        throw analyzeError
+      }
+
+    } catch (e: any) {
+      console.error("Error procesando archivo:", e)
+      toast.error(e?.message ?? "Error al procesar archivo")
+      appendLog(`ERROR: ${e?.message ?? e}`)
+    } finally {
+      setIsUploading(false)
     }
-    
-  } catch (e: any) {
-    console.error("Error procesando archivo:", e)
-    toast.error(e?.message ?? "Error al procesar archivo")
-    appendLog(`ERROR: ${e?.message ?? e}`)
-  } finally {
-    setIsUploading(false)
   }
-}
 
   const handleConfirmImport = async () => {
     if (!importId) return
@@ -304,9 +336,9 @@ const handleUploadFile = async () => {
     try {
       setIsUploading(true)
       appendLog("4) Confirmando importación...")
-      
+
       await commitImport(importId, mapping)
-      
+
       appendLog("✓ Importación confirmada")
       toast.success("Campaña y datos creados exitosamente")
 
@@ -353,8 +385,8 @@ const handleUploadFile = async () => {
             {step === "campaign" ? "Paso 1: Crear Campaña" : "Paso 2: Subir Datos Excel"}
           </DialogTitle>
           <DialogDescription>
-            {step === "campaign" 
-              ? "Completa los datos básicos de la campaña" 
+            {step === "campaign"
+              ? "Completa los datos básicos de la campaña"
               : `Sube el archivo Excel para: ${campaignName}`}
           </DialogDescription>
           <Progress value={progress} className="h-2 mt-2" />
@@ -565,7 +597,7 @@ const handleUploadFile = async () => {
                   onChange={onFileChange}
                   className="hidden"
                 />
-                
+
                 <div className="flex items-center gap-2">
                   <Button variant="outline" onClick={handleFileSelect} disabled={isUploading}>
                     Seleccionar Archivo
@@ -576,19 +608,19 @@ const handleUploadFile = async () => {
                 </div>
 
                 <div className="flex gap-2">
-                  <Button 
-                    onClick={handleUploadFile} 
-                    disabled={!file || isUploading} 
+                  <Button
+                    onClick={handleUploadFile}
+                    disabled={!file || isUploading}
                     className="bg-amber-600 hover:bg-amber-700"
                   >
                     <Upload className="h-4 w-4 mr-2" />
                     Subir y Analizar
                   </Button>
-                  
+
                   {preview && (
-                    <Button 
-                      onClick={handleConfirmImport} 
-                      disabled={!importId || isUploading} 
+                    <Button
+                      onClick={handleConfirmImport}
+                      disabled={!importId || isUploading}
                       className="bg-emerald-600 hover:bg-emerald-700"
                     >
                       <CheckCircle className="h-4 w-4 mr-2" />
@@ -635,51 +667,51 @@ const handleUploadFile = async () => {
                     {(preview.headers ?? []).map((h: string) => (
                       <div key={h} className="flex items-center gap-2">
                         <span className="w-1/3 text-sm font-medium truncate">{h}</span>
-                    <select
-                      className="flex-1 border rounded px-2 py-1 text-sm bg-background"
-                      value={mapping[h] ?? ""}
-                      onChange={(e) => setMapping(m => ({ ...m, [h]: e.target.value }))}
-                    >
-                      <option value="">(ignorar)</option>
-                      {schemaFields.map((f: string) => (
-                        <option key={f} value={f}>{f}</option>
-                      ))}
-                    </select>
-                  </div>
-                ))}
-                
-                {preview.missingRequired?.length > 0 && (
-                  <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded">
-                    <p className="text-sm text-amber-800 dark:text-amber-200 flex items-center gap-2">
-                      <AlertCircle className="h-4 w-4" />
-                      Faltan campos requeridos: {preview.missingRequired.join(", ")}
-                    </p>
-                  </div>
-                )}
+                        <select
+                          className="flex-1 border rounded px-2 py-1 text-sm bg-background"
+                          value={mapping[h] ?? ""}
+                          onChange={(e) => setMapping(m => ({ ...m, [h]: e.target.value }))}
+                        >
+                          <option value="">(ignorar)</option>
+                          {schemaFields.map((f: string) => (
+                            <option key={f} value={f}>{f}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+
+                    {preview.missingRequired?.length > 0 && (
+                      <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded">
+                        <p className="text-sm text-amber-800 dark:text-amber-200 flex items-center gap-2">
+                          <AlertCircle className="h-4 w-4" />
+                          Faltan campos requeridos: {preview.missingRequired.join(", ")}
+                        </p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            )}
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Log de Actividad</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <pre className="text-xs whitespace-pre-wrap bg-slate-50 dark:bg-slate-900 p-4 rounded min-h-[100px] max-h-[150px] overflow-y-auto font-mono">
+                  {uploadLog || "Esperando acción..."}
+                </pre>
               </CardContent>
             </Card>
-          </>
+
+            <div className="flex justify-end gap-2 pt-4">
+              <Button variant="outline" onClick={handleSkipExcel} disabled={isUploading}>
+                Omitir Excel
+              </Button>
+            </div>
+          </div>
         )}
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Log de Actividad</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <pre className="text-xs whitespace-pre-wrap bg-slate-50 dark:bg-slate-900 p-4 rounded min-h-[100px] max-h-[150px] overflow-y-auto font-mono">
-              {uploadLog || "Esperando acción..."}
-            </pre>
-          </CardContent>
-        </Card>
-
-        <div className="flex justify-end gap-2 pt-4">
-          <Button variant="outline" onClick={handleSkipExcel} disabled={isUploading}>
-            Omitir Excel
-          </Button>
-        </div>
-      </div>
-    )}
-  </DialogContent>
-</Dialog>
-)
+      </DialogContent>
+    </Dialog>
+  )
 }

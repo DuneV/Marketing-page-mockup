@@ -13,6 +13,7 @@ import {
   serverTimestamp,
   Timestamp
 } from "firebase/firestore"
+import { z } from "zod"
 import { db } from "@/lib/firebase/client"
 import { UserDocSchema, type UserDoc } from "@/lib/schemas/user"
 import type { User, UserFormData } from "@/types/user"
@@ -35,10 +36,20 @@ export async function upsertUser(uid: string, data: UserDoc) {
   )
 }
 
-export async function getUser(uid: string) {
+export async function getUser(uid: string): Promise<UserDoc | null> {
   const snap = await getDoc(doc(db, "users", uid))
   if (!snap.exists()) return null
-  return UserDocSchema.parse(snap.data())
+
+  const data = snap.data()
+  try {
+    return UserDocSchema.parse(data)
+  } catch (error) {
+    console.error(`❌ Zod validation error for user ${uid}:`, error)
+    if (error instanceof z.ZodError) {
+      console.error("Issues:", JSON.stringify(error.issues, null, 2))
+    }
+    return data as UserDoc
+  }
 }
 
 /**

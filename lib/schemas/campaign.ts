@@ -20,10 +20,10 @@ export const CampaignDocSchema = z.object({
   presupuesto: z.number(),
   descripcion: z.string(),
   objetivos: z.string().optional(),
-  productosAsociados: z.array(z.string()),
+  productosAsociados: z.array(z.string()).default([]),
   bucketPath: z.string().optional(), // ✅ Ruta del bucket GCS para la campaña
-  createdAt: z.any(),
-  updatedAt: z.any(),
+  createdAt: z.any().optional(),
+  updatedAt: z.any().optional(),
   createdBy: z.string(),
 })
 

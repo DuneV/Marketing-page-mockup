@@ -21,6 +21,7 @@ import {
   type QueryDocumentSnapshot,
   type DocumentData,
 } from "firebase/firestore"
+import { z } from "zod"
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage"
 import { db, storage } from "@/lib/firebase/client"
 import { CampaignDocSchema, CampaignImageSchema, CampaignCommentSchema } from "@/lib/schemas/campaign"
@@ -51,10 +52,24 @@ export async function getCampaign(campaignId: string): Promise<(CampaignDoc & { 
   const snap = await getDoc(doc(db, "campaigns", campaignId))
   if (!snap.exists()) return null
 
-  return {
-    id: snap.id,
-    ...CampaignDocSchema.parse(snap.data()),
-  } as CampaignDoc & { id: string }
+  const data = snap.data()
+  try {
+    return {
+      id: snap.id,
+      ...CampaignDocSchema.parse(data),
+    } as CampaignDoc & { id: string }
+  } catch (error) {
+    console.error(`❌ Zod validation error for campaign ${campaignId}:`, error)
+    if (error instanceof z.ZodError) {
+      console.error("Issues:", JSON.stringify(error.issues, null, 2))
+    }
+    // Fallback: return data as is if parse fails, typecast as a last resort
+    // to prevent the whole app from crashing if one campaign is "dirty"
+    return {
+      id: snap.id,
+      ...data,
+    } as any
+  }
 }
 
 /**

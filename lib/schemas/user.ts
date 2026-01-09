@@ -10,8 +10,10 @@ export const UserDocSchema = z.object({
   correo: z.string().email(),
   role: RoleSchema,
   empresaActualId: z.string().nullable().optional(),
+  empresaActualNombre: z.string().nullable().optional(),
   campanaActualId: z.string().nullable().optional(),
-  unidadesProductos: z.record(z.number().int().nonnegative()).default({}),
+  campanaActualNombre: z.string().nullable().optional(),
+  unidadesProductos: z.record(z.string(), z.number().int().nonnegative()).default({}),
 
   createdAt: z.any().optional(),
   updatedAt: z.any().optional(),
