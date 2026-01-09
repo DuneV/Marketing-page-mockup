@@ -150,7 +150,7 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
         estado: data.estado,
         fechaInicio: data.fechaInicio,
         fechaFin: data.fechaFin,
-        presupuesto: data.presupuesto,
+        presupuesto: Number(data.presupuesto),
         descripcion: data.descripcion,
         objetivos: data.objetivos,
         productosAsociados: productos,

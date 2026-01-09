@@ -15,6 +15,8 @@ import { DeleteCompanyDialog } from "@/components/admin/delete-company-dialog"
 import { CompanyDetailModal } from "@/components/admin/company-detail-modal"
 import { TableSkeleton } from "@/components/admin/table-skeleton"
 import { KPISkeleton } from "@/components/admin/kpi-skeleton"
+import { TablePagination } from "@/components/admin/table-pagination"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
 import { Shield, Plus, Building2, CheckCircle, Target, DollarSign, Upload } from "lucide-react"
 
@@ -36,6 +38,10 @@ export function AdminView() {
 
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [sortKey, setSortKey] = useState<string | null>(null)
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
 
   useEffect(() => {
     loadCompanies()
@@ -101,9 +107,9 @@ export function AdminView() {
 
 
 
-  // Filtrado de empresas
+  // Filtrado y ordenamiento de empresas
   const filteredCompanies = useMemo(() => {
-    return companies.filter((company) => {
+    let result = companies.filter((company) => {
       const matchesSearch =
         searchQuery === "" ||
         company.nombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -113,7 +119,55 @@ export function AdminView() {
 
       return matchesSearch && matchesStatus
     })
-  }, [companies, searchQuery, statusFilter])
+
+    // Aplicar ordenamiento
+    if (sortKey) {
+      result = [...result].sort((a, b) => {
+        let aValue = a[sortKey as keyof Company]
+        let bValue = b[sortKey as keyof Company]
+
+        // Manejar valores undefined
+        if (aValue === undefined) return 1
+        if (bValue === undefined) return -1
+
+        // Comparación
+        if (typeof aValue === "string" && typeof bValue === "string") {
+          const comparison = aValue.toLowerCase().localeCompare(bValue.toLowerCase())
+          return sortDirection === "asc" ? comparison : -comparison
+        }
+
+        if (typeof aValue === "number" && typeof bValue === "number") {
+          return sortDirection === "asc" ? aValue - bValue : bValue - aValue
+        }
+
+        return 0
+      })
+    }
+
+    return result
+  }, [companies, searchQuery, statusFilter, sortKey, sortDirection])
+
+  // Paginación
+  const totalPages = Math.ceil(filteredCompanies.length / pageSize)
+  const paginatedCompanies = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize
+    return filteredCompanies.slice(startIndex, startIndex + pageSize)
+  }, [filteredCompanies, currentPage, pageSize])
+
+  // Reset a página 1 cuando cambian los filtros
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, statusFilter])
+
+  // Manejar ordenamiento
+  const handleSort = (key: string) => {
+    if (sortKey === key) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc")
+    } else {
+      setSortKey(key)
+      setSortDirection("asc")
+    }
+  }
 
   const totalCompanies = companies.length
   const activeCompanies = companies.filter((c) => c.estado === "activa").length
@@ -204,23 +258,51 @@ export function AdminView() {
         </CardHeader>
 
         <CardContent>
-          <TableSearch
-            searchValue={searchQuery}
-            onSearchChange={setSearchQuery}
-            searchPlaceholder="Buscar por nombre o tipo..."
-            filterValue={statusFilter}
-            onFilterChange={setStatusFilter}
-            filterOptions={statusFilterOptions}
-            filterLabel="Estado"
-          />
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+            <TableSearch
+              searchValue={searchQuery}
+              onSearchChange={setSearchQuery}
+              searchPlaceholder="Buscar por nombre o tipo..."
+              filterValue={statusFilter}
+              onFilterChange={setStatusFilter}
+              filterOptions={statusFilterOptions}
+              filterLabel="Estado"
+            />
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground whitespace-nowrap">Items por página:</span>
+              <Select value={pageSize.toString()} onValueChange={(value) => setPageSize(Number(value))}>
+                <SelectTrigger className="w-[100px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="25">25</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
 
           <CompaniesTable
-            companies={filteredCompanies}
+            companies={paginatedCompanies}
             onDelete={handleDeleteClick}
             onRowClick={handleRowClick}
-
             onCreateClick={() => setIsCreateModalOpen(true)}
+            sortKey={sortKey}
+            sortDirection={sortDirection}
+            onSort={handleSort}
           />
+
+          {filteredCompanies.length > 0 && (
+            <TablePagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalItems={filteredCompanies.length}
+              pageSize={pageSize}
+              onPageChange={setCurrentPage}
+            />
+          )}
         </CardContent>
       </Card>
 

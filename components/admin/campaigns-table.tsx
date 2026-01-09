@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Trash2, Edit, UserPlus, Target } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { SortableTableHead } from "@/components/admin/sortable-table-head"
 import type { Campaign } from "@/types/campaign"
 import { EmptyState } from "./empty-state"
 import { ReportConfigBuilderCampaign } from "./report-config-builder-campaign"
@@ -16,6 +17,9 @@ interface CampaignsTableProps {
   onRowClick: (campaignId: string) => void
   onAssignUser: (campaignId: string) => void
   onReportConfig?: () => void
+  sortKey: string | null
+  sortDirection: "asc" | "desc"
+  onSort: (key: string) => void
 }
 
 const statusColors = {
@@ -32,7 +36,7 @@ const statusLabels = {
   cancelada: "Cancelada",
 }
 
-export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssignUser, onReportConfig }: CampaignsTableProps) {
+export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssignUser, onReportConfig, sortKey, sortDirection, onSort }: CampaignsTableProps) {
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("es-ES", {
       year: "numeric",
@@ -55,12 +59,47 @@ export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssi
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[45%] md:w-[18%]">Nombre</TableHead>
-            <TableHead className="hidden md:table-cell md:w-[15%]">Empresa</TableHead>
+            <SortableTableHead
+              label="Nombre"
+              sortKey="nombre"
+              currentSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="w-[45%] md:w-[18%]"
+            />
+            <SortableTableHead
+              label="Empresa"
+              sortKey="empresaNombre"
+              currentSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="hidden md:table-cell md:w-[15%]"
+            />
             <TableHead className="hidden md:table-cell md:w-[15%]">Usuario Responsable</TableHead>
-            <TableHead className="hidden md:table-cell md:w-[10%]">Estado</TableHead>
-            <TableHead className="hidden md:table-cell md:w-[15%]">Fechas</TableHead>
-            <TableHead className="hidden md:table-cell md:w-[12%] text-right">Presupuesto</TableHead>
+            <SortableTableHead
+              label="Estado"
+              sortKey="estado"
+              currentSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="hidden md:table-cell md:w-[10%]"
+            />
+            <SortableTableHead
+              label="Fechas"
+              sortKey="fechaInicio"
+              currentSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="hidden md:table-cell md:w-[15%]"
+            />
+            <SortableTableHead
+              label="Presupuesto"
+              sortKey="presupuesto"
+              currentSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="hidden md:table-cell md:w-[12%] text-right"
+            />
             <TableHead className="w-[55%] md:w-[15%] text-right">Acciones</TableHead>
           </TableRow>
         </TableHeader>

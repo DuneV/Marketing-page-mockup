@@ -14,6 +14,8 @@ import { KPISkeleton } from "@/components/admin/kpi-skeleton"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { TableSearch, type FilterOption } from "@/components/admin/table-search"
+import { TablePagination } from "@/components/admin/table-pagination"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
 import type { User, UserFormData } from "@/types/user"
 
@@ -31,6 +33,10 @@ export function UsersAdminView() {
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [roleFilter, setRoleFilter] = useState("all")
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [sortKey, setSortKey] = useState<string | null>(null)
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
 
   const loadUsers = useCallback(async () => {
     try {
@@ -88,9 +94,9 @@ export function UsersAdminView() {
     setDeleteUserId(userId)
   }
 
-  // Filtrado de usuarios
+  // Filtrado y ordenamiento de usuarios
   const filteredUsers = useMemo(() => {
-    return users.filter((user) => {
+    let result = users.filter((user) => {
       const matchesSearch =
         searchQuery === "" ||
         user.nombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -101,7 +107,55 @@ export function UsersAdminView() {
 
       return matchesSearch && matchesRole
     })
-  }, [users, searchQuery, roleFilter])
+
+    // Aplicar ordenamiento
+    if (sortKey) {
+      result = [...result].sort((a, b) => {
+        let aValue = a[sortKey as keyof User]
+        let bValue = b[sortKey as keyof User]
+
+        // Manejar valores undefined
+        if (aValue === undefined) return 1
+        if (bValue === undefined) return -1
+
+        // Comparación
+        if (typeof aValue === "string" && typeof bValue === "string") {
+          const comparison = aValue.toLowerCase().localeCompare(bValue.toLowerCase())
+          return sortDirection === "asc" ? comparison : -comparison
+        }
+
+        if (typeof aValue === "number" && typeof bValue === "number") {
+          return sortDirection === "asc" ? aValue - bValue : bValue - aValue
+        }
+
+        return 0
+      })
+    }
+
+    return result
+  }, [users, searchQuery, roleFilter, sortKey, sortDirection])
+
+  // Paginación
+  const totalPages = Math.ceil(filteredUsers.length / pageSize)
+  const paginatedUsers = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize
+    return filteredUsers.slice(startIndex, startIndex + pageSize)
+  }, [filteredUsers, currentPage, pageSize])
+
+  // Reset a página 1 cuando cambian los filtros
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, roleFilter])
+
+  // Manejar ordenamiento
+  const handleSort = (key: string) => {
+    if (sortKey === key) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc")
+    } else {
+      setSortKey(key)
+      setSortDirection("asc")
+    }
+  }
 
   const totalUsers = users.length
   const totalUnits = users.reduce((sum, u) => {
@@ -198,16 +252,50 @@ export function UsersAdminView() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <TableSearch
-            searchValue={searchQuery}
-            onSearchChange={setSearchQuery}
-            searchPlaceholder="Buscar por nombre, usuario o correo..."
-            filterValue={roleFilter}
-            onFilterChange={setRoleFilter}
-            filterOptions={roleFilterOptions}
-            filterLabel="Rol"
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+            <TableSearch
+              searchValue={searchQuery}
+              onSearchChange={setSearchQuery}
+              searchPlaceholder="Buscar por nombre, usuario o correo..."
+              filterValue={roleFilter}
+              onFilterChange={setRoleFilter}
+              filterOptions={roleFilterOptions}
+              filterLabel="Rol"
+            />
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground whitespace-nowrap">Items por página:</span>
+              <Select value={pageSize.toString()} onValueChange={(value) => setPageSize(Number(value))}>
+                <SelectTrigger className="w-[100px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="25">25</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <UsersTable
+            users={paginatedUsers}
+            onDelete={handleDeleteClick}
+            onCreateClick={() => setIsCreateModalOpen(true)}
+            sortKey={sortKey}
+            sortDirection={sortDirection}
+            onSort={handleSort}
           />
-          <UsersTable users={filteredUsers} onDelete={handleDeleteClick} onCreateClick={() => setIsCreateModalOpen(true)} />
+
+          {filteredUsers.length > 0 && (
+            <TablePagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalItems={filteredUsers.length}
+              pageSize={pageSize}
+              onPageChange={setCurrentPage}
+            />
+          )}
         </CardContent>
       </Card>
 

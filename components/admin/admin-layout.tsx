@@ -4,6 +4,7 @@ import { ReactNode } from "react"
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { AppSidebar } from "@/components/app-sidebar"
+import { Breadcrumbs } from "@/components/admin/breadcrumbs"
 
 export function AdminLayout({ children }: { children: ReactNode }) {
   return (
@@ -12,13 +13,16 @@ export function AdminLayout({ children }: { children: ReactNode }) {
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 border-b bg-background">
           <SidebarTrigger className="ml-4" />
-          
+
           <div className="ml-auto mr-4">
             <ThemeToggle />
           </div>
         </header>
 
-        <main className="flex-1 p-4">{children}</main>
+        <main className="flex-1 p-4">
+          <Breadcrumbs />
+          {children}
+        </main>
       </SidebarInset>
     </SidebarProvider>
   )

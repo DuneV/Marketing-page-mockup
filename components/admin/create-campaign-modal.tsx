@@ -31,13 +31,16 @@ import {
 } from "@/components/ui/select"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
+import { FormFieldWithValidation } from "@/components/ui/form-field-with-validation"
 import { createCampaign } from "@/lib/data/campaigns"
 import { assignUserToCampaign } from "@/lib/data/users"
 import { incrementCompanyCampaignCount, getCompany } from "@/lib/data/companies"
 import { downloadTemplate, createImport, analyzeImport, commitImport } from "@/lib/api/importApi"
+import { checkCampaignNameExists } from "@/lib/validation/check-duplicates"
 import { toast } from "sonner"
 import { useAuthRole } from "@/lib/auth/useAuthRole"
-import { Download, Upload, CheckCircle, AlertCircle, ArrowRight } from "lucide-react"
+import { Download, Upload, CheckCircle, AlertCircle, ArrowRight, FileText, Calendar, ArrowLeft } from "lucide-react"
+import { StepIndicator } from "@/components/admin/step-indicator"
 import type { Company } from "@/types/company"
 import type { CampaignFormData } from "@/types/campaign"
 
@@ -69,7 +72,13 @@ interface CreateCampaignModalProps {
   companies: Company[]
 }
 
-type Step = "campaign" | "excel"
+type Step = "basic" | "planning" | "excel"
+
+const STEPS = [
+  { id: 1, label: "Información Básica", icon: FileText, stepKey: "basic" as Step },
+  { id: 2, label: "Planificación", icon: Calendar, stepKey: "planning" as Step },
+  { id: 3, label: "Importación Excel", icon: Upload, stepKey: "excel" as Step, optional: true },
+]
 
 interface FormValues extends CampaignFormData {
   productosAsociados: string
@@ -78,7 +87,7 @@ interface FormValues extends CampaignFormData {
 
 export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: CreateCampaignModalProps) {
   const { user: currentUser } = useAuthRole()
-  const [step, setStep] = useState<Step>("campaign")
+  const [step, setStep] = useState<Step>("basic")
   const [isLoading, setIsLoading] = useState(false)
   const [createdCampaignId, setCreatedCampaignId] = useState<string | null>(null)
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>("")  // ✅ Este es el UUID/ID
@@ -124,6 +133,8 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
 
   const form = useForm<FormValues>({
     resolver: customResolver,
+    mode: "onChange",
+    reValidateMode: "onChange",
     defaultValues: {
       nombre: "",
       empresaId: "",
@@ -140,6 +151,114 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
 
   const appendLog = (message: string) => {
     setUploadLog(prev => `${prev}${message}\n`)
+  }
+
+  const getCurrentStepNumber = () => {
+    return STEPS.findIndex(s => s.stepKey === step) + 1
+  }
+
+  const validateCurrentStep = async () => {
+    const stepNumber = getCurrentStepNumber()
+
+    if (stepNumber === 1) {
+      // Paso 1: Validar información básica
+      const result = await form.trigger(["nombre", "empresaId", "estado", "descripcion"])
+      if (!result) {
+        toast.error("Completa los campos requeridos")
+        return false
+      }
+    } else if (stepNumber === 2) {
+      // Paso 2: Validar planificación
+      const result = await form.trigger(["fechaInicio", "fechaFin", "presupuesto"])
+      if (!result) {
+        toast.error("Completa los campos de planificación")
+        return false
+      }
+    }
+
+    return true
+  }
+
+  const handleNextStep = async () => {
+    const isValid = await validateCurrentStep()
+    if (!isValid) return
+
+    const stepNumber = getCurrentStepNumber()
+    if (stepNumber === 1) {
+      setStep("planning")
+    } else if (stepNumber === 2) {
+      // Crear campaña antes de ir al paso 3
+      await handleCreateCampaign()
+    }
+  }
+
+  const handlePreviousStep = () => {
+    const stepNumber = getCurrentStepNumber()
+    if (stepNumber === 2) {
+      setStep("basic")
+    } else if (stepNumber === 3) {
+      setStep("planning")
+    }
+  }
+
+  const handleSkipExcel = () => {
+    form.reset()
+    onSuccess()
+    onClose()
+  }
+
+  const handleCreateCampaign = async () => {
+    const data = form.getValues()
+    if (!currentUser) {
+      toast.error("Usuario no autenticado")
+      return
+    }
+
+    setIsLoading(true)
+    try {
+      const productos = data.productosAsociados
+        ? data.productosAsociados.split(",").map((p) => p.trim()).filter((p) => p.length > 0)
+        : []
+
+      const selectedCompany = await getCompany(data.empresaId)
+
+      const bucketPath = data.bucketPath?.trim() ||
+        `campaigns/${data.empresaId}/${Date.now()}_${data.nombre.replace(/\s+/g, '_').toLowerCase()}`
+
+      const campaignId = await createCampaign(currentUser.uid, {
+        nombre: data.nombre,
+        empresaId: data.empresaId,
+        empresaNombre: selectedCompany?.nombre || "Empresa desconocida",
+        usuarioResponsableId: currentUser.uid,
+        usuarioResponsableNombre: currentUser.nombre || "Admin",
+        estado: data.estado,
+        fechaInicio: data.fechaInicio,
+        fechaFin: data.fechaFin,
+        presupuesto: Number(data.presupuesto),
+        descripcion: data.descripcion,
+        objetivos: data.objetivos,
+        productosAsociados: productos,
+        bucketPath,
+      })
+
+      await assignUserToCampaign(currentUser.uid, campaignId)
+      await incrementCompanyCampaignCount(data.empresaId, data.presupuesto)
+
+      setCreatedCampaignId(campaignId)
+      setSelectedCompanyId(data.empresaId)
+      setCampaignName(data.nombre)
+
+      toast.success("Campaña creada", {
+        description: `${data.nombre} - Ahora puedes importar datos (opcional)`
+      })
+
+      setStep("excel")
+    } catch (error) {
+      console.error("Error creando campaña:", error)
+      toast.error("Error al crear campaña")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const handleSubmit = async (data: FormValues) => {
@@ -173,7 +292,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
         estado: data.estado,
         fechaInicio: data.fechaInicio,
         fechaFin: data.fechaFin,
-        presupuesto: data.presupuesto,
+        presupuesto: Number(data.presupuesto),
         descripcion: data.descripcion,
         objetivos: data.objetivos,
         productosAsociados: productos,
@@ -354,15 +473,9 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
     }
   }
 
-  const handleSkipExcel = () => {
-    toast.success("Campaña creada sin archivo Excel")
-    handleClose()
-    onSuccess()
-  }
-
   const handleClose = () => {
     form.reset()
-    setStep("campaign")
+    setStep("basic")
     setCreatedCampaignId(null)
     setSelectedCompanyId("")
     setCampaignName("")
@@ -381,21 +494,19 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>
-            {step === "campaign" ? "Paso 1: Crear Campaña" : "Paso 2: Subir Datos Excel"}
-          </DialogTitle>
+          <DialogTitle>Crear Nueva Campaña</DialogTitle>
           <DialogDescription>
-            {step === "campaign"
-              ? "Completa los datos básicos de la campaña"
-              : `Sube el archivo Excel para: ${campaignName}`}
+            Completa el proceso de creación de campaña en 3 sencillos pasos
           </DialogDescription>
-          <Progress value={progress} className="h-2 mt-2" />
         </DialogHeader>
 
-        {/* PASO 1: Formulario de Campaña */}
-        {step === "campaign" && (
+        {/* Step Indicator */}
+        <StepIndicator steps={STEPS} currentStep={getCurrentStepNumber()} />
+
+        {/* PASO 1: Información Básica */}
+        {step === "basic" && (
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+            <div className="space-y-4">
               {currentUser && (
                 <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
                   <p className="text-sm text-amber-800 dark:text-amber-200">
@@ -404,97 +515,103 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="nombre"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Nombre *</FormLabel>
+              <FormFieldWithValidation
+                control={form.control}
+                name="nombre"
+                label="Nombre de la Campaña"
+                placeholder="Ej: Campaña Verano 2025"
+                required
+                helpText="Nombre identificador de la campaña"
+              />
+
+              <FormField
+                control={form.control}
+                name="empresaId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Empresa <span className="text-red-500 ml-1">*</span></FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
-                        <Input placeholder="Ej: Campaña Verano 2025" {...field} />
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecciona empresa" />
+                        </SelectTrigger>
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                      <SelectContent>
+                        {companies.map((company) => (
+                          <SelectItem key={company.id} value={company.id}>
+                            {company.nombre}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-1">Cliente al que pertenece esta campaña</p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-                <FormField
-                  control={form.control}
-                  name="empresaId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Empresa *</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecciona empresa" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {companies.map((company) => (
-                            <SelectItem key={company.id} value={company.id}>
-                              {company.nombre}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="estado"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Estado *</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="planificacion">Planificación</SelectItem>
-                          <SelectItem value="activa">Activa</SelectItem>
-                          <SelectItem value="completada">Completada</SelectItem>
-                          <SelectItem value="cancelada">Cancelada</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="presupuesto"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Presupuesto (COP) *</FormLabel>
+              <FormField
+                control={form.control}
+                name="estado"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Estado Inicial <span className="text-red-500 ml-1">*</span></FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
-                        <Input type="number" min={0} placeholder="0" {...field} />
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
+                      <SelectContent>
+                        <SelectItem value="planificacion">🔵 Planificación</SelectItem>
+                        <SelectItem value="activa">🟢 Activa</SelectItem>
+                        <SelectItem value="completada">✅ Completada</SelectItem>
+                        <SelectItem value="cancelada">🔴 Cancelada</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-1">Estado actual de la campaña</p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
+              <FormFieldWithValidation
+                control={form.control}
+                name="descripcion"
+                label="Descripción"
+                type="textarea"
+                required
+                helpText="Describe los objetivos y alcance de la campaña"
+              />
+
+              <div className="flex justify-end gap-2 pt-4">
+                <Button type="button" variant="outline" onClick={handleClose}>
+                  Cancelar
+                </Button>
+                <Button type="button" onClick={handleNextStep} className="bg-amber-600 hover:bg-amber-700">
+                  Siguiente
+                  <ArrowRight className="h-4 w-4 ml-2" />
+                </Button>
+              </div>
+            </div>
+          </Form>
+        )}
+
+        {/* PASO 2: Planificación y Presupuesto */}
+        {step === "planning" && (
+          <Form {...form}>
+            <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
                   name="fechaInicio"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Fecha Inicio *</FormLabel>
+                      <FormLabel>Fecha de Inicio <span className="text-red-500 ml-1">*</span></FormLabel>
                       <FormControl>
                         <Input type="date" {...field} />
                       </FormControl>
+                      <p className="text-xs text-muted-foreground mt-1">Cuándo inicia la campaña</p>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -505,68 +622,55 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
                   name="fechaFin"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Fecha Fin *</FormLabel>
+                      <FormLabel>Fecha de Fin <span className="text-red-500 ml-1">*</span></FormLabel>
                       <FormControl>
                         <Input type="date" {...field} />
                       </FormControl>
+                      <p className="text-xs text-muted-foreground mt-1">Cuándo finaliza la campaña</p>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
               </div>
 
-              <FormField
+              <FormFieldWithValidation
                 control={form.control}
-                name="descripcion"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Descripción *</FormLabel>
-                    <FormControl>
-                      <Textarea rows={3} {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                name="presupuesto"
+                label="Presupuesto"
+                type="number"
+                placeholder="0"
+                required
+                helpText="Presupuesto total en pesos colombianos (COP)"
               />
 
-              <FormField
+              <FormFieldWithValidation
                 control={form.control}
                 name="objetivos"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Objetivos</FormLabel>
-                    <FormControl>
-                      <Textarea rows={2} {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                label="Objetivos"
+                type="textarea"
+                helpText="Objetivos específicos de la campaña (opcional)"
               />
 
-              <FormField
+              <FormFieldWithValidation
                 control={form.control}
                 name="productosAsociados"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Productos (separados por coma)</FormLabel>
-                    <FormControl>
-                      <Textarea rows={2} placeholder="Ej: Águila, Poker, Club Colombia" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                label="Productos Asociados"
+                type="textarea"
+                placeholder="Ej: Águila, Poker, Club Colombia"
+                helpText="Productos que incluye esta campaña (separa con comas)"
               />
 
-              <div className="flex justify-end gap-2 pt-4">
-                <Button type="button" variant="outline" onClick={handleClose} disabled={isLoading}>
-                  Cancelar
+              <div className="flex justify-between gap-2 pt-4">
+                <Button type="button" variant="outline" onClick={handlePreviousStep}>
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  Anterior
                 </Button>
-                <Button type="submit" className="bg-amber-600 hover:bg-amber-700" disabled={isLoading}>
-                  {isLoading ? "Creando..." : "Crear y Continuar"}
+                <Button type="button" onClick={handleNextStep} className="bg-amber-600 hover:bg-amber-700" disabled={isLoading}>
+                  {isLoading ? "Creando campaña..." : "Crear Campaña"}
                   <ArrowRight className="h-4 w-4 ml-2" />
                 </Button>
               </div>
-            </form>
+            </div>
           </Form>
         )}
 
@@ -704,9 +808,20 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
               </CardContent>
             </Card>
 
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="outline" onClick={handleSkipExcel} disabled={isUploading}>
-                Omitir Excel
+            <div className="p-4 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+              <p className="text-sm text-blue-800 dark:text-blue-200">
+                ℹ️ <strong>Paso opcional:</strong> Puedes subir datos Excel ahora o hacerlo más tarde desde el detalle de la campaña
+              </p>
+            </div>
+
+            <div className="flex justify-between gap-2 pt-4">
+              <Button type="button" variant="outline" onClick={handlePreviousStep} disabled={isUploading}>
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Anterior
+              </Button>
+              <Button onClick={handleSkipExcel} disabled={isUploading} className="bg-amber-600 hover:bg-amber-700">
+                <CheckCircle className="h-4 w-4 mr-2" />
+                Finalizar
               </Button>
             </div>
           </div>

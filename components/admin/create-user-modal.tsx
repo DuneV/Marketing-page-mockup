@@ -29,7 +29,9 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
+import { FormFieldWithValidation } from "@/components/ui/form-field-with-validation"
 import { getAllCompanies, getCompany } from "@/lib/data/companies"
+import { checkEmailExists, checkUsernameExists } from "@/lib/validation/check-duplicates"
 import type { UserFormData, UserRole } from "@/types/user"
 import type { Company } from "@/types/company"
 import { X, Plus } from "lucide-react"
@@ -61,6 +63,8 @@ export function CreateUserModal({ isOpen, onClose, onSubmit }: CreateUserModalPr
 
   const form = useForm<FormValues>({
     resolver: zodResolver(userSchema),
+    mode: "onChange",
+    reValidateMode: "onChange",
     defaultValues: {
       username: "",
       nombre: "",
@@ -177,61 +181,42 @@ export function CreateUserModal({ isOpen, onClose, onSubmit }: CreateUserModalPr
         <Form {...form}>
           <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
-              <FormField
+              <FormFieldWithValidation
                 control={form.control}
                 name="username"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Usuario</FormLabel>
-                    <FormControl>
-                      <Input placeholder="nombre.apellido" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                label="Usuario"
+                placeholder="nombre.apellido"
+                required
+                helpText="Mínimo 3 caracteres"
               />
 
-              <FormField
+              <FormFieldWithValidation
                 control={form.control}
                 name="cedula"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Cédula</FormLabel>
-                    <FormControl>
-                      <Input placeholder="1234567890" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                label="Cédula"
+                placeholder="1234567890"
+                required
+                helpText="Mínimo 6 caracteres"
               />
             </div>
 
-            <FormField
+            <FormFieldWithValidation
               control={form.control}
               name="nombre"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Nombre Completo</FormLabel>
-                  <FormControl>
-                    <Input placeholder="Juan Pérez" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              label="Nombre Completo"
+              placeholder="Juan Pérez"
+              required
+              helpText="Mínimo 2 caracteres"
             />
 
-            <FormField
+            <FormFieldWithValidation
               control={form.control}
               name="correo"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Correo Electrónico</FormLabel>
-                  <FormControl>
-                    <Input type="email" placeholder="usuario@marketing.com" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              label="Correo Electrónico"
+              type="email"
+              placeholder="usuario@marketing.com"
+              required
+              helpText="Email válido requerido"
             />
 
             <div className="grid grid-cols-2 gap-4">

@@ -19,6 +19,8 @@ import { TableSkeleton } from "@/components/admin/table-skeleton"
 import { KPISkeleton } from "@/components/admin/kpi-skeleton"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TableSearch, type FilterOption } from "@/components/admin/table-search"
+import { TablePagination } from "@/components/admin/table-pagination"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
 import { useAuthRole, type ExtendedUser } from "@/lib/auth/useAuthRole"
 import type { Campaign } from "@/types/campaign"
@@ -43,6 +45,10 @@ export function CampaignsAdminView() {
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [sortKey, setSortKey] = useState<string | null>(null)
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
 
   useEffect(() => {
     loadData()
@@ -135,9 +141,9 @@ export function CampaignsAdminView() {
     return campaigns // Admin ve todas
   }, [campaigns, role, user])
 
-  // Filtrado de campañas por búsqueda y estado
+  // Filtrado y ordenamiento de campañas
   const filteredCampaigns = useMemo(() => {
-    return campaignsByCompany.filter((campaign) => {
+    let result = campaignsByCompany.filter((campaign) => {
       const matchesSearch =
         searchQuery === "" ||
         campaign.nombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -148,7 +154,55 @@ export function CampaignsAdminView() {
 
       return matchesSearch && matchesStatus
     })
-  }, [campaignsByCompany, searchQuery, statusFilter])
+
+    // Aplicar ordenamiento
+    if (sortKey) {
+      result = [...result].sort((a, b) => {
+        let aValue = a[sortKey as keyof Campaign]
+        let bValue = b[sortKey as keyof Campaign]
+
+        // Manejar valores undefined
+        if (aValue === undefined) return 1
+        if (bValue === undefined) return -1
+
+        // Comparación
+        if (typeof aValue === "string" && typeof bValue === "string") {
+          const comparison = aValue.toLowerCase().localeCompare(bValue.toLowerCase())
+          return sortDirection === "asc" ? comparison : -comparison
+        }
+
+        if (typeof aValue === "number" && typeof bValue === "number") {
+          return sortDirection === "asc" ? aValue - bValue : bValue - aValue
+        }
+
+        return 0
+      })
+    }
+
+    return result
+  }, [campaignsByCompany, searchQuery, statusFilter, sortKey, sortDirection])
+
+  // Paginación
+  const totalPages = Math.ceil(filteredCampaigns.length / pageSize)
+  const paginatedCampaigns = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize
+    return filteredCampaigns.slice(startIndex, startIndex + pageSize)
+  }, [filteredCampaigns, currentPage, pageSize])
+
+  // Reset a página 1 cuando cambian los filtros
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, statusFilter])
+
+  // Manejar ordenamiento
+  const handleSort = (key: string) => {
+    if (sortKey === key) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc")
+    } else {
+      setSortKey(key)
+      setSortDirection("asc")
+    }
+  }
 
   // KPIs (usando campaignsByCompany para respetar filtro de empresa)
   const totalCampaigns = campaignsByCompany.length
@@ -253,23 +307,53 @@ export function CampaignsAdminView() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <TableSearch
-            searchValue={searchQuery}
-            onSearchChange={setSearchQuery}
-            searchPlaceholder="Buscar por nombre, empresa o responsable..."
-            filterValue={statusFilter}
-            onFilterChange={setStatusFilter}
-            filterOptions={statusFilterOptions}
-            filterLabel="Estado"
-          />
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+            <TableSearch
+              searchValue={searchQuery}
+              onSearchChange={setSearchQuery}
+              searchPlaceholder="Buscar por nombre, empresa o responsable..."
+              filterValue={statusFilter}
+              onFilterChange={setStatusFilter}
+              filterOptions={statusFilterOptions}
+              filterLabel="Estado"
+            />
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground whitespace-nowrap">Items por página:</span>
+              <Select value={pageSize.toString()} onValueChange={(value) => setPageSize(Number(value))}>
+                <SelectTrigger className="w-[100px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="25">25</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           <CampaignsTable
-            campaigns={filteredCampaigns}
+            campaigns={paginatedCampaigns}
             onEdit={handleEditClick}
             onDelete={handleDeleteClick}
             onRowClick={handleRowClick}
             onAssignUser={() => { }} // No se usa en admin
             onReportConfig={loadData}
+            sortKey={sortKey}
+            sortDirection={sortDirection}
+            onSort={handleSort}
           />
+
+          {filteredCampaigns.length > 0 && (
+            <TablePagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalItems={filteredCampaigns.length}
+              pageSize={pageSize}
+              onPageChange={setCurrentPage}
+            />
+          )}
         </CardContent>
       </Card>
 

@@ -30,6 +30,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { FormFieldWithValidation } from "@/components/ui/form-field-with-validation"
+import { checkEmailExists, checkCompanyNameExists } from "@/lib/validation/check-duplicates"
 import { toast } from "sonner"
 import { z } from "zod"
 
@@ -87,6 +89,8 @@ interface CreateCompanyModalProps {
 export function CreateCompanyModal({ isOpen, onClose, onSubmit }: CreateCompanyModalProps) {
   const form = useForm<CreateCompanyWithUserFormData>({
     resolver: zodResolver(createCompanyWithUserSchema),
+    mode: "onChange",
+    reValidateMode: "onChange",
     defaultValues: {
       nombre: "",
       tipo: "",
@@ -111,7 +115,7 @@ export function CreateCompanyModal({ isOpen, onClose, onSubmit }: CreateCompanyM
         tipo: data.tipo,
         tamaño: data.tamaño,
         productos: data.productos,
-        cantidad: data.cantidad,
+        cantidad: Number(data.cantidad),
         username: data.username?.trim() ? data.username.trim() : undefined,
         estado: data.estado,
         totalCampañas: 0,
@@ -161,32 +165,22 @@ export function CreateCompanyModal({ isOpen, onClose, onSubmit }: CreateCompanyM
               <h3 className="font-semibold">Datos de la empresa</h3>
 
               <div className="grid grid-cols-2 gap-4">
-                <FormField
+                <FormFieldWithValidation
                   control={form.control}
                   name="nombre"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Nombre</FormLabel>
-                      <FormControl>
-                        <Input placeholder="Nombre de la empresa" {...field} value={field.value ?? ""} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                  label="Nombre"
+                  placeholder="Nombre de la empresa"
+                  required
+                  helpText="Mínimo 2 caracteres"
                 />
 
-                <FormField
+                <FormFieldWithValidation
                   control={form.control}
                   name="tipo"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Tipo/Industria</FormLabel>
-                      <FormControl>
-                        <Input placeholder="Ej: Distribución, Retail" {...field} value={field.value ?? ""} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                  label="Tipo/Industria"
+                  placeholder="Ej: Distribución, Retail"
+                  required
+                  helpText="Sector o industria de la empresa"
                 />
               </div>
 
@@ -215,18 +209,14 @@ export function CreateCompanyModal({ isOpen, onClose, onSubmit }: CreateCompanyM
                   )}
                 />
 
-                <FormField
+                <FormFieldWithValidation
                   control={form.control}
                   name="cantidad"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Cantidad de Productos</FormLabel>
-                      <FormControl>
-                        <Input type="number" min={0} placeholder="0" {...field} value={(field.value ?? 0) as any} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                  label="Cantidad de Productos"
+                  type="number"
+                  placeholder="0"
+                  required
+                  helpText="Número de productos que maneja"
                 />
               </div>
 
@@ -235,9 +225,10 @@ export function CreateCompanyModal({ isOpen, onClose, onSubmit }: CreateCompanyM
                 name="productos"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Productos (separados por coma)</FormLabel>
+                    <FormLabel>
+                      Productos <span className="text-red-500 ml-1">*</span>
+                    </FormLabel>
                     <FormControl>
-                      {/* field.value aquí puede ser string[] (post-transform), así que lo mostramos como string */}
                       <Textarea
                         placeholder="Ej: Águila, Poker, Club Colombia"
                         rows={2}
@@ -246,23 +237,18 @@ export function CreateCompanyModal({ isOpen, onClose, onSubmit }: CreateCompanyM
                         onChange={(e) => field.onChange(e.target.value)}
                       />
                     </FormControl>
+                    <p className="text-xs text-muted-foreground mt-1">Separa los productos con comas. Al menos un producto requerido.</p>
                     <FormMessage />
                   </FormItem>
                 )}
               />
 
-              <FormField
+              <FormFieldWithValidation
                 control={form.control}
                 name="username"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Username (opcional)</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Usuario interno (opcional)" {...field} value={field.value ?? ""} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                label="Username"
+                placeholder="Usuario interno (opcional)"
+                helpText="Identificador único para la empresa (opcional)"
               />
 
               <FormField
@@ -298,60 +284,41 @@ export function CreateCompanyModal({ isOpen, onClose, onSubmit }: CreateCompanyM
               <h3 className="font-semibold">Usuario de acceso (Empresa)</h3>
 
               <div className="grid grid-cols-2 gap-4">
-                <FormField
+                <FormFieldWithValidation
                   control={form.control}
                   name="userNombre"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Nombre</FormLabel>
-                      <FormControl>
-                        <Input placeholder="Nombre del responsable" {...field} value={field.value ?? ""} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                  label="Nombre"
+                  placeholder="Nombre del responsable"
+                  required
+                  helpText="Mínimo 2 caracteres"
                 />
 
-                <FormField
+                <FormFieldWithValidation
                   control={form.control}
                   name="cedula"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Cédula (opcional)</FormLabel>
-                      <FormControl>
-                        <Input placeholder="Documento" {...field} value={field.value ?? ""} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                  label="Cédula"
+                  placeholder="Documento"
+                  helpText="Documento de identidad (opcional)"
                 />
 
-                <FormField
+                <FormFieldWithValidation
                   control={form.control}
                   name="userEmail"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Email</FormLabel>
-                      <FormControl>
-                        <Input type="email" placeholder="empresa@dominio.com" {...field} value={field.value ?? ""} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                  label="Email"
+                  type="email"
+                  placeholder="empresa@dominio.com"
+                  required
+                  helpText="Email válido requerido"
                 />
 
-                <FormField
+                <FormFieldWithValidation
                   control={form.control}
                   name="userPassword"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Contraseña</FormLabel>
-                      <FormControl>
-                        <Input type="password" placeholder="mín. 8 caracteres" {...field} value={field.value ?? ""} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                  label="Contraseña"
+                  type="password"
+                  placeholder="mín. 8 caracteres"
+                  required
+                  helpText="Mínimo 8 caracteres"
                 />
               </div>
             </div>

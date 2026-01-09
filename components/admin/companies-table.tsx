@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Trash2, Building2 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { SortableTableHead } from "@/components/admin/sortable-table-head"
 import type { Company } from "@/types/company"
 import { EmptyState } from "./empty-state"
 
@@ -13,6 +14,9 @@ interface CompaniesTableProps {
   onDelete: (companyId: string) => void
   onRowClick: (companyId: string) => void
   onCreateClick?: () => void
+  sortKey: string | null
+  sortDirection: "asc" | "desc"
+  onSort: (key: string) => void
 }
 
 const sizeColors = {
@@ -22,7 +26,7 @@ const sizeColors = {
   enterprise: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100",
 }
 
-export function CompaniesTable({ companies, onDelete, onRowClick, onCreateClick }: CompaniesTableProps) {
+export function CompaniesTable({ companies, onDelete, onRowClick, onCreateClick, sortKey, sortDirection, onSort }: CompaniesTableProps) {
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("es-ES", {
       year: "numeric",
@@ -36,12 +40,47 @@ export function CompaniesTable({ companies, onDelete, onRowClick, onCreateClick 
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[50%] md:w-[25%]">Nombre</TableHead>
-            <TableHead className="hidden md:table-cell md:w-[10%]">Tamaño</TableHead>
-            <TableHead className="hidden md:table-cell md:w-[12%]">Tipo</TableHead>
+            <SortableTableHead
+              label="Nombre"
+              sortKey="nombre"
+              currentSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="w-[50%] md:w-[25%]"
+            />
+            <SortableTableHead
+              label="Tamaño"
+              sortKey="tamaño"
+              currentSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="hidden md:table-cell md:w-[10%]"
+            />
+            <SortableTableHead
+              label="Tipo"
+              sortKey="tipo"
+              currentSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="hidden md:table-cell md:w-[12%]"
+            />
             <TableHead className="hidden md:table-cell md:w-[10%] text-center">Prods.</TableHead>
-            <TableHead className="hidden md:table-cell md:w-[10%]">Estado</TableHead>
-            <TableHead className="hidden md:table-cell md:w-[13%]">Creación</TableHead>
+            <SortableTableHead
+              label="Estado"
+              sortKey="estado"
+              currentSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="hidden md:table-cell md:w-[10%]"
+            />
+            <SortableTableHead
+              label="Creación"
+              sortKey="createdAt"
+              currentSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="hidden md:table-cell md:w-[13%]"
+            />
             <TableHead className="w-[50%] md:w-[20%] text-right">Acciones</TableHead>
           </TableRow>
         </TableHeader>

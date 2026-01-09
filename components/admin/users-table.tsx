@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Trash2, Users } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { SortableTableHead } from "@/components/admin/sortable-table-head"
 import type { User } from "@/types/user"
 import { EmptyState } from "./empty-state"
 
@@ -10,6 +11,9 @@ interface UsersTableProps {
   users: User[]
   onDelete: (userId: string) => void
   onCreateClick?: () => void
+  sortKey: string | null
+  sortDirection: "asc" | "desc"
+  onSort: (key: string) => void
 }
 
 const roleLabels = {
@@ -24,7 +28,7 @@ const roleColors = {
   company: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100",
 }
 
-export function UsersTable({ users, onDelete, onCreateClick }: UsersTableProps) {
+export function UsersTable({ users, onDelete, onCreateClick, sortKey, sortDirection, onSort }: UsersTableProps) {
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("es-ES", {
       year: "numeric",
@@ -38,13 +42,41 @@ export function UsersTable({ users, onDelete, onCreateClick }: UsersTableProps) 
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="hidden md:table-cell md:w-[12%]">Usuario</TableHead>
-            <TableHead className="w-[60%] md:w-[18%]">Nombre</TableHead>
-            <TableHead className="hidden md:table-cell md:w-[10%]">Rol</TableHead>
+            <SortableTableHead
+              label="Usuario"
+              sortKey="username"
+              currentSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="hidden md:table-cell md:w-[12%]"
+            />
+            <SortableTableHead
+              label="Nombre"
+              sortKey="nombre"
+              currentSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="w-[60%] md:w-[18%]"
+            />
+            <SortableTableHead
+              label="Rol"
+              sortKey="role"
+              currentSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="hidden md:table-cell md:w-[10%]"
+            />
             <TableHead className="hidden md:table-cell md:w-[12%]">Cédula</TableHead>
             <TableHead className="hidden md:table-cell md:w-[18%]">Empresa Asignada</TableHead>
             <TableHead className="hidden md:table-cell md:w-[10%] text-center">Unidades</TableHead>
-            <TableHead className="hidden md:table-cell md:w-[12%]">Creación</TableHead>
+            <SortableTableHead
+              label="Creación"
+              sortKey="createdAt"
+              currentSortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              className="hidden md:table-cell md:w-[12%]"
+            />
             <TableHead className="w-[40%] md:w-[8%] text-right">Acciones</TableHead>
           </TableRow>
         </TableHeader>
