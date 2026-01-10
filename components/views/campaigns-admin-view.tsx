@@ -19,8 +19,6 @@ import { TableSkeleton } from "@/components/admin/table-skeleton"
 import { KPISkeleton } from "@/components/admin/kpi-skeleton"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TableSearch, type FilterOption } from "@/components/admin/table-search"
-import { TablePagination } from "@/components/admin/table-pagination"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
 import { useAuthRole, type ExtendedUser } from "@/lib/auth/useAuthRole"
 import type { Campaign } from "@/types/campaign"
@@ -45,8 +43,6 @@ export function CampaignsAdminView() {
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
 
@@ -182,18 +178,6 @@ export function CampaignsAdminView() {
     return result
   }, [campaignsByCompany, searchQuery, statusFilter, sortKey, sortDirection])
 
-  // Paginación
-  const totalPages = Math.ceil(filteredCampaigns.length / pageSize)
-  const paginatedCampaigns = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize
-    return filteredCampaigns.slice(startIndex, startIndex + pageSize)
-  }, [filteredCampaigns, currentPage, pageSize])
-
-  // Reset a página 1 cuando cambian los filtros
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [searchQuery, statusFilter])
-
   // Manejar ordenamiento
   const handleSort = (key: string) => {
     if (sortKey === key) {
@@ -317,24 +301,10 @@ export function CampaignsAdminView() {
               filterOptions={statusFilterOptions}
               filterLabel="Estado"
             />
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground whitespace-nowrap">Items por página:</span>
-              <Select value={pageSize.toString()} onValueChange={(value) => setPageSize(Number(value))}>
-                <SelectTrigger className="w-[100px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="10">10</SelectItem>
-                  <SelectItem value="25">25</SelectItem>
-                  <SelectItem value="50">50</SelectItem>
-                  <SelectItem value="100">100</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
           </div>
 
           <CampaignsTable
-            campaigns={paginatedCampaigns}
+            campaigns={filteredCampaigns}
             onEdit={handleEditClick}
             onDelete={handleDeleteClick}
             onRowClick={handleRowClick}
@@ -344,16 +314,6 @@ export function CampaignsAdminView() {
             sortDirection={sortDirection}
             onSort={handleSort}
           />
-
-          {filteredCampaigns.length > 0 && (
-            <TablePagination
-              currentPage={currentPage}
-              totalPages={totalPages}
-              totalItems={filteredCampaigns.length}
-              pageSize={pageSize}
-              onPageChange={setCurrentPage}
-            />
-          )}
         </CardContent>
       </Card>
 

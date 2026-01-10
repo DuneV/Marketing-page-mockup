@@ -80,7 +80,7 @@ const STEPS = [
   { id: 3, label: "Importación Excel", icon: Upload, stepKey: "excel" as Step, optional: true },
 ]
 
-interface FormValues extends CampaignFormData {
+interface FormValues extends Omit<CampaignFormData, "productosAsociados"> {
   productosAsociados: string
   bucketPath?: string
 }
@@ -488,7 +488,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
   }
 
   const schemaFields = Object.keys(preview?.schema?.canonicalFields ?? {})
-  const progress = step === "campaign" ? 50 : 100
+
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
