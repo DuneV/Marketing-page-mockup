@@ -1,3 +1,5 @@
+// app\admin\settings\page.tsx
+
 "use client"
 
 import { DashboardLayout } from "@/components/dashboard-layout"

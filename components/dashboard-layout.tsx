@@ -58,7 +58,7 @@ export function DashboardLayout({
             <ThemeToggle />
           </div>
         </header>
-        <main className="flex flex-1 flex-col gap-4 p-4 bg-white dark:bg-slate-950">
+        <main className="flex flex-1 flex-col gap-4 p-4 bg-background">
           <div className="w-full max-w-screen-2xl mx-auto">
             {children}
           </div>

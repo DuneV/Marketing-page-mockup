@@ -133,7 +133,7 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
       appendLog("1) Creando importación...")
       
       const { importId: newImportId, uploadUrl } = await createImport({
-        clientId: campaign.empresaId,
+        companyId: campaign.empresaId,
         importType: "campaigns",
         filename: file.name,
       })

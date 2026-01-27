@@ -39,17 +39,15 @@ import {
 const COLORS = ["#b91c1c", "#dc2626", "#ef4444", "#f87171", "#fca5a5"];
 
 // Mock data generator - En producción, esto vendría de tu API
-const generateMockData = (source: DataSource): any[] => {
-  const baseData = [
+const generateMockData = (_source?: DataSource): any[] => {
+  return [
     { name: "Ene", value: Math.random() * 1000 + 500 },
     { name: "Feb", value: Math.random() * 1000 + 500 },
     { name: "Mar", value: Math.random() * 1000 + 500 },
     { name: "Abr", value: Math.random() * 1000 + 500 },
     { name: "May", value: Math.random() * 1000 + 500 },
     { name: "Jun", value: Math.random() * 1000 + 500 },
-  ];
-
-  return baseData;
+  ]
 };
 
 interface DynamicChartProps {
@@ -130,9 +128,10 @@ export function DynamicChart({ chart, data }: DynamicChartProps) {
                 cx="50%"
                 cy="50%"
                 labelLine={false}
-                label={({ name, percent }) =>
-                  `${name}: ${(percent * 100).toFixed(0)}%`
-                }
+                label={({ name, percent }) => {
+                  const p = (percent ?? 0) * 100
+                  return `${name}: ${p.toFixed(0)}%`
+                }}
                 outerRadius={80}
                 fill="#8884d8"
                 dataKey="value"

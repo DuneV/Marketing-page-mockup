@@ -73,9 +73,13 @@ export function AppSidebar({ userType, isAdmin = false }: AppSidebarProps) {
     return () => unsub()
   }, [])
 
-  const dashboardHref = isAdmin ? "/admin/dashboard" : "/dashboard"
-  const campaignsHref = isAdmin ? "/admin/campaigns" : "/dashboard/campaigns"
-  const settingsHref = isAdmin ? "/admin/settings" : "/dashboard/settings"
+  const dashboardHref =
+  isAdmin ? "/admin/dashboard" : userType === "company" ? "/company" : "/dashboard"
+  const campaignsHref =
+  isAdmin ? "/admin/campaigns" : userType === "company" ? "/company" : "/dashboard/campaigns"
+  const settingsHref =
+  isAdmin ? "/admin/settings" : userType === "company" ? "/company/settings" : "/dashboard/settings"
+
 
   const isActiveRoute = (href: string) => {
     if (href === dashboardHref) return pathname === dashboardHref

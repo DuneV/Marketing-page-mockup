@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Target, Plus, TrendingUp, DollarSign, BarChart3 } from "lucide-react"
 import { getAllCampaigns, deleteCampaign, deleteAllCampaignImages, deleteAllCampaignComments } from "@/lib/data/campaigns"
+import { deleteCampaignImports, deleteCampaignReportConfig } from "@/lib/api/campaignApi"
 import { getAllCompanies, decrementCompanyCampaignCount } from "@/lib/data/companies"
 import { assignUserToCampaign } from "@/lib/data/users"
 import { AdminKPICard } from "@/components/admin/admin-kpi-card"
@@ -76,7 +77,14 @@ export function CampaignsAdminView() {
       if (campaign.usuarioResponsableId) {
         await assignUserToCampaign(campaign.usuarioResponsableId, null)
       }
+      
+      /* SQL AND JSON functions */
 
+      await deleteCampaignImports(deleteCampaignId)
+      await deleteCampaignReportConfig(deleteCampaignId)
+
+      /* Firebase functions */
+      
       await deleteAllCampaignImages(deleteCampaignId)
       await deleteAllCampaignComments(deleteCampaignId)
       await deleteCampaign(deleteCampaignId)

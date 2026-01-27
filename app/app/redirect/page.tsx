@@ -13,30 +13,34 @@ export default function RedirectPage() {
     if (loading) return
 
     if (!user) {
-      // No hay usuario, redirigir a login
-      router.push("/auth/login")
+      router.replace("/auth/login")
       return
     }
 
-    // Redirigir según el rol
     if (role === "admin") {
-      router.push("/admin")
-    } else if (role === "company") {
-      router.push("/company")
-    } else if (role === "employee") {
-      router.push("/employee")
-    } else {
-      // Rol desconocido, limpiar cache y redirigir a login
-      clearUserCache()
-      router.push("/auth/login")
+      router.replace("/admin")
+      return
     }
+
+    if (role === "company") {
+      router.replace("/company")
+      return
+    }
+
+    if (role === "employee") {
+      router.replace("/dashboard")
+      return
+    }
+
+    clearUserCache()
+    router.replace("/auth/login")
   }, [user, role, loading, router])
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+    <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
       <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500 mx-auto mb-4"></div>
-        <p className="text-slate-600 dark:text-slate-400">Redirigiendo...</p>
+        <div className="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-2 border-border border-t-primary" />
+        <p className="text-muted-foreground">Redirigiendo...</p>
       </div>
     </div>
   )

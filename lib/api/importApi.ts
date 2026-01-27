@@ -25,6 +25,7 @@ export async function createImport(params: {
   return res.json() as Promise<{ importId: string; uploadUrl: string }>
 }
 
+
 export async function analyzeImport(importId: string) {
   const headers = await authHeaders()
 
@@ -57,8 +58,6 @@ export async function analyzeImport(importId: string) {
 
   return data ?? text
 }
-
-
 
 export async function commitImport(importId: string, mapping: Record<string, string>) {
   const headers = await authHeaders()

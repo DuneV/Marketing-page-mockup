@@ -1,8 +1,11 @@
+// app\company\page.tsx
+
 "use client"
 
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
-import Dashboard from "@/components/dashboard"
+import { CompanyDashboardView } from "@/components/views/company-dashboard-view"
+
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { useAuthRole } from "@/lib/auth/useAuthRole"
 import { Button } from "@/components/ui/button"
@@ -65,7 +68,7 @@ export default function CompanyPage() {
 
   return (
     <DashboardLayout userType="company" isAdmin={false}>
-      <Dashboard activeView="overview" userType="company" />
-    </DashboardLayout>
+    <CompanyDashboardView />
+  </DashboardLayout>
   )
 }

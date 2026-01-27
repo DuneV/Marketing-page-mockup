@@ -1,97 +1,111 @@
+// components\views\admin-dashboard-view.tsx
+
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
+import Link from "next/link"
+import { ExternalLink } from "lucide-react"
+
+import type { Campaign } from "@/types/campaign"
+import { getAllCampaigns } from "@/lib/data/campaigns"
+import { getCampaignsWithReportConfig } from "@/lib/api/campaignApi"
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Skeleton } from "@/components/ui/skeleton"
-import { AdminKPICard } from "@/components/admin/admin-kpi-card"
-import { Database, CheckCircle, UploadCloud, AlertCircle } from "lucide-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Button } from "@/components/ui/button"
 
-// Si luego quieres, esto puede venir de tu import-api (GET /admin/stats)
-// Por ahora lo dejo mock con loading para estilo AdminView.
 export function AdminDashboardView() {
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  const [campaignId, setCampaignId] = useState<string>("")
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const [stats, setStats] = useState({
-    totalImports: 0,
-    analyzed: 0,
-    processing: 0,
-    errors: 0,
-  })
+  const selected = useMemo(
+    () => campaigns.find((c) => c.id === campaignId) ?? null,
+    [campaigns, campaignId]
+  )
 
   useEffect(() => {
-    // TODO: fetch real stats (import-api)
-    setTimeout(() => {
-      setStats({ totalImports: 12, analyzed: 7, processing: 3, errors: 2 })
-      setLoading(false)
-    }, 600)
-  }, [])
+    ;(async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        // 1) ids que sí tienen report-config JSON
+        const { campaignIds } = await getCampaignsWithReportConfig()
+        const allow = new Set(campaignIds)
 
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <Skeleton className="h-8 w-64" />
-          <Skeleton className="h-10 w-40" />
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Card key={i}>
-              <CardHeader>
-                <Skeleton className="h-5 w-32" />
-              </CardHeader>
-              <CardContent>
-                <Skeleton className="h-10 w-24" />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-        <Card>
-          <CardHeader>
-            <Skeleton className="h-6 w-40" />
-          </CardHeader>
-          <CardContent>
-            <Skeleton className="h-40 w-full" />
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
+        // 2) trae campañas (Firestore) y filtra por esos ids
+        const all = (await getAllCampaigns()) as Campaign[]
+        const filtered = all.filter((c) => allow.has(c.id))
+
+        setCampaigns(filtered)
+
+        if (filtered.length > 0) setCampaignId(filtered[0].id)
+        else setCampaignId("")
+      } catch (e: any) {
+        setError(e?.message ?? "No se pudieron cargar campañas con dashboard")
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [])
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-2">
-        <Database className="h-6 w-6 text-amber-600" />
-        <h2 className="text-2xl font-bold">Admin Dashboard</h2>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <AdminKPICard label="Imports Totales" value={stats.totalImports} icon={UploadCloud} color="amber" />
-        <AdminKPICard label="Analizados" value={stats.analyzed} icon={CheckCircle} color="red" />
-        <AdminKPICard label="Procesando" value={stats.processing} icon={Database} color="amber" />
-        <AdminKPICard label="Errores" value={stats.errors} icon={AlertCircle} color="red" />
-      </div>
-
       <Card>
         <CardHeader>
-          <CardTitle>Resumen</CardTitle>
+          <CardTitle>Dashboards disponibles</CardTitle>
         </CardHeader>
-        <CardContent className="text-sm text-slate-600 dark:text-slate-300">
-          <div className="space-y-4">
-            {[
-              { text: "Empresa 'TechSolutions' importó 150 productos", time: "Hace 10 min", icon: UploadCloud, color: "text-blue-500" },
-              { text: "Campaña 'Verano 2025' completó el análisis", time: "Hace 45 min", icon: CheckCircle, color: "text-green-500" },
-              { text: "Nuevo usuario registrado: Juan Pérez", time: "Hace 2 horas", icon: Database, color: "text-amber-500" },
-              { text: "Error de validación en 'Importación Masiva #4'", time: "Hace 5 horas", icon: AlertCircle, color: "text-red-500" },
-            ].map((item, i) => (
-              <div key={i} className="flex items-start gap-3 p-3 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
-                <item.icon className={`h-5 w-5 mt-0.5 ${item.color}`} />
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{item.text}</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">{item.time}</p>
-                </div>
+
+        <CardContent className="space-y-4">
+          {loading ? (
+            <p className="text-sm text-muted-foreground">Cargando campañas con dashboard...</p>
+          ) : error ? (
+            <p className="text-sm text-red-600">{error}</p>
+          ) : campaigns.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No hay campañas con dashboard guardado (JSON). Crea uno desde Campañas → Configurar Reporte → Guardar.
+            </p>
+          ) : (
+            <>
+              <Select value={campaignId} onValueChange={setCampaignId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecciona una campaña..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {campaigns.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.nombre} — {c.empresaNombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {selected && (
+                <p className="text-xs text-muted-foreground">
+                  Seleccionado: <span className="font-medium">{selected.nombre}</span>
+                </p>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Button asChild disabled={!campaignId}>
+                  <Link href={`/admin/campaigns/${campaignId}/dashboard`}>Ver dashboard</Link>
+                </Button>
+
+                <Button variant="outline" asChild disabled={!campaignId}>
+                  <a
+                    href={`/admin/campaigns/${campaignId}/dashboard`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    Abrir en otra pestaña
+                  </a>
+                </Button>
               </div>
-            ))}
-          </div>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

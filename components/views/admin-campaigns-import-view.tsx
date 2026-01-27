@@ -65,7 +65,7 @@ export function AdminCampaignsImportView() {
     try {
       setBusy(true)
       appendLog("1) create import…")
-      const { importId, uploadUrl } = await createImport({ clientId, importType, filename: file.name })
+      const { importId, uploadUrl } = await createImport({ companyId: clientId, importType, filename: file.name })
       setImportId(importId)
 
       appendLog("2) upload to GCS…")

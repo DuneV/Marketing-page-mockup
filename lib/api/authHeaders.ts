@@ -1,10 +1,16 @@
 // lib/api/authHeaders.ts
+"use client"
 
-import { getAuth } from "firebase/auth"
+import { auth } from "@/lib/firebase/client"
 
 export async function authHeaders() {
-  const user = getAuth().currentUser
+  if (typeof window === "undefined") {
+    throw new Error("authHeaders() is client-only. Do not call it inside Next Route Handlers.")
+  }
+
+  const user = auth.currentUser
   if (!user) throw new Error("No auth user")
+
   const token = await user.getIdToken()
   return {
     Authorization: `Bearer ${token}`,

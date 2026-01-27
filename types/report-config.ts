@@ -1,3 +1,9 @@
+// types\report-config.ts
+
+export type BarOrientation = "vertical" | "horizontal"
+export type BarMode = "grouped" | "stacked"
+export type CountField = "__rows__" | string
+
 // Tipos de gráficos reservados disponibles en el sistema
 export type ChartType =
   | "torta"           // Pie chart
@@ -15,6 +21,35 @@ export type ChartType =
 
 // Columnas de Bootstrap (1-12)
 export type BootstrapCol = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
+export type FilterOperator =
+  | "eq"
+  | "ne"
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte"
+  | "contains"
+  | "startsWith"
+  | "endsWith"
+  | "in"
+  | "between"
+  | "before"
+  | "after";
+
+export interface FilterCondition {
+  campo: DataSource;          // canonical_field (ej: "city", "activity", "poker")
+  operador: FilterOperator;   // ej: "eq", "contains", "between"
+  valor: any;                 // string | number | boolean | {inicio,fin} | string[]
+  label?: string
+}
+
+export interface ReportFilters {
+  aplicar?: boolean;      // nuevo: controla si el backend filtra o no
+  fechas?: DateFilter;
+  marcas?: string[];
+  campanas?: string[];
+  condiciones?: FilterCondition[];
+}
 
 // Operaciones para KPIs
 export type KPIOperation =
@@ -38,8 +73,8 @@ export type DataSource =
   | "roi_campana"
   | "costo_adquisicion"
   | "tasa_conversion"
-  | "alcance_total";
-
+  | "alcance_total"
+  | (string & {});
 // Filtro de rango de fechas
 export interface DateFilter {
   inicio: string;      // Formato ISO: "2000-01-01"
@@ -53,22 +88,44 @@ export interface KPIDefinition {
   operacion: KPIOperation;           // Ej: "mean"
   fuente: DataSource;                // Ej: "ventas_clubcolombia"
   descripcion?: string;              // Descripción opcional del KPI
+  countField?: CountField
 }
 
 // Definición de un gráfico individual
 export interface ChartDefinition {
-  id: string;
-  tipo: ChartType;                   // Tipo de gráfico
-  titulo: string;                    // Título del gráfico
-  fuente: DataSource;                // Fuente de datos
-  columnas: BootstrapCol;            // Ancho en columnas (1-12)
-  configuracion?: {                  // Configuración adicional del gráfico
-    color?: string;
-    showLegend?: boolean;
-    showGrid?: boolean;
-    height?: number;
-    [key: string]: any;              // Permite configuraciones personalizadas
-  };
+  id: string
+  tipo: ChartType
+  titulo: string
+  columnas: BootstrapCol
+  fuente?: DataSource
+  
+  //modelo genérico para gráficas
+  metric?: DataSource            // Y principal (ej: ventas)
+  metric2?: DataSource           // para combo (line) o 2da serie (ej: impulsos)
+  groupBy?: DataSource           // X (ej: ciudad, actividad, fecha)
+  seriesBy?: DataSource          // segmentación (ej: actividad dentro de ciudad)
+
+  // BARRAS
+  barOrientation?: BarOrientation
+  barMode?: BarMode              // stacked o grouped
+
+  //  LABELS
+  labelField?: DataSource        // “nombre de etiqueta” en tooltip/legend (ej: nombre_promotora)
+
+  // MAPA
+  map?: {
+    geoLevel: "city" | "dept" | "country"
+    locationField: DataSource    // ej: ciudad
+    valueField: DataSource       // ej: ventas
+  }
+
+  // Opcional extra
+  configuracion?: {
+    showLegend?: boolean
+    showGrid?: boolean
+    height?: number
+    [key: string]: any
+  }
 }
 
 // Definición de una fila en el dashboard
@@ -85,11 +142,7 @@ export interface ReportConfiguration {
   campaignNombre: string;            // Nombre de la campaña
   empresaId: string;                 // ID de la empresa (Padre)
   empresaNombre: string;             // Nombre de la empresa para referencia
-  filtros: {
-    fechas?: DateFilter;             // Filtro de fechas opcional
-    marcas?: string[];               // Filtro de marcas opcional
-    campanas?: string[];             // Filtro de campañas opcional
-  };
+  filtros: ReportFilters;
   kpis: KPIDefinition[];             // KPIs configurados
   filas: DashboardRow[];             // Filas del dashboard con sus gráficos
   activa: boolean;                   // Si la configuración está activa
