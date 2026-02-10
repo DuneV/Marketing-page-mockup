@@ -69,8 +69,8 @@ export async function deleteCompany(companyId: string): Promise<void> {
   await apiDeleteCompany(companyId)
 }
 
-export async function decrementCompanyCampaignCount(companyId: string, budget: number): Promise<void> {
-  await apiDecrementCompanyCampaignCount(companyId, budget)
+export async function decrementCompanyCampaignCount(companyId: string, budget?: number): Promise<void> {
+  await apiDecrementCompanyCampaignCount(companyId, Math.abs(budget ?? 0))
 }
 
 export async function getCompany(companyId: string): Promise<Company | null> {
@@ -85,10 +85,10 @@ export async function getCompany(companyId: string): Promise<Company | null> {
   })
 }
 
-export async function incrementCompanyCampaignCount(companyId: string, budget: number): Promise<void> {
+export async function incrementCompanyCampaignCount(companyId: string, budget?: number): Promise<void> {
   await apiUpdateCompanyCampaignStats(companyId, {
     deltaCampaigns: 1,
-    deltaBudget: Math.abs(budget || 0),
+    deltaBudget: Math.abs(budget ?? 0),
   })
 }
 

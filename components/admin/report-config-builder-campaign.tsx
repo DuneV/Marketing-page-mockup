@@ -1,9 +1,8 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   getAvailableFields,
-  getValidOperations,
   getCampaignReportConfig,
   saveCampaignReportConfig,
   type AvailableField,
@@ -48,40 +47,69 @@ import type {
   BootstrapCol,
 } from "@/types/report-config"
 
+/**
+ * Recomendación (tipos globales):
+ * - Agrega "combo" a tu ChartType en "@/types/report-config"
+ * - Si no lo haces, este archivo sigue compilando porque usamos casts puntuales.
+ */
+
+// -----------------------------
+// Props
+// -----------------------------
 interface ReportConfigBuilderCampaignProps {
   campaign: Campaign
   onSaved?: () => void
 }
 
-// Configuración por defecto sin límites
+// -----------------------------
+// Límites
+// -----------------------------
 const DEFAULT_LIMITS = {
   maxKPIs: 20,
   maxFilas: 10,
   maxGraficosPorFila: 4,
 }
 
-// Todos los tipos de gráficos disponibles
-const ALL_CHART_TYPES: ChartType[] = [
-  "torta",
-  "barras",
-  "spline",
-  "plot",
-  "scatter",
-  "area",
-  "radar",
-  "funnel",
-  "gauge",
-  "heatmap",
-  "treemap",
-  "tabla",
-]
-
-// Helpers de compatibilidad (por si tu ChartDefinition aún no tiene estos campos tipados)
+// -----------------------------
+// Tipos extendidos (sin romper tus types actuales)
+// -----------------------------
 type MeasureType = "count" | "numeric"
-type ChartAgg = KPIOperation // sum, mean, count, max, min, median, std, variance
+type ChartAgg = KPIOperation
 
 type MetricAxis = "left" | "right"
-type MetricDef = { field: string; agg: ChartAgg; axis: MetricAxis }
+type MetricRender = "bar" | "line"
+
+type MetricDef = {
+  field: string
+  agg: ChartAgg
+  axis: MetricAxis
+  render?: MetricRender // ✅ para combo (barras / líneas)
+}
+
+type FormulaOp = "add" | "sub" | "mul" | "div" | "pct" // pct = (A/B)*100
+type KPIKind = "field" | "formula"
+
+// ✅ nuevos para “dimensión/formato”
+type KPIFormat = "number" | "currency" | "percent"
+
+type ExtendedKPI = KPIDefinition & {
+  kind?: KPIKind
+
+  // ✅ nuevo: mostrar en dashboard
+  visible?: boolean
+
+  // ✅ nuevo: “dimensión/formato”
+  formato?: KPIFormat
+  unidad?: string
+  decimales?: number
+
+  // fórmula:
+  formula?: {
+    aKpiId: string
+    op: FormulaOp
+    bKpiId: string
+  }
+}
 
 type AnyChart = ChartDefinition & {
   fuente?: string
@@ -103,9 +131,35 @@ type AnyChart = ChartDefinition & {
   barMode?: "grouped" | "stacked"
 }
 
+// -----------------------------
+// Tipos de chart disponibles (incluye "combo")
+// -----------------------------
+const ALL_CHART_TYPES: ChartType[] = [
+  "torta",
+  "barras",
+  "spline",
+  "plot",
+  "scatter",
+  "area",
+  "radar",
+  "funnel",
+  "gauge",
+  "heatmap",
+  "treemap",
+  "tabla",
+  "combo" as ChartType, // ✅ nuevo
+]
+
+// -----------------------------
+// Helpers
+// -----------------------------
+function safeLabel(fieldName: string) {
+  return (DATA_SOURCE_LABELS as Record<string, string> | undefined)?.[fieldName] || fieldName
+}
+
 function validateChart(chart: AnyChart) {
-  const t = chart.tipo
-  const needsGroup = ["barras", "spline", "area", "radar", "heatmap", "treemap", "funnel", "tabla", "torta"].includes(t)
+  const t = chart.tipo as string
+  const needsGroup = ["barras", "spline", "area", "radar", "heatmap", "treemap", "funnel", "tabla", "torta", "combo"].includes(t)
 
   if (needsGroup) {
     if (!chart.groupBy) return "Este gráfico necesita un Group By (eje X)."
@@ -116,19 +170,27 @@ function validateChart(chart: AnyChart) {
     if (!chart.metric || !chart.metric2) return "Scatter necesita 2 métricas (X y Y)."
   }
 
-  const needsMetric = ["barras", "torta", "tabla", "spline", "area", "radar", "heatmap", "treemap", "funnel"].includes(t)
+  // combo requiere numeric + >=2 métricas (ideal)
+  if (t === "combo") {
+    if (chart.measureType !== "numeric") return "Combo requiere métrica numérica."
+    const ms = chart.metrics ?? []
+    if (ms.length < 2) return "Combo requiere al menos 2 métricas (ej: barras + línea)."
+  }
+
+  const needsMetric = ["barras", "torta", "tabla", "spline", "area", "radar", "heatmap", "treemap", "funnel", "combo"].includes(t)
 
   if (needsMetric) {
     const mt: MeasureType = chart.measureType ?? "count"
     if (mt === "count") {
       if (!chart.countField) return "Selecciona qué campo quieres contar (o Filas)."
     } else {
-      // ✅ si usa multi-métricas, con 1+ basta (y ya trae agg por métrica)
+      // multi-métricas OK con 1+ (excepto combo que pide 2+ arriba)
       if (Array.isArray(chart.metrics) && chart.metrics.length > 0) {
         for (const m of chart.metrics) {
           if (!m?.field) return "Hay una métrica sin campo seleccionado."
           if (!m?.agg) return "Hay una métrica sin operación (agg)."
           if (!m?.axis) return "Hay una métrica sin eje (left/right)."
+          if (t === "combo" && !m?.render) return "En Combo, cada métrica debe ser Bar o Line."
         }
       } else {
         // legacy
@@ -138,19 +200,7 @@ function validateChart(chart: AnyChart) {
     }
   }
 
-  if ((t as any) === "combo") {
-    if (!chart.groupBy || !chart.metric || !chart.metric2) return "Combo necesita Group By + 2 métricas."
-  }
-
-  if ((t as any) === "mapa") {
-    if (!(chart as any).map?.locationField || !(chart as any).map?.valueField) return "Mapa necesita ubicación y valor."
-  }
-
   return null
-}
-
-function safeLabel(fieldName: string) {
-  return (DATA_SOURCE_LABELS as any)?.[fieldName] || fieldName
 }
 
 export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigBuilderCampaignProps) {
@@ -166,7 +216,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
   const [lastImportId, setLastImportId] = useState<string | null>(null)
 
   // -----------------------------
-  // Helpers
+  // Defaults
   // -----------------------------
   const makeDefaultConfig = (): Omit<ReportConfiguration, "id" | "fechaCreacion" | "fechaActualizacion"> => ({
     campaignId: campaign.id,
@@ -191,6 +241,9 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
     activa: true,
   })
 
+  // -----------------------------
+  // Load fields
+  // -----------------------------
   const loadAvailableFields = async (signal?: AbortSignal) => {
     if (!campaign?.id) return
 
@@ -202,8 +255,6 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
       setAvailableFields(fields ?? [])
       setAvailableFilters(filters ?? [])
       setLastImportId(importId ?? null)
-
-      console.log("Available fields loaded:", { campaignId: campaign.id, importId, fields, filters })
     } catch (error) {
       if (signal?.aborted) return
       console.error("Error loading available fields:", error)
@@ -215,24 +266,25 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
     }
   }
 
-  const textFields = availableFields.filter((f) => f.type === "text" || f.type === "date" || f.type === "boolean" || f.type === "unknown")
-  const numericFields = availableFields.filter((f) => f.type === "number")
-  const allFieldNames = availableFields.map((f) => f.name)
+  const textFields = useMemo(
+    () => availableFields.filter((f) => f.type === "text" || f.type === "date" || f.type === "boolean" || f.type === "unknown"),
+    [availableFields]
+  )
+  const numericFields = useMemo(() => availableFields.filter((f) => f.type === "number"), [availableFields])
+  const allFieldNames = useMemo(() => availableFields.map((f) => f.name), [availableFields])
 
-  const getOperationsForField = (fieldName: string) => {
-    const field = availableFields.find((f) => f.name === fieldName)
-    if (!field) return ["count"]
-    return getValidOperations(field.type)
+  const getValidOperationsForType = (type: AvailableField["type"]): string[] => {
+    if (type === "number") return ["sum", "mean", "min", "max", "count", "median", "std", "variance"]
+    return ["count"]
   }
 
-  const getNumericAggOps = () => getValidOperations("number") as string[]
+  const getNumericAggOps = (): string[] => getValidOperationsForType("number")
 
   // -----------------------------
-  // Load config from API (GCS) + load fields
+  // Load config from API + templates
   // -----------------------------
   useEffect(() => {
     if (!open) return
-
     const controller = new AbortController()
 
     ;(async () => {
@@ -262,15 +314,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
 
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    open,
-    campaign.id,
-    campaign.nombre,
-    campaign.empresaId,
-    campaign.empresaNombre,
-    campaign.fechaInicio,
-    campaign.fechaFin,
-  ])
+  }, [open, campaign.id])
 
   const loadTemplate = (templateId: string) => {
     const template = templates.find((t) => t.id === templateId)
@@ -299,7 +343,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
   }
 
   // -----------------------------
-  // KPI CRUD
+  // KPI CRUD (con fórmula + visible + formato)
   // -----------------------------
   const addKPI = () => {
     if (!config) return
@@ -309,23 +353,29 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
     }
 
     const firstField = availableFields[0]
-    const newKPI: KPIDefinition = {
+    const newKPI: ExtendedKPI = {
       id: crypto.randomUUID(),
       nombre: "Nuevo KPI",
+      kind: "field",
       operacion: firstField?.type === "number" ? ("sum" as KPIOperation) : ("count" as KPIOperation),
       fuente: ((firstField?.name as DataSource) ?? ("unknown" as DataSource)) as DataSource,
-      // ✅ para KPIs count, por defecto cuenta filas
       countField: "__rows__",
+
+      // ✅ nuevos defaults
+      visible: true,
+      formato: firstField?.type === "number" ? "number" : "number",
+      decimales: 0,
+      unidad: "",
     }
 
-    setConfig({ ...config, kpis: [...config.kpis, newKPI] })
+    setConfig({ ...config, kpis: [...config.kpis, newKPI as any] })
   }
 
-  const updateKPI = (id: string, updates: Partial<KPIDefinition>) => {
+  const updateKPI = (id: string, updates: Partial<ExtendedKPI>) => {
     if (!config) return
     setConfig({
       ...config,
-      kpis: config.kpis.map((kpi) => (kpi.id === id ? { ...kpi, ...updates } : kpi)),
+      kpis: (config.kpis as ExtendedKPI[]).map((kpi) => (kpi.id === id ? ({ ...kpi, ...updates } as any) : (kpi as any))),
     })
   }
 
@@ -338,7 +388,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
   }
 
   // -----------------------------
-  // Row / Chart CRUD
+  // Rows / Charts CRUD
   // -----------------------------
   const addRow = () => {
     if (!config) return
@@ -386,7 +436,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
     })
   }
 
-  // ✅ Multi-métricas CRUD
+  // Multi-métricas CRUD (✅ tipado)
   const addMetricToChart = (rowId: string, chartId: string) => {
     if (!config) return
     const first = numericFields[0]?.name
@@ -395,9 +445,16 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
     const chart = config.filas.find((r) => r.id === rowId)?.graficos.find((c) => c.id === chartId) as AnyChart | undefined
     const current = (chart?.metrics ?? []) as MetricDef[]
 
+    const isCombo = (chart?.tipo as string) === "combo"
+
     const next: MetricDef[] = [
       ...current,
-      { field: first, agg: ((current?.[0]?.agg ?? chart?.agg ?? "sum") as ChartAgg) || "sum", axis: "left" },
+      {
+        field: first,
+        agg: ((current?.[0]?.agg ?? chart?.agg ?? "sum") as ChartAgg) || "sum",
+        axis: "left",
+        render: isCombo ? (current.length === 0 ? "bar" : "line") : undefined,
+      },
     ]
 
     updateChart(rowId, chartId, { measureType: "numeric", metrics: next } as any)
@@ -429,29 +486,24 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
       return
     }
 
-    // Defaults: barras + count por filas, groupBy primer text si existe
     const defaultGroupBy = (textFields[0]?.name ?? availableFields[0]?.name ?? "") as any
 
     const newChart: AnyChart = {
       id: crypto.randomUUID(),
-      tipo: ALL_CHART_TYPES[1] ?? ALL_CHART_TYPES[0], // barras por defecto si existe
+      tipo: "barras",
       titulo: "Nuevo Gráfico",
       fuente: ((availableFields[0]?.name as DataSource) ?? ("unknown" as DataSource)) as DataSource,
       columnas: 6 as BootstrapCol,
 
-      // X / group
       groupBy: defaultGroupBy || undefined,
       labelField: defaultGroupBy || undefined,
 
-      // Y default: count rows
       measureType: "count",
       countField: "__rows__",
 
-      // legacy numeric defaults
       agg: "sum",
       metric: numericFields[0]?.name,
 
-      // new multi metrics defaults (vacío)
       metrics: [],
 
       barOrientation: "vertical",
@@ -465,7 +517,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
   }
 
   // -----------------------------
-  // ✅ Save to API (GCS)
+  // Save
   // -----------------------------
   const handleSave = async () => {
     if (!config) return
@@ -473,12 +525,33 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
 
     try {
       const localErrors: string[] = []
+
+      // validate charts
       for (const fila of config.filas ?? []) {
         for (const ch of fila.graficos ?? []) {
           const err = validateChart(ch as AnyChart)
           if (err) localErrors.push(`Fila ${fila.orden} / "${(ch as any).titulo ?? "Gráfico"}": ${err}`)
         }
       }
+
+      // validate KPI formulas
+      const kpis = (config.kpis as ExtendedKPI[]) ?? []
+      const kpiIds = new Set(kpis.map((k) => k.id))
+      for (const k of kpis) {
+        if ((k.kind ?? "field") === "formula") {
+          const a = k.formula?.aKpiId
+          const b = k.formula?.bKpiId
+          const op = k.formula?.op
+          if (!a || !b || !op) {
+            localErrors.push(`KPI "${k.nombre}": falta seleccionar KPI A, operación o KPI B.`)
+            continue
+          }
+          if (!kpiIds.has(a) || !kpiIds.has(b)) {
+            localErrors.push(`KPI "${k.nombre}": KPI A/B no existe (id inválido).`)
+          }
+        }
+      }
+
       if (localErrors.length) {
         setValidationErrors(localErrors)
         return
@@ -524,6 +597,27 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
   // -----------------------------
   // Render
   // -----------------------------
+  if (!config) {
+    return (
+      <TooltipProvider>
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogTrigger asChild>
+            <Button variant="outline" size="sm">
+              <LayoutDashboard className="h-4 w-4" />
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-xl">
+            <DialogHeader>
+              <DialogTitle>Cargando...</DialogTitle>
+            </DialogHeader>
+          </DialogContent>
+        </Dialog>
+      </TooltipProvider>
+    )
+  }
+
+  const kpisTyped = (config.kpis as ExtendedKPI[]) ?? []
+
   return (
     <TooltipProvider>
       <Dialog open={open} onOpenChange={setOpen}>
@@ -538,340 +632,347 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
           <TooltipContent>Configurar Reporte</TooltipContent>
         </Tooltip>
 
-        {config && (
-          <DialogContent className="max-w-[90vw] sm:max-w-4xl lg:max-w-5xl max-h-[85vh] flex flex-col p-0">
-            <div className="px-6 pt-6 pb-4 shrink-0">
-              <DialogHeader>
-                <DialogTitle>Configurar Reporte - {campaign.nombre}</DialogTitle>
-                <DialogDescription>Personaliza los KPIs, gráficos y colores de la marca para esta campaña</DialogDescription>
-              </DialogHeader>
-            </div>
+        <DialogContent className="max-w-[90vw] sm:max-w-4xl lg:max-w-5xl max-h-[85vh] flex flex-col p-0">
+          <div className="px-6 pt-6 pb-4 shrink-0">
+            <DialogHeader>
+              <DialogTitle>Configurar Reporte - {campaign.nombre}</DialogTitle>
+              <DialogDescription>Personaliza KPIs, gráficos y colores de marca para esta campaña</DialogDescription>
+            </DialogHeader>
+          </div>
 
-            <ScrollArea className="flex-1 px-6 overflow-y-auto">
-              <div className="space-y-6 py-4">
-                {validationErrors.length > 0 && (
-                  <Alert variant="destructive">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertDescription>
-                      <ul className="list-disc pl-4">
-                        {validationErrors.map((error, i) => (
-                          <li key={i}>{error}</li>
-                        ))}
-                      </ul>
-                    </AlertDescription>
-                  </Alert>
-                )}
+          <ScrollArea className="flex-1 px-6 overflow-y-auto">
+            <div className="space-y-6 py-4">
+              {validationErrors.length > 0 && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    <ul className="list-disc pl-4">
+                      {validationErrors.map((error, i) => (
+                        <li key={i}>{error}</li>
+                      ))}
+                    </ul>
+                  </AlertDescription>
+                </Alert>
+              )}
 
-                {/* Colores de Marca */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <Palette className="h-4 w-4" />
-                      Colores de Marca
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                      {/* Primario */}
-                      <div className="space-y-2">
-                        <Label className="text-xs">Color Primario</Label>
+              {/* Colores */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Palette className="h-4 w-4" />
+                    Colores de Marca
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                    {(["primario", "secundario", "acento"] as const).map((k) => (
+                      <div key={k} className="space-y-2">
+                        <Label className="text-xs">
+                          {k === "primario" ? "Color Primario" : k === "secundario" ? "Color Secundario" : "Color de Acento"}
+                        </Label>
                         <div className="flex items-center gap-2">
                           <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
                             <input
                               type="color"
-                              value={config.paletaColores?.primario || "#000000"}
+                              value={(config.paletaColores as any)?.[k] || (k === "secundario" ? "#ffffff" : k === "acento" ? "#FFB000" : "#000000")}
                               onChange={(e) =>
                                 setConfig({
                                   ...config,
                                   paletaColores: {
                                     ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
-                                    primario: e.target.value,
-                                  },
+                                    [k]: e.target.value,
+                                  } as any,
                                 })
                               }
                               className="h-full w-full p-0 border-0 cursor-pointer"
                             />
                           </div>
                           <Input
-                            value={config.paletaColores?.primario || "#000000"}
+                            value={(config.paletaColores as any)?.[k] || (k === "secundario" ? "#ffffff" : k === "acento" ? "#FFB000" : "#000000")}
                             onChange={(e) =>
                               setConfig({
                                 ...config,
                                 paletaColores: {
                                   ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
-                                  primario: e.target.value,
-                                },
+                                  [k]: e.target.value,
+                                } as any,
                               })
                             }
                             className="h-8 font-mono text-xs"
                           />
                         </div>
                       </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
 
-                      {/* Secundario */}
-                      <div className="space-y-2">
-                        <Label className="text-xs">Color Secundario</Label>
-                        <div className="flex items-center gap-2">
-                          <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
-                            <input
-                              type="color"
-                              value={config.paletaColores?.secundario || "#ffffff"}
-                              onChange={(e) =>
-                                setConfig({
-                                  ...config,
-                                  paletaColores: {
-                                    ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
-                                    secundario: e.target.value,
-                                  },
-                                })
-                              }
-                              className="h-full w-full p-0 border-0 cursor-pointer"
-                            />
+              {/* Plantillas */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Cargar desde Plantilla</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Select onValueChange={loadTemplate}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar plantilla..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {templates.map((template) => (
+                        <SelectItem key={template.id} value={template.id}>
+                          <div className="flex items-center gap-2">
+                            <FileText className="h-4 w-4" />
+                            <span>{template.nombre}</span>
+                            <Badge variant="outline" className="ml-2">
+                              {template.categoria}
+                            </Badge>
                           </div>
-                          <Input
-                            value={config.paletaColores?.secundario || "#ffffff"}
-                            onChange={(e) =>
-                              setConfig({
-                                ...config,
-                                paletaColores: {
-                                  ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
-                                  secundario: e.target.value,
-                                },
-                              })
-                            }
-                            className="h-8 font-mono text-xs"
-                          />
-                        </div>
-                      </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </CardContent>
+              </Card>
 
-                      {/* Acento */}
-                      <div className="space-y-2">
-                        <Label className="text-xs">Color de Acento</Label>
-                        <div className="flex items-center gap-2">
-                          <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
-                            <input
-                              type="color"
-                              value={config.paletaColores?.acento || "#FFB000"}
-                              onChange={(e) =>
-                                setConfig({
-                                  ...config,
-                                  paletaColores: {
-                                    ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
-                                    acento: e.target.value,
-                                  },
-                                })
-                              }
-                              className="h-full w-full p-0 border-0 cursor-pointer"
-                            />
-                          </div>
-                          <Input
-                            value={config.paletaColores?.acento || "#FFB000"}
-                            onChange={(e) =>
-                              setConfig({
-                                ...config,
-                                paletaColores: {
-                                  ...(config.paletaColores || { primario: "", secundario: "", acento: "" }),
-                                  acento: e.target.value,
-                                },
-                              })
-                            }
-                            className="h-8 font-mono text-xs"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+              {/* Filtros */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Filtros</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={availableFilters.length === 0}
+                    onClick={() => {
+                      const first = availableFilters[0]
+                      const next = [...(config.filtros?.condiciones ?? [])]
+                      next.push({
+                        campo: first.name as any,
+                        operador: ((first as any)?.operators?.[0] ?? "eq") as any,
+                        valor: "",
+                      })
+                      setConfig({ ...config, filtros: { ...config.filtros, condiciones: next } })
+                    }}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Agregar filtro
+                  </Button>
 
-                {/* Plantillas */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-sm">Cargar desde Plantilla</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <Select onValueChange={loadTemplate}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleccionar plantilla..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {templates.map((template) => (
-                          <SelectItem key={template.id} value={template.id}>
-                            <div className="flex items-center gap-2">
-                              <FileText className="h-4 w-4" />
-                              <span>{template.nombre}</span>
-                              <Badge variant="outline" className="ml-2">
-                                {template.categoria}
-                              </Badge>
-                            </div>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </CardContent>
-                </Card>
-
-                {/* Filtros dinámicos */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-sm">Filtros</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={availableFilters.length === 0}
-                      onClick={() => {
-                        if (!config) return
-                        const first = availableFilters[0]
-                        const next = [...(config.filtros?.condiciones ?? [])]
-                        next.push({
-                          campo: first.name as any,
-                          operador: ((first as any)?.operators?.[0] ?? "eq") as any,
-                          valor: "",
-                        })
-                        setConfig({ ...config, filtros: { ...config.filtros, condiciones: next } })
-                      }}
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Agregar filtro
-                    </Button>
-
-                    {(config?.filtros?.condiciones ?? []).length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No hay filtros adicionales configurados.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {(config!.filtros.condiciones ?? []).map((f: any, idx: number) => {
-                          const def = availableFilters.find((x) => x.name === f.campo)
-                          const ops = (def as any)?.operators ?? ["eq"]
-
-                          return (
-                            <div key={idx} className="grid grid-cols-1 md:grid-cols-12 gap-2 border rounded p-2">
-                              <div className="md:col-span-5">
-                                <Label className="text-xs">Campo</Label>
-                                <Select
-                                  value={String(f.campo)}
-                                  onValueChange={(campo) => {
-                                    const d = availableFilters.find((x) => x.name === campo)
-                                    const op = ((d as any)?.operators?.[0] ?? "eq") as any
-                                    const next = [...(config!.filtros.condiciones ?? [])]
-                                    next[idx] = { campo: campo as any, operador: op, valor: "" }
-                                    setConfig({ ...config!, filtros: { ...config!.filtros, condiciones: next } })
-                                  }}
-                                >
-                                  <SelectTrigger className="h-8">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {availableFilters.map((af) => (
-                                      <SelectItem key={af.name} value={af.name}>
-                                        {af.name}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-
-                              <div className="md:col-span-3">
-                                <Label className="text-xs">Operador</Label>
-                                <Select
-                                  value={String(f.operador)}
-                                  onValueChange={(operador) => {
-                                    const next = [...(config!.filtros.condiciones ?? [])]
-                                    next[idx] = { ...next[idx], operador: operador as any }
-                                    setConfig({ ...config!, filtros: { ...config!.filtros, condiciones: next } })
-                                  }}
-                                >
-                                  <SelectTrigger className="h-8">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {ops.map((o: string) => (
-                                      <SelectItem key={o} value={o}>
-                                        {o}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-
-                              <div className="md:col-span-3">
-                                <Label className="text-xs">Valor</Label>
-                                <Input
-                                  className="h-8"
-                                  value={String(f.valor ?? "")}
-                                  onChange={(e) => {
-                                    const next = [...(config!.filtros.condiciones ?? [])]
-                                    next[idx] = { ...next[idx], valor: e.target.value }
-                                    setConfig({ ...config!, filtros: { ...config!.filtros, condiciones: next } })
-                                  }}
-                                />
-                              </div>
-
-                              <div className="md:col-span-1 flex items-end">
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-8 w-8 p-0"
-                                  onClick={() => {
-                                    const next = [...(config!.filtros.condiciones ?? [])].filter((_, i) => i !== idx)
-                                    setConfig({ ...config!, filtros: { ...config!.filtros, condiciones: next } })
-                                  }}
-                                >
-                                  <Trash2 className="h-4 w-4 text-destructive" />
-                                </Button>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-
-                    {lastImportId && (
-                      <p className="text-xs text-muted-foreground">
-                        Último import detectado: <span className="font-mono">{lastImportId}</span>
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* KPIs */}
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-sm">
-                        KPIs ({config.kpis.length}/{DEFAULT_LIMITS.maxKPIs})
-                        {isLoadingFields && <span className="ml-2 text-xs text-muted-foreground">Cargando campos...</span>}
-                      </CardTitle>
-                      <Button size="sm" onClick={addKPI} disabled={isLoadingFields || availableFields.length === 0}>
-                        <Plus className="h-4 w-4 md:mr-1" />
-                        <span className="hidden md:inline">Agregar KPI</span>
-                        <span className="md:hidden">KPI</span>
-                      </Button>
-                    </div>
-                  </CardHeader>
-
-                  <CardContent className="space-y-3">
-                    {availableFields.length === 0 && !isLoadingFields ? (
-                      <Alert>
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription>No hay datos importados para esta campaña. Sube un archivo Excel primero.</AlertDescription>
-                      </Alert>
-                    ) : config.kpis.length === 0 ? (
-                      <p className="text-sm text-muted-foreground text-center py-4">No hay KPIs configurados</p>
-                    ) : (
-                      config.kpis.map((kpi) => {
-                        const validOps = getOperationsForField(kpi.fuente)
-                        const fieldInfo = availableFields.find((f) => f.name === kpi.fuente)
+                  {(config?.filtros?.condiciones ?? []).length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No hay filtros adicionales configurados.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {(config!.filtros.condiciones ?? []).map((f: any, idx: number) => {
+                        const def = availableFilters.find((x) => x.name === f.campo)
+                        const ops: string[] = (def as any)?.operators ?? ["eq"]
 
                         return (
-                          <div key={kpi.id} className="border rounded-lg p-2 sm:p-3 space-y-2 hover:bg-muted/50">
-                            <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
-                              <div className="col-span-1 md:col-span-4">
-                                <Label className="text-xs">Nombre</Label>
-                                <Input value={kpi.nombre} onChange={(e) => updateKPI(kpi.id, { nombre: e.target.value })} placeholder="Nombre del KPI" className="h-8" />
-                              </div>
+                          <div key={idx} className="grid grid-cols-1 md:grid-cols-12 gap-2 border rounded p-2">
+                            <div className="md:col-span-5">
+                              <Label className="text-xs">Campo</Label>
+                              <Select
+                                value={String(f.campo)}
+                                onValueChange={(campo) => {
+                                  const d = availableFilters.find((x) => x.name === campo)
+                                  const op = ((d as any)?.operators?.[0] ?? "eq") as any
+                                  const next = [...(config!.filtros.condiciones ?? [])]
+                                  next[idx] = { campo: campo as any, operador: op, valor: "" }
+                                  setConfig({ ...config!, filtros: { ...config!.filtros, condiciones: next } })
+                                }}
+                              >
+                                <SelectTrigger className="h-8">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {availableFilters.map((af) => (
+                                    <SelectItem key={af.name} value={af.name}>
+                                      {af.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
 
-                              <div className="col-span-1 md:col-span-4">
+                            <div className="md:col-span-3">
+                              <Label className="text-xs">Operador</Label>
+                              <Select
+                                value={String(f.operador)}
+                                onValueChange={(operador) => {
+                                  const next = [...(config!.filtros.condiciones ?? [])]
+                                  next[idx] = { ...next[idx], operador: operador as any }
+                                  setConfig({ ...config!, filtros: { ...config!.filtros, condiciones: next } })
+                                }}
+                              >
+                                <SelectTrigger className="h-8">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {ops.map((o: string) => (
+                                    <SelectItem key={o} value={o}>
+                                      {o}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <div className="md:col-span-3">
+                              <Label className="text-xs">Valor</Label>
+                              <Input
+                                className="h-8"
+                                value={String(f.valor ?? "")}
+                                onChange={(e) => {
+                                  const next = [...(config!.filtros.condiciones ?? [])]
+                                  next[idx] = { ...next[idx], valor: e.target.value }
+                                  setConfig({ ...config!, filtros: { ...config!.filtros, condiciones: next } })
+                                }}
+                              />
+                            </div>
+
+                            <div className="md:col-span-1 flex items-end">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0"
+                                onClick={() => {
+                                  const next = [...(config!.filtros.condiciones ?? [])].filter((_, i) => i !== idx)
+                                  setConfig({ ...config!, filtros: { ...config!.filtros, condiciones: next } })
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {lastImportId && (
+                    <p className="text-xs text-muted-foreground">
+                      Último import detectado: <span className="font-mono">{lastImportId}</span>
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* KPIs (con fórmula + mostrar + dimensión/formato) */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm">
+                      KPIs ({config.kpis.length}/{DEFAULT_LIMITS.maxKPIs})
+                      {isLoadingFields && <span className="ml-2 text-xs text-muted-foreground">Cargando campos...</span>}
+                    </CardTitle>
+                    <Button size="sm" onClick={addKPI} disabled={isLoadingFields || availableFields.length === 0}>
+                      <Plus className="h-4 w-4 md:mr-1" />
+                      <span className="hidden md:inline">Agregar KPI</span>
+                      <span className="md:hidden">KPI</span>
+                    </Button>
+                  </div>
+                </CardHeader>
+
+                <CardContent className="space-y-3">
+                  {availableFields.length === 0 && !isLoadingFields ? (
+                    <Alert>
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>No hay datos importados para esta campaña. Sube un archivo Excel primero.</AlertDescription>
+                    </Alert>
+                  ) : kpisTyped.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">No hay KPIs configurados</p>
+                  ) : (
+                    kpisTyped.map((kpi) => {
+                      const kind: KPIKind = (kpi.kind ?? "field") as KPIKind
+                      const fieldInfo = availableFields.find((f) => f.name === kpi.fuente)
+
+                      const validOps = kind === "field" ? getValidOperationsForType(fieldInfo?.type ?? "unknown") : ["count"]
+                      const kpiOptions = kpisTyped.filter((x) => x.id !== kpi.id)
+
+                      const formato = (kpi.formato ?? "number") as KPIFormat
+                      const decimales = Number(kpi.decimales ?? 0)
+                      const unidad = String(kpi.unidad ?? "")
+
+                      return (
+                        <div key={kpi.id} className="border rounded-lg p-2 sm:p-3 space-y-3 hover:bg-muted/50">
+                          {/* Header: Nombre / Tipo / Mostrar / Delete */}
+                          <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+                            <div className="md:col-span-4">
+                              <Label className="text-xs">Nombre</Label>
+                              <Input value={kpi.nombre} onChange={(e) => updateKPI(kpi.id, { nombre: e.target.value })} className="h-8" />
+                            </div>
+
+                            <div className="md:col-span-3">
+                              <Label className="text-xs">Tipo</Label>
+                              <Select
+                                value={kind}
+                                onValueChange={(v) => {
+                                  const nextKind = v as KPIKind
+                                  if (nextKind === "formula") {
+                                    // defaults fórmula
+                                    const a = kpiOptions[0]?.id ?? ""
+                                    const b = kpiOptions[1]?.id ?? kpiOptions[0]?.id ?? ""
+                                    updateKPI(kpi.id, {
+                                      kind: "formula",
+                                      // dejamos cosas legacy sin molestar el backend
+                                      operacion: "count" as any,
+                                      countField: undefined,
+                                      formula: { aKpiId: a, op: "div", bKpiId: b },
+
+                                      // ✅ defaults formato para fórmula (ajústalo si quieres)
+                                      visible: kpi.visible ?? true,
+                                      formato: kpi.formato ?? "number",
+                                      decimales: kpi.decimales ?? 2,
+                                      unidad: kpi.unidad ?? "",
+                                    })
+                                  } else {
+                                    // back to field
+                                    const firstField = availableFields[0]
+                                    updateKPI(kpi.id, {
+                                      kind: "field",
+                                      fuente: ((firstField?.name as any) ?? kpi.fuente) as any,
+                                      operacion: firstField?.type === "number" ? ("sum" as any) : ("count" as any),
+                                      countField: "__rows__",
+                                      formula: undefined,
+
+                                      // defaults formato campo
+                                      visible: kpi.visible ?? true,
+                                      formato: kpi.formato ?? (firstField?.type === "number" ? "number" : "number"),
+                                      decimales: kpi.decimales ?? 0,
+                                      unidad: kpi.unidad ?? "",
+                                    })
+                                  }
+                                }}
+                              >
+                                <SelectTrigger className="h-8">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="field">Campo</SelectItem>
+                                  <SelectItem value="formula">Fórmula (KPI A op KPI B)</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <div className="md:col-span-3">
+                              <Label className="text-xs">Mostrar en Dashboard</Label>
+                              <div className="h-8 flex items-center justify-between border rounded px-3 bg-background">
+                                <span className="text-xs text-muted-foreground">Visible</span>
+                                <Switch checked={kpi.visible !== false} onCheckedChange={(checked) => updateKPI(kpi.id, { visible: checked })} />
+                              </div>
+                            </div>
+
+                            <div className="md:col-span-2 flex justify-end">
+                              <Button variant="ghost" size="sm" onClick={() => deleteKPI(kpi.id)} className="h-8 w-8 p-0">
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </div>
+
+                          {/* Body: Campo o Fórmula */}
+                          {kind === "field" ? (
+                            <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+                              <div className="md:col-span-7">
                                 <Label className="text-xs">
                                   Fuente de Datos
                                   {fieldInfo && (
@@ -885,14 +986,16 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                   value={kpi.fuente}
                                   onValueChange={(value) => {
                                     const field = availableFields.find((f) => f.name === value)
-                                    const newOps = field ? getValidOperations(field.type) : ["count"]
+                                    const newOps = getValidOperationsForType(field?.type ?? "unknown")
                                     const currentOpValid = newOps.includes(kpi.operacion)
                                     const nextOp = (currentOpValid ? kpi.operacion : (newOps[0] as KPIOperation)) as KPIOperation
 
                                     updateKPI(kpi.id, {
                                       fuente: value as DataSource,
                                       operacion: nextOp,
-                                      countField: nextOp === "count" ? ((kpi as any).countField ?? "__rows__") : undefined,
+                                      countField: nextOp === "count" ? (kpi.countField ?? "__rows__") : undefined,
+                                      // formato recomendado
+                                      formato: kpi.formato ?? (field?.type === "number" ? "number" : "number"),
                                     })
                                   }}
                                 >
@@ -914,7 +1017,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                 </Select>
                               </div>
 
-                              <div className="col-span-1 md:col-span-3">
+                              <div className="md:col-span-5">
                                 <Label className="text-xs">Operación</Label>
                                 <Select
                                   value={kpi.operacion}
@@ -922,7 +1025,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                     const op = value as KPIOperation
                                     updateKPI(kpi.id, {
                                       operacion: op,
-                                      countField: op === "count" ? ((kpi as any).countField ?? "__rows__") : undefined,
+                                      countField: op === "count" ? (kpi.countField ?? "__rows__") : undefined,
                                     })
                                   }}
                                 >
@@ -932,520 +1035,695 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                   <SelectContent>
                                     {validOps.map((op) => (
                                       <SelectItem key={op} value={op}>
-                                        {KPI_OPERATION_LABELS[op as KPIOperation]}
+                                        {KPI_OPERATION_LABELS[op as KPIOperation] ?? op}
                                       </SelectItem>
                                     ))}
                                   </SelectContent>
                                 </Select>
                               </div>
 
-                              <div className="col-span-1 md:col-span-1 flex items-end">
-                                <Button variant="ghost" size="sm" onClick={() => deleteKPI(kpi.id)} className="h-8 w-8 p-0">
-                                  <Trash2 className="h-4 w-4 text-destructive" />
-                                </Button>
-                              </div>
-                            </div>
-
-                            {kpi.operacion === "count" && (
-                              <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
-                                <div className="col-span-1 md:col-span-8">
-                                  <Label className="text-xs">Qué contar</Label>
-                                  <Select value={String((kpi as any).countField ?? "__rows__")} onValueChange={(value) => updateKPI(kpi.id, { countField: value as any })}>
-                                    <SelectTrigger className="h-8">
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="__rows__">Filas (COUNT rows)</SelectItem>
-                                      {availableFields.map((field) => (
-                                        <SelectItem key={field.name} value={field.name}>
-                                          {safeLabel(field.name)}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                  <p className="text-[11px] text-muted-foreground mt-1">Filas = total registros. Campo = cuenta registros donde ese campo no está vacío.</p>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* Filas y Gráficos */}
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-sm">Dashboard ({config.filas.length}/{DEFAULT_LIMITS.maxFilas} filas)</CardTitle>
-                      <Button size="sm" onClick={addRow} disabled={availableFields.length === 0}>
-                        <Plus className="h-4 w-4 md:mr-1" />
-                        <span className="hidden md:inline">Agregar Fila</span>
-                        <span className="md:hidden">Fila</span>
-                      </Button>
-                    </div>
-                  </CardHeader>
-
-                  <CardContent className="space-y-4">
-                    {availableFields.length === 0 && !isLoadingFields ? (
-                      <Alert>
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription>No hay datos importados. Sube un archivo Excel para poder crear gráficos.</AlertDescription>
-                      </Alert>
-                    ) : config.filas.length === 0 ? (
-                      <p className="text-sm text-muted-foreground text-center py-4">No hay filas configuradas</p>
-                    ) : (
-                      config.filas.map((row) => (
-                        <div key={row.id} className="border rounded-lg p-4 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <GripVertical className="h-4 w-4 text-muted-foreground" />
-                              <span className="font-medium text-sm">Fila {row.orden}</span>
-                              <Badge variant="outline" className="text-xs">
-                                {row.graficos.length}/{DEFAULT_LIMITS.maxGraficosPorFila} gráficos
-                              </Badge>
-                            </div>
-                            <div className="flex gap-2">
-                              <Button size="sm" onClick={() => addChartToRow(row.id)}>
-                                <Plus className="h-4 w-4 md:mr-1" />
-                                <span className="hidden md:inline">Gráfico</span>
-                                <span className="md:hidden">+</span>
-                              </Button>
-                              <Button variant="ghost" size="sm" onClick={() => deleteRow(row.id)}>
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </Button>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-1 gap-3 pl-2 sm:pl-6">
-                            {row.graficos.map((chartBase) => {
-                              const chart = chartBase as AnyChart
-                              const fieldInfo = availableFields.find((f) => f.name === chart.fuente)
-                              const err = validateChart(chart)
-                              const mt: MeasureType = chart.measureType ?? "count"
-
-                              const groupableFields = textFields.length ? textFields : availableFields
-                              const canToggleNumeric = numericFields.length > 0
-
-                              const showMultiMetrics =
-                                mt === "numeric" &&
-                                chart.tipo !== "scatter" &&
-                                ["barras", "spline", "area", "radar", "tabla", "heatmap", "treemap", "funnel"].includes(chart.tipo)
-
-                              return (
-                                <div key={chart.id} className="border rounded p-2 sm:p-3 bg-muted/30 space-y-2">
-                                  {err && (
-                                    <Alert variant="destructive">
-                                      <AlertCircle className="h-4 w-4" />
-                                      <AlertDescription className="text-xs">{err}</AlertDescription>
-                                    </Alert>
-                                  )}
-
-                                  <div className="grid grid-cols-1 sm:grid-cols-6 lg:grid-cols-12 gap-2">
-                                    <div className="col-span-1 sm:col-span-6 lg:col-span-3">
-                                      <Label className="text-xs">Título</Label>
-                                      <Input value={chart.titulo} onChange={(e) => updateChart(row.id, chart.id, { titulo: e.target.value })} className="h-8" />
-                                    </div>
-
-                                    <div className="col-span-1 sm:col-span-3 lg:col-span-3">
-                                      <Label className="text-xs">Tipo de Gráfico</Label>
+                              {kpi.operacion === "count" && (
+                                <div className="md:col-span-12">
+                                  <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
+                                    <div className="md:col-span-8">
+                                      <Label className="text-xs">Qué contar</Label>
                                       <Select
-                                        value={chart.tipo}
-                                        onValueChange={(value) => {
-                                          const nextType = value as ChartType
-                                          const nextUpdates: Partial<AnyChart> = { tipo: nextType }
-
-                                          if (nextType === "scatter") {
-                                            nextUpdates.measureType = "numeric"
-                                            nextUpdates.agg = (chart.agg ?? "sum") as ChartAgg
-                                            nextUpdates.metric = chart.metric ?? numericFields[0]?.name
-                                            nextUpdates.metric2 = chart.metric2 ?? numericFields[1]?.name ?? numericFields[0]?.name
-                                          }
-
-                                          updateChart(row.id, chart.id, nextUpdates)
-                                        }}
+                                        value={String(kpi.countField ?? "__rows__")}
+                                        onValueChange={(value) => updateKPI(kpi.id, { countField: value as any })}
                                       >
                                         <SelectTrigger className="h-8">
                                           <SelectValue />
                                         </SelectTrigger>
                                         <SelectContent>
-                                          {ALL_CHART_TYPES.map((tipo) => (
-                                            <SelectItem key={tipo} value={tipo}>
-                                              {CHART_TYPE_LABELS[tipo]}
+                                          <SelectItem value="__rows__">Filas (COUNT rows)</SelectItem>
+                                          {availableFields.map((field) => (
+                                            <SelectItem key={field.name} value={field.name}>
+                                              {safeLabel(field.name)}
                                             </SelectItem>
                                           ))}
                                         </SelectContent>
                                       </Select>
+                                      <p className="text-[11px] text-muted-foreground mt-1">
+                                        Filas = total registros. Campo = cuenta registros donde ese campo no está vacío.
+                                      </p>
                                     </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="border rounded-lg p-3 bg-background">
+                              <Label className="text-xs">Fórmula</Label>
 
-                                    <div className="col-span-1 sm:col-span-3 lg:col-span-4">
-                                      <Label className="text-xs">
-                                        Fuente de Datos (legacy)
-                                        {fieldInfo && (
-                                          <Badge variant="outline" className="ml-2 text-xs">
-                                            {fieldInfo.type}
-                                          </Badge>
-                                        )}
-                                      </Label>
-                                      <Select value={chart.fuente} onValueChange={(value) => updateChart(row.id, chart.id, { fuente: value as DataSource })}>
+                              {/* ✅ más espacio: flex-wrap + min widths */}
+                              <div className="mt-2 flex flex-wrap gap-2 items-center">
+                                <div className="min-w-[220px] flex-1">
+                                  <Select
+                                    value={kpi.formula?.aKpiId ?? ""}
+                                    onValueChange={(value) =>
+                                      updateKPI(kpi.id, {
+                                        formula: { ...(kpi.formula ?? { op: "div", bKpiId: "" }), aKpiId: value },
+                                      })
+                                    }
+                                  >
+                                    <SelectTrigger className="h-8">
+                                      <SelectValue placeholder="KPI A" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {kpiOptions.map((x) => (
+                                        <SelectItem key={x.id} value={x.id}>
+                                          {x.nombre}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+
+                                <div className="min-w-[140px]">
+                                  <Select
+                                    value={kpi.formula?.op ?? "div"}
+                                    onValueChange={(value) => {
+                                      const op = value as FormulaOp
+                                      // si eligen pct, sugerimos formato percent (sin forzar si ya cambiaron)
+                                      updateKPI(kpi.id, {
+                                        formula: { ...(kpi.formula ?? { aKpiId: "", bKpiId: "" }), op },
+                                        formato: op === "pct" ? (kpi.formato ?? "percent") : kpi.formato,
+                                      })
+                                    }}
+                                  >
+                                    <SelectTrigger className="h-8">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="add">A + B</SelectItem>
+                                      <SelectItem value="sub">A - B</SelectItem>
+                                      <SelectItem value="mul">A * B</SelectItem>
+                                      <SelectItem value="div">A / B</SelectItem>
+                                      <SelectItem value="pct">A / B (%)</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+
+                                <div className="min-w-[220px] flex-1">
+                                  <Select
+                                    value={kpi.formula?.bKpiId ?? ""}
+                                    onValueChange={(value) =>
+                                      updateKPI(kpi.id, {
+                                        formula: { ...(kpi.formula ?? { op: "div", aKpiId: "" }), bKpiId: value },
+                                      })
+                                    }
+                                  >
+                                    <SelectTrigger className="h-8">
+                                      <SelectValue placeholder="KPI B" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {kpiOptions.map((x) => (
+                                        <SelectItem key={x.id} value={x.id}>
+                                          {x.nombre}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </div>
+
+                              <p className="text-[11px] text-muted-foreground mt-2">
+                                Tip: crea KPIs base (ej: ventas, visitas, transacciones) y luego KPIs fórmula (ej: conversión = transacciones/visitas).
+                              </p>
+                            </div>
+                          )}
+
+                          {/* ✅ Dimensión / Formato */}
+                          <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
+                            <div className="md:col-span-4">
+                              <Label className="text-xs">Formato</Label>
+                              <Select value={String(formato)} onValueChange={(v) => updateKPI(kpi.id, { formato: v as KPIFormat })}>
+                                <SelectTrigger className="h-8">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="number">Número</SelectItem>
+                                  <SelectItem value="currency">Moneda</SelectItem>
+                                  <SelectItem value="percent">Porcentaje</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <div className="md:col-span-4">
+                              <Label className="text-xs">Unidad (opcional)</Label>
+                              <Input
+                                className="h-8"
+                                value={unidad}
+                                onChange={(e) => updateKPI(kpi.id, { unidad: e.target.value })}
+                                placeholder='Ej: "COP", "USD", "visitas"'
+                              />
+                            </div>
+
+                            <div className="md:col-span-4">
+                              <Label className="text-xs">Decimales</Label>
+                              <Input
+                                type="number"
+                                min={0}
+                                max={6}
+                                className="h-8"
+                                value={decimales}
+                                onChange={(e) => {
+                                  const n = Math.max(0, Math.min(6, parseInt(e.target.value || "0")))
+                                  updateKPI(kpi.id, { decimales: Number.isFinite(n) ? n : 0 })
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Filas / Gráficos */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm">Dashboard ({config.filas.length}/{DEFAULT_LIMITS.maxFilas} filas)</CardTitle>
+                    <Button size="sm" onClick={addRow} disabled={availableFields.length === 0}>
+                      <Plus className="h-4 w-4 md:mr-1" />
+                      <span className="hidden md:inline">Agregar Fila</span>
+                      <span className="md:hidden">Fila</span>
+                    </Button>
+                  </div>
+                </CardHeader>
+
+                <CardContent className="space-y-4">
+                  {availableFields.length === 0 && !isLoadingFields ? (
+                    <Alert>
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>No hay datos importados. Sube un archivo Excel para poder crear gráficos.</AlertDescription>
+                    </Alert>
+                  ) : config.filas.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">No hay filas configuradas</p>
+                  ) : (
+                    config.filas.map((row) => (
+                      <div key={row.id} className="border rounded-lg p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <GripVertical className="h-4 w-4 text-muted-foreground" />
+                            <span className="font-medium text-sm">Fila {row.orden}</span>
+                            <Badge variant="outline" className="text-xs">
+                              {row.graficos.length}/{DEFAULT_LIMITS.maxGraficosPorFila} gráficos
+                            </Badge>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button size="sm" onClick={() => addChartToRow(row.id)}>
+                              <Plus className="h-4 w-4 md:mr-1" />
+                              <span className="hidden md:inline">Gráfico</span>
+                              <span className="md:hidden">+</span>
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => deleteRow(row.id)}>
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3 pl-2 sm:pl-6">
+                          {row.graficos.map((chartBase) => {
+                            const chart = chartBase as AnyChart
+                            const fieldInfo = availableFields.find((f) => f.name === chart.fuente)
+                            const err = validateChart(chart)
+                            const mt: MeasureType = chart.measureType ?? "count"
+
+                            const groupableFields = textFields.length ? textFields : availableFields
+                            const canToggleNumeric = numericFields.length > 0
+
+                            const showMultiMetrics =
+                              mt === "numeric" &&
+                              chart.tipo !== "scatter" &&
+                              ["barras", "spline", "area", "radar", "tabla", "heatmap", "treemap", "funnel", "combo"].includes(chart.tipo as string)
+
+                            const isCombo = (chart.tipo as string) === "combo"
+
+                            return (
+                              <div key={chart.id} className="border rounded p-2 sm:p-3 bg-muted/30 space-y-2">
+                                {err && (
+                                  <Alert variant="destructive">
+                                    <AlertCircle className="h-4 w-4" />
+                                    <AlertDescription className="text-xs">{err}</AlertDescription>
+                                  </Alert>
+                                )}
+
+                                <div className="grid grid-cols-1 sm:grid-cols-6 lg:grid-cols-12 gap-2">
+                                  <div className="col-span-1 sm:col-span-6 lg:col-span-3">
+                                    <Label className="text-xs">Título</Label>
+                                    <Input value={chart.titulo} onChange={(e) => updateChart(row.id, chart.id, { titulo: e.target.value })} className="h-8" />
+                                  </div>
+
+                                  <div className="col-span-1 sm:col-span-3 lg:col-span-3">
+                                    <Label className="text-xs">Tipo de Gráfico</Label>
+                                    <Select
+                                      value={chart.tipo as any}
+                                      onValueChange={(value) => {
+                                        const nextType = value as ChartType
+                                        const nextUpdates: Partial<AnyChart> = { tipo: nextType }
+
+                                        if (nextType === "scatter") {
+                                          nextUpdates.measureType = "numeric"
+                                          nextUpdates.agg = (chart.agg ?? "sum") as ChartAgg
+                                          nextUpdates.metric = chart.metric ?? numericFields[0]?.name
+                                          nextUpdates.metric2 = chart.metric2 ?? numericFields[1]?.name ?? numericFields[0]?.name
+                                          nextUpdates.metrics = []
+                                        }
+
+                                        if (nextType === ("combo" as any)) {
+                                          nextUpdates.measureType = "numeric"
+                                          const f1 = numericFields[0]?.name
+                                          const f2 = numericFields[1]?.name ?? numericFields[0]?.name
+                                          nextUpdates.metrics =
+                                            f1 && f2
+                                              ? [
+                                                  { field: f1, agg: "sum", axis: "left", render: "bar" },
+                                                  { field: f2, agg: "sum", axis: "right", render: "line" },
+                                                ]
+                                              : []
+                                          nextUpdates.countField = undefined
+                                        }
+
+                                        updateChart(row.id, chart.id, nextUpdates)
+                                      }}
+                                    >
+                                      <SelectTrigger className="h-8">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {ALL_CHART_TYPES.map((tipo) => (
+                                          <SelectItem key={String(tipo)} value={tipo as any}>
+                                            {(CHART_TYPE_LABELS as any)?.[tipo] ?? String(tipo)}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div className="col-span-1 sm:col-span-3 lg:col-span-4">
+                                    <Label className="text-xs">
+                                      Fuente de Datos (legacy)
+                                      {fieldInfo && (
+                                        <Badge variant="outline" className="ml-2 text-xs">
+                                          {fieldInfo.type}
+                                        </Badge>
+                                      )}
+                                    </Label>
+                                    <Select value={chart.fuente} onValueChange={(value) => updateChart(row.id, chart.id, { fuente: value as DataSource })}>
+                                      <SelectTrigger className="h-8">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {availableFields.map((field) => (
+                                          <SelectItem key={field.name} value={field.name}>
+                                            <div className="flex items-center gap-2">
+                                              <span>{safeLabel(field.name)}</span>
+                                              <Badge variant="outline" className="text-xs">
+                                                {field.type}
+                                              </Badge>
+                                            </div>
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div className="col-span-1 sm:col-span-3 lg:col-span-1">
+                                    <Label className="text-xs">Cols</Label>
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      max={12}
+                                      value={chart.columnas}
+                                      onChange={(e) => {
+                                        const val = parseInt(e.target.value)
+                                        updateChart(row.id, chart.id, { columnas: ((val >= 1 && val <= 12 ? val : 6) as BootstrapCol) })
+                                      }}
+                                      className="h-8"
+                                    />
+                                  </div>
+
+                                  <div className="col-span-1 sm:col-span-3 lg:col-span-1 flex items-end">
+                                    <Button variant="ghost" size="sm" onClick={() => deleteChart(row.id, chart.id)} className="h-8 w-8 p-0">
+                                      <Trash2 className="h-4 w-4 text-destructive" />
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                {/* Ejes */}
+                                <div className="grid grid-cols-1 lg:grid-cols-12 gap-2">
+                                  <div className="lg:col-span-4">
+                                    <Label className="text-xs">Eje X (Group By)</Label>
+                                    <Select
+                                      value={chart.groupBy ?? ""}
+                                      onValueChange={(value) => updateChart(row.id, chart.id, { groupBy: value, labelField: chart.labelField ?? value })}
+                                    >
+                                      <SelectTrigger className="h-8">
+                                        <SelectValue placeholder="Seleccionar campo..." />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {groupableFields.map((f) => (
+                                          <SelectItem key={f.name} value={f.name}>
+                                            <div className="flex items-center gap-2">
+                                              <span>{safeLabel(f.name)}</span>
+                                              <Badge variant="outline" className="text-xs">
+                                                {f.type}
+                                              </Badge>
+                                            </div>
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                    <p className="text-[11px] text-muted-foreground mt-1">Categoría / dimensión (ciudad, actividad, fecha, etc.)</p>
+                                  </div>
+
+                                  <div className="lg:col-span-3">
+                                    <Label className="text-xs">Métrica</Label>
+                                    <div className="h-8 flex items-center justify-between border rounded px-3 bg-background">
+                                      <span className="text-xs text-muted-foreground">Usar métrica numérica</span>
+                                      <Switch
+                                        checked={mt === "numeric"}
+                                        disabled={!canToggleNumeric || chart.tipo === "scatter" || isCombo}
+                                        onCheckedChange={(checked) => {
+                                          if (!canToggleNumeric) return
+
+                                          if (checked) {
+                                            updateChart(row.id, chart.id, {
+                                              measureType: "numeric",
+                                              agg: (chart.agg ?? "sum") as ChartAgg,
+                                              metric: chart.metric ?? numericFields[0]?.name,
+                                              countField: undefined,
+                                              metrics: chart.metrics ?? [],
+                                            })
+                                          } else {
+                                            updateChart(row.id, chart.id, {
+                                              measureType: "count",
+                                              countField: chart.countField ?? "__rows__",
+                                              metric: undefined,
+                                              agg: undefined,
+                                              metrics: [],
+                                            })
+                                          }
+                                        }}
+                                      />
+                                    </div>
+                                    {isCombo && <p className="text-[11px] text-muted-foreground mt-1">Combo siempre usa métricas numéricas.</p>}
+                                    {!canToggleNumeric && <p className="text-[11px] text-muted-foreground mt-1">No hay campos numéricos disponibles.</p>}
+                                  </div>
+
+                                  {mt === "count" ? (
+                                    <div className="lg:col-span-5">
+                                      <Label className="text-xs">Eje Y (Conteo)</Label>
+                                      <Select
+                                        value={String(chart.countField ?? "__rows__")}
+                                        onValueChange={(value) => updateChart(row.id, chart.id, { measureType: "count", countField: value as any })}
+                                      >
                                         <SelectTrigger className="h-8">
                                           <SelectValue />
                                         </SelectTrigger>
                                         <SelectContent>
-                                          {availableFields.map((field) => (
-                                            <SelectItem key={field.name} value={field.name}>
-                                              <div className="flex items-center gap-2">
-                                                <span>{safeLabel(field.name)}</span>
-                                                <Badge variant="outline" className="text-xs">
-                                                  {field.type}
-                                                </Badge>
-                                              </div>
+                                          <SelectItem value="__rows__">Filas (COUNT rows)</SelectItem>
+                                          {allFieldNames.map((name) => (
+                                            <SelectItem key={name} value={name}>
+                                              {safeLabel(name)}
                                             </SelectItem>
                                           ))}
                                         </SelectContent>
                                       </Select>
+                                      <p className="text-[11px] text-muted-foreground mt-1">Ej: X=city, Y=promoter → cuenta registros por ciudad.</p>
                                     </div>
-
-                                    <div className="col-span-1 sm:col-span-3 lg:col-span-1">
-                                      <Label className="text-xs">Cols</Label>
-                                      <Input
-                                        type="number"
-                                        min={1}
-                                        max={12}
-                                        value={chart.columnas}
-                                        onChange={(e) => {
-                                          const val = parseInt(e.target.value)
-                                          updateChart(row.id, chart.id, { columnas: ((val >= 1 && val <= 12 ? val : 6) as BootstrapCol) })
-                                        }}
-                                        className="h-8"
-                                      />
-                                    </div>
-
-                                    <div className="col-span-1 sm:col-span-3 lg:col-span-1 flex items-end">
-                                      <Button variant="ghost" size="sm" onClick={() => deleteChart(row.id, chart.id)} className="h-8 w-8 p-0">
-                                        <Trash2 className="h-4 w-4 text-destructive" />
-                                      </Button>
-                                    </div>
-                                  </div>
-
-                                  {/* ✅ CONFIG EJE X / Y */}
-                                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-2">
-                                    {/* X */}
-                                    <div className="lg:col-span-4">
-                                      <Label className="text-xs">Eje X (Group By)</Label>
-                                      <Select value={chart.groupBy ?? ""} onValueChange={(value) => updateChart(row.id, chart.id, { groupBy: value, labelField: chart.labelField ?? value })}>
-                                        <SelectTrigger className="h-8">
-                                          <SelectValue placeholder="Seleccionar campo..." />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          {groupableFields.map((f) => (
-                                            <SelectItem key={f.name} value={f.name}>
-                                              <div className="flex items-center gap-2">
-                                                <span>{safeLabel(f.name)}</span>
-                                                <Badge variant="outline" className="text-xs">
-                                                  {f.type}
-                                                </Badge>
-                                              </div>
-                                            </SelectItem>
-                                          ))}
-                                        </SelectContent>
-                                      </Select>
-                                      <p className="text-[11px] text-muted-foreground mt-1">Categoría / dimensión (ciudad, actividad, fecha, etc.)</p>
-                                    </div>
-
-                                    {/* Toggle numeric */}
-                                    <div className="lg:col-span-3">
-                                      <Label className="text-xs">Métrica</Label>
-                                      <div className="h-8 flex items-center justify-between border rounded px-3 bg-background">
-                                        <span className="text-xs text-muted-foreground">Usar métrica numérica</span>
-                                        <Switch
-                                          checked={mt === "numeric"}
-                                          disabled={!canToggleNumeric || chart.tipo === "scatter"}
-                                          onCheckedChange={(checked) => {
-                                            if (!canToggleNumeric) return
-
-                                            if (checked) {
-                                              updateChart(row.id, chart.id, {
-                                                measureType: "numeric",
-                                                agg: (chart.agg ?? "sum") as ChartAgg,
-                                                metric: chart.metric ?? numericFields[0]?.name,
-                                                countField: undefined,
-                                                metrics: (chart.metrics ?? []).length ? chart.metrics : [],
-                                              })
-                                            } else {
-                                              updateChart(row.id, chart.id, {
-                                                measureType: "count",
-                                                countField: chart.countField ?? "__rows__",
-                                                metric: undefined,
-                                                agg: undefined,
-                                                metrics: [],
-                                              })
-                                            }
-                                          }}
-                                        />
-                                      </div>
-                                      {!canToggleNumeric && <p className="text-[11px] text-muted-foreground mt-1">No hay campos numéricos disponibles en el import.</p>}
-                                    </div>
-
-                                    {/* Y */}
-                                    {mt === "count" ? (
-                                      <div className="lg:col-span-5">
-                                        <Label className="text-xs">Eje Y (Conteo)</Label>
-                                        <Select value={String(chart.countField ?? "__rows__")} onValueChange={(value) => updateChart(row.id, chart.id, { measureType: "count", countField: value as any })}>
-                                          <SelectTrigger className="h-8">
-                                            <SelectValue />
-                                          </SelectTrigger>
-                                          <SelectContent>
-                                            <SelectItem value="__rows__">Filas (COUNT rows)</SelectItem>
-                                            {allFieldNames.map((name) => (
-                                              <SelectItem key={name} value={name}>
-                                                {safeLabel(name)}
-                                              </SelectItem>
-                                            ))}
-                                          </SelectContent>
-                                        </Select>
-                                        <p className="text-[11px] text-muted-foreground mt-1">Ej: X=city, Y=promoter → cuenta cuántos registros tienen ese campo por ciudad.</p>
-                                      </div>
-                                    ) : (
-                                      <div className="lg:col-span-5">
-                                        {/* ✅ legacy single metric */}
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                          <div>
-                                            <Label className="text-xs">Operación (legacy)</Label>
-                                            <Select value={String(chart.agg ?? "sum")} onValueChange={(value) => updateChart(row.id, chart.id, { agg: value as any, measureType: "numeric" })}>
-                                              <SelectTrigger className="h-8">
-                                                <SelectValue />
-                                              </SelectTrigger>
-                                              <SelectContent>
-                                                {getNumericAggOps().map((op) => (
-                                                  <SelectItem key={op} value={op}>
-                                                    {KPI_OPERATION_LABELS[op as KPIOperation] ?? op}
-                                                  </SelectItem>
-                                                ))}
-                                              </SelectContent>
-                                            </Select>
-                                          </div>
-
-                                          <div>
-                                            <Label className="text-xs">Campo numérico (legacy)</Label>
-                                            <Select value={String(chart.metric ?? "")} onValueChange={(value) => updateChart(row.id, chart.id, { metric: value, measureType: "numeric" })}>
-                                              <SelectTrigger className="h-8">
-                                                <SelectValue placeholder="Seleccionar..." />
-                                              </SelectTrigger>
-                                              <SelectContent>
-                                                {numericFields.map((f) => (
-                                                  <SelectItem key={f.name} value={f.name}>
-                                                    <div className="flex items-center gap-2">
-                                                      <span>{safeLabel(f.name)}</span>
-                                                      <Badge variant="outline" className="text-xs">
-                                                        {f.type}
-                                                      </Badge>
-                                                    </div>
-                                                  </SelectItem>
-                                                ))}
-                                              </SelectContent>
-                                            </Select>
-                                          </div>
-                                        </div>
-
-                                        {chart.tipo === "scatter" && (
-                                          <div className="mt-2">
-                                            <Label className="text-xs">Campo numérico 2 (Scatter Y)</Label>
-                                            <Select value={String(chart.metric2 ?? "")} onValueChange={(value) => updateChart(row.id, chart.id, { metric2: value })}>
-                                              <SelectTrigger className="h-8">
-                                                <SelectValue placeholder="Seleccionar..." />
-                                              </SelectTrigger>
-                                              <SelectContent>
-                                                {numericFields.map((f) => (
-                                                  <SelectItem key={f.name} value={f.name}>
-                                                    {safeLabel(f.name)}
-                                                  </SelectItem>
-                                                ))}
-                                              </SelectContent>
-                                            </Select>
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-
-                                  {/* ✅ Multi-métricas UI */}
-                                  {showMultiMetrics && (
-                                    <div className="border rounded bg-background p-3 space-y-2">
-                                      <div className="flex items-center justify-between">
+                                  ) : (
+                                    <div className="lg:col-span-5">
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                         <div>
-                                          <p className="text-sm font-medium">Métricas (multi-eje)</p>
-                                          <p className="text-xs text-muted-foreground">Agrega todas las métricas que quieras. Cada una puede ir en eje izquierdo o derecho.</p>
+                                          <Label className="text-xs">Operación (legacy)</Label>
+                                          <Select
+                                            value={String(chart.agg ?? "sum")}
+                                            onValueChange={(value) => updateChart(row.id, chart.id, { agg: value as any, measureType: "numeric" })}
+                                          >
+                                            <SelectTrigger className="h-8">
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              {getNumericAggOps().map((op) => (
+                                                <SelectItem key={op} value={op}>
+                                                  {KPI_OPERATION_LABELS[op as KPIOperation] ?? op}
+                                                </SelectItem>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
                                         </div>
-                                        <Button size="sm" variant="outline" onClick={() => addMetricToChart(row.id, chart.id)} disabled={!numericFields.length}>
-                                          <Plus className="h-4 w-4 mr-2" />
-                                          Agregar métrica
-                                        </Button>
+
+                                        <div>
+                                          <Label className="text-xs">Campo numérico (legacy)</Label>
+                                          <Select
+                                            value={String(chart.metric ?? "")}
+                                            onValueChange={(value) => updateChart(row.id, chart.id, { metric: value, measureType: "numeric" })}
+                                          >
+                                            <SelectTrigger className="h-8">
+                                              <SelectValue placeholder="Seleccionar..." />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              {numericFields.map((f) => (
+                                                <SelectItem key={f.name} value={f.name}>
+                                                  <div className="flex items-center gap-2">
+                                                    <span>{safeLabel(f.name)}</span>
+                                                    <Badge variant="outline" className="text-xs">
+                                                      {f.type}
+                                                    </Badge>
+                                                  </div>
+                                                </SelectItem>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
+                                        </div>
                                       </div>
 
-                                      {(chart.metrics ?? []).length === 0 ? (
-                                        <p className="text-xs text-muted-foreground">No hay métricas aún. Agrega una para que el chart renderice varias series.</p>
-                                      ) : (
-                                        <div className="space-y-2">
-                                          {(chart.metrics ?? []).map((m, idx) => (
-                                            <div key={idx} className="grid grid-cols-1 lg:grid-cols-12 gap-2 border rounded p-2">
-                                              <div className="lg:col-span-5">
-                                                <Label className="text-xs">Campo</Label>
-                                                <Select value={String(m.field)} onValueChange={(value) => updateMetric(row.id, chart.id, idx, { field: value })}>
-                                                  <SelectTrigger className="h-8">
-                                                    <SelectValue />
-                                                  </SelectTrigger>
-                                                  <SelectContent>
-                                                    {numericFields.map((f) => (
-                                                      <SelectItem key={f.name} value={f.name}>
-                                                        <div className="flex items-center gap-2">
-                                                          <span>{safeLabel(f.name)}</span>
-                                                          <Badge variant="outline" className="text-xs">
-                                                            {f.type}
-                                                          </Badge>
-                                                        </div>
-                                                      </SelectItem>
-                                                    ))}
-                                                  </SelectContent>
-                                                </Select>
-                                              </div>
-
-                                              <div className="lg:col-span-4">
-                                                <Label className="text-xs">Operación</Label>
-                                                <Select value={String(m.agg ?? "sum")} onValueChange={(value) => updateMetric(row.id, chart.id, idx, { agg: value as any })}>
-                                                  <SelectTrigger className="h-8">
-                                                    <SelectValue />
-                                                  </SelectTrigger>
-                                                  <SelectContent>
-                                                    {getNumericAggOps().map((op) => (
-                                                      <SelectItem key={op} value={op}>
-                                                        {KPI_OPERATION_LABELS[op as KPIOperation] ?? op}
-                                                      </SelectItem>
-                                                    ))}
-                                                  </SelectContent>
-                                                </Select>
-                                              </div>
-
-                                              <div className="lg:col-span-2">
-                                                <Label className="text-xs">Eje</Label>
-                                                <Select value={String(m.axis ?? "left")} onValueChange={(value) => updateMetric(row.id, chart.id, idx, { axis: value as any })}>
-                                                  <SelectTrigger className="h-8">
-                                                    <SelectValue />
-                                                  </SelectTrigger>
-                                                  <SelectContent>
-                                                    <SelectItem value="left">Left</SelectItem>
-                                                    <SelectItem value="right">Right</SelectItem>
-                                                  </SelectContent>
-                                                </Select>
-                                              </div>
-
-                                              <div className="lg:col-span-1 flex items-end">
-                                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => deleteMetric(row.id, chart.id, idx)}>
-                                                  <Trash2 className="h-4 w-4 text-destructive" />
-                                                </Button>
-                                              </div>
-                                            </div>
-                                          ))}
+                                      {chart.tipo === "scatter" && (
+                                        <div className="mt-2">
+                                          <Label className="text-xs">Campo numérico 2 (Scatter Y)</Label>
+                                          <Select value={String(chart.metric2 ?? "")} onValueChange={(value) => updateChart(row.id, chart.id, { metric2: value })}>
+                                            <SelectTrigger className="h-8">
+                                              <SelectValue placeholder="Seleccionar..." />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              {numericFields.map((f) => (
+                                                <SelectItem key={f.name} value={f.name}>
+                                                  {safeLabel(f.name)}
+                                                </SelectItem>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
                                         </div>
                                       )}
                                     </div>
                                   )}
+                                </div>
 
-                                  {/* Opcionales: Series / Label / orientación */}
-                                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-2">
-                                    <div className="lg:col-span-4">
-                                      <Label className="text-xs">Series (opcional)</Label>
-                                      <Select value={String(chart.seriesBy ?? "")} onValueChange={(value) => updateChart(row.id, chart.id, { seriesBy: value === "__none__" ? undefined : value })}>
-                                        <SelectTrigger className="h-8">
-                                          <SelectValue placeholder="Sin series" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="__none__">Sin series</SelectItem>
-                                          {textFields.map((f) => (
-                                            <SelectItem key={f.name} value={f.name}>
-                                              {safeLabel(f.name)}
-                                            </SelectItem>
-                                          ))}
-                                        </SelectContent>
-                                      </Select>
-                                      <p className="text-[11px] text-muted-foreground mt-1">Ej: seriesBy=actividad para barras apiladas por actividad.</p>
+                                {/* Multi-métricas */}
+                                {showMultiMetrics && (
+                                  <div className="border rounded bg-background p-3 space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <div>
+                                        <p className="text-sm font-medium">{isCombo ? "Métricas (Combo: Bar + Line)" : "Métricas (multi-eje)"}</p>
+                                        <p className="text-xs text-muted-foreground">
+                                          {isCombo ? "Elige Bar o Line por métrica (como Power BI)." : "Agrega todas las métricas que quieras. Cada una puede ir en eje izquierdo o derecho."}
+                                        </p>
+                                      </div>
+                                      <Button size="sm" variant="outline" onClick={() => addMetricToChart(row.id, chart.id)} disabled={!numericFields.length}>
+                                        <Plus className="h-4 w-4 mr-2" />
+                                        Agregar métrica
+                                      </Button>
                                     </div>
 
-                                    <div className="lg:col-span-4">
-                                      <Label className="text-xs">Label field (opcional)</Label>
-                                      <Select value={String(chart.labelField ?? "__auto__")} onValueChange={(value) => updateChart(row.id, chart.id, { labelField: value === "__auto__" ? (chart.groupBy ?? undefined) : value })}>
-                                        <SelectTrigger className="h-8">
-                                          <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="__auto__">Auto (usa Group By)</SelectItem>
-                                          {availableFields.map((f) => (
-                                            <SelectItem key={f.name} value={f.name}>
-                                              {safeLabel(f.name)}
-                                            </SelectItem>
-                                          ))}
-                                        </SelectContent>
-                                      </Select>
-                                    </div>
+                                    {(chart.metrics ?? []).length === 0 ? (
+                                      <p className="text-xs text-muted-foreground">No hay métricas aún. Agrega una para que el chart renderice series.</p>
+                                    ) : (
+                                      <div className="space-y-2">
+                                        {(chart.metrics ?? []).map((m: MetricDef, idx: number) => (
+                                          <div key={idx} className="grid grid-cols-1 lg:grid-cols-12 gap-2 border rounded p-2">
+                                            <div className="lg:col-span-4">
+                                              <Label className="text-xs">Campo</Label>
+                                              <Select value={String(m.field)} onValueChange={(value) => updateMetric(row.id, chart.id, idx, { field: value })}>
+                                                <SelectTrigger className="h-8">
+                                                  <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  {numericFields.map((f) => (
+                                                    <SelectItem key={f.name} value={f.name}>
+                                                      <div className="flex items-center gap-2">
+                                                        <span>{safeLabel(f.name)}</span>
+                                                        <Badge variant="outline" className="text-xs">
+                                                          {f.type}
+                                                        </Badge>
+                                                      </div>
+                                                    </SelectItem>
+                                                  ))}
+                                                </SelectContent>
+                                              </Select>
+                                            </div>
 
-                                    <div className="lg:col-span-2">
-                                      <Label className="text-xs">Orientación</Label>
-                                      <Select value={String(chart.barOrientation ?? "vertical")} onValueChange={(value) => updateChart(row.id, chart.id, { barOrientation: value as any })}>
-                                        <SelectTrigger className="h-8">
-                                          <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="vertical">Vertical</SelectItem>
-                                          <SelectItem value="horizontal">Horizontal</SelectItem>
-                                        </SelectContent>
-                                      </Select>
-                                    </div>
+                                            <div className="lg:col-span-3">
+                                              <Label className="text-xs">Operación</Label>
+                                              <Select value={String(m.agg ?? "sum")} onValueChange={(value) => updateMetric(row.id, chart.id, idx, { agg: value as any })}>
+                                                <SelectTrigger className="h-8">
+                                                  <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  {getNumericAggOps().map((op) => (
+                                                    <SelectItem key={op} value={op}>
+                                                      {KPI_OPERATION_LABELS[op as KPIOperation] ?? op}
+                                                    </SelectItem>
+                                                  ))}
+                                                </SelectContent>
+                                              </Select>
+                                            </div>
 
-                                    <div className="lg:col-span-2">
-                                      <Label className="text-xs">Modo barras</Label>
-                                      <Select value={String(chart.barMode ?? "grouped")} onValueChange={(value) => updateChart(row.id, chart.id, { barMode: value as any })}>
-                                        <SelectTrigger className="h-8">
-                                          <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="grouped">Grouped</SelectItem>
-                                          <SelectItem value="stacked">Stacked</SelectItem>
-                                        </SelectContent>
-                                      </Select>
-                                    </div>
+                                            <div className="lg:col-span-2">
+                                              <Label className="text-xs">Eje</Label>
+                                              <Select value={String(m.axis ?? "left")} onValueChange={(value) => updateMetric(row.id, chart.id, idx, { axis: value as any })}>
+                                                <SelectTrigger className="h-8">
+                                                  <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  <SelectItem value="left">Left</SelectItem>
+                                                  <SelectItem value="right">Right</SelectItem>
+                                                </SelectContent>
+                                              </Select>
+                                            </div>
+
+                                            {isCombo && (
+                                              <div className="lg:col-span-2">
+                                                <Label className="text-xs">Render</Label>
+                                                <Select value={String(m.render ?? "bar")} onValueChange={(value) => updateMetric(row.id, chart.id, idx, { render: value as MetricRender })}>
+                                                  <SelectTrigger className="h-8">
+                                                    <SelectValue />
+                                                  </SelectTrigger>
+                                                  <SelectContent>
+                                                    <SelectItem value="bar">Bar</SelectItem>
+                                                    <SelectItem value="line">Line</SelectItem>
+                                                  </SelectContent>
+                                                </Select>
+                                              </div>
+                                            )}
+
+                                            <div className={`flex items-end ${isCombo ? "lg:col-span-1" : "lg:col-span-3"} justify-end`}>
+                                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => deleteMetric(row.id, chart.id, idx)}>
+                                                <Trash2 className="h-4 w-4 text-destructive" />
+                                              </Button>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* Series (solo si no es combo, para mantenerlo simple) */}
+                                <div className="grid grid-cols-1 lg:grid-cols-12 gap-2">
+                                  <div className="lg:col-span-4">
+                                    <Label className="text-xs">Series (opcional)</Label>
+                                    <Select
+                                      value={String(chart.seriesBy ?? "")}
+                                      onValueChange={(value) => updateChart(row.id, chart.id, { seriesBy: value === "__none__" ? undefined : value })}
+                                      disabled={isCombo}
+                                    >
+                                      <SelectTrigger className="h-8">
+                                        <SelectValue placeholder={isCombo ? "No disponible en Combo" : "Sin series"} />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__none__">Sin series</SelectItem>
+                                        {textFields.map((f) => (
+                                          <SelectItem key={f.name} value={f.name}>
+                                            {safeLabel(f.name)}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                    <p className="text-[11px] text-muted-foreground mt-1">
+                                      {isCombo ? "Tip: primero usa Combo sin series; luego lo ampliamos si lo necesitas." : "Ej: seriesBy=actividad para barras apiladas."}
+                                    </p>
+                                  </div>
+
+                                  <div className="lg:col-span-4">
+                                    <Label className="text-xs">Label field (opcional)</Label>
+                                    <Select
+                                      value={String(chart.labelField ?? "__auto__")}
+                                      onValueChange={(value) => updateChart(row.id, chart.id, { labelField: value === "__auto__" ? (chart.groupBy ?? undefined) : value })}
+                                    >
+                                      <SelectTrigger className="h-8">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__auto__">Auto (usa Group By)</SelectItem>
+                                        {availableFields.map((f) => (
+                                          <SelectItem key={f.name} value={f.name}>
+                                            {safeLabel(f.name)}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div className="lg:col-span-2">
+                                    <Label className="text-xs">Orientación</Label>
+                                    <Select value={String(chart.barOrientation ?? "vertical")} onValueChange={(value) => updateChart(row.id, chart.id, { barOrientation: value as any })}>
+                                      <SelectTrigger className="h-8">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="vertical">Vertical</SelectItem>
+                                        <SelectItem value="horizontal">Horizontal</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div className="lg:col-span-2">
+                                    <Label className="text-xs">Modo barras</Label>
+                                    <Select value={String(chart.barMode ?? "grouped")} onValueChange={(value) => updateChart(row.id, chart.id, { barMode: value as any })}>
+                                      <SelectTrigger className="h-8">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="grouped">Grouped</SelectItem>
+                                        <SelectItem value="stacked">Stacked</SelectItem>
+                                      </SelectContent>
+                                    </Select>
                                   </div>
                                 </div>
-                              )
-                            })}
-                          </div>
+                              </div>
+                            )
+                          })}
                         </div>
-                      ))
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-            </ScrollArea>
-
-            <div className="px-6 py-4 border-t shrink-0">
-              <DialogFooter className="flex justify-between sm:justify-between w-full">
-                <Button variant="outline" onClick={handleDownloadJSON} disabled={isLoading} className="gap-2">
-                  <Download className="h-4 w-4" />
-                  Descargar JSON
-                </Button>
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => setOpen(false)} disabled={isLoading}>
-                    Cancelar
-                  </Button>
-                  <Button onClick={handleSave} disabled={isLoading || availableFields.length === 0}>
-                    <Save className="h-4 w-4 mr-2" />
-                    {isLoading ? "Guardando..." : "Guardar"}
-                  </Button>
-                </div>
-              </DialogFooter>
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
             </div>
-          </DialogContent>
-        )}
+          </ScrollArea>
+
+          <div className="px-6 py-4 border-t shrink-0">
+            <DialogFooter className="flex justify-between sm:justify-between w-full">
+              <Button variant="outline" onClick={handleDownloadJSON} disabled={isLoading} className="gap-2">
+                <Download className="h-4 w-4" />
+                Descargar JSON
+              </Button>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setOpen(false)} disabled={isLoading}>
+                  Cancelar
+                </Button>
+                <Button onClick={handleSave} disabled={isLoading || availableFields.length === 0}>
+                  <Save className="h-4 w-4 mr-2" />
+                  {isLoading ? "Guardando..." : "Guardar"}
+                </Button>
+              </div>
+            </DialogFooter>
+          </div>
+        </DialogContent>
       </Dialog>
     </TooltipProvider>
   )

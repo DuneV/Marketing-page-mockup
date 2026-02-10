@@ -5,10 +5,10 @@
 import { useEffect, useState, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Target, Plus, TrendingUp, DollarSign, BarChart3 } from "lucide-react"
+import { Target, Plus, TrendingUp, BarChart3 } from "lucide-react"
 import { getAllCampaigns, deleteCampaign, deleteAllCampaignImages, deleteAllCampaignComments } from "@/lib/data/campaigns"
 import { deleteCampaignImports, deleteCampaignReportConfig } from "@/lib/api/campaignApi"
-import { getAllCompanies, decrementCompanyCampaignCount } from "@/lib/data/companies"
+import { getAllCompanies} from "@/lib/data/companies"
 import { assignUserToCampaign } from "@/lib/data/users"
 import { AdminKPICard } from "@/components/admin/admin-kpi-card"
 import { CampaignsTable } from "@/components/admin/campaigns-table"
@@ -89,9 +89,9 @@ export function CampaignsAdminView() {
       await deleteAllCampaignComments(deleteCampaignId)
       await deleteCampaign(deleteCampaignId)
 
-      if (campaign.empresaId && campaign.presupuesto) {
-        await decrementCompanyCampaignCount(campaign.empresaId, campaign.presupuesto)
-      }
+      // if (campaign.empresaId && campaign.presupuesto) {
+      //   await decrementCompanyCampaignCount(campaign.empresaId, campaign.presupuesto)
+      // }
 
       setDeleteCampaignId(null)
       toast.success("Campaña eliminada", {
@@ -154,7 +154,7 @@ export function CampaignsAdminView() {
   // KPIs (usando campaignsByCompany para respetar filtro de empresa)
   const totalCampaigns = campaignsByCompany.length
   const activeCampaigns = campaignsByCompany.filter((c) => c.estado === "activa").length
-  const totalBudget = campaignsByCompany.reduce((sum, c) => sum + (c.presupuesto || 0), 0)
+  // const totalBudget = campaignsByCompany.reduce((sum, c) => sum + (c.presupuesto || 0), 0)
 
   const campaignsByStatus = {
     planificacion: campaignsByCompany.filter((c) => c.estado === "planificacion").length,
@@ -163,13 +163,13 @@ export function CampaignsAdminView() {
     cancelada: campaignsByCompany.filter((c) => c.estado === "cancelada").length,
   }
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("es-CO", {
-      style: "currency",
-      currency: "COP",
-      minimumFractionDigits: 0,
-    }).format(amount)
-  }
+  // const formatCurrency = (amount: number) => {
+  //   return new Intl.NumberFormat("es-CO", {
+  //     style: "currency",
+  //     currency: "COP",
+  //     minimumFractionDigits: 0,
+  //   }).format(amount)
+  // }
 
   const campaignToDelete = deleteCampaignId
     ? campaigns.find((c) => c.id === deleteCampaignId) || null
@@ -186,7 +186,7 @@ export function CampaignsAdminView() {
           <Skeleton className="h-10 w-40" />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <KPISkeleton key={i} />
           ))}
@@ -197,7 +197,7 @@ export function CampaignsAdminView() {
             <Skeleton className="h-6 w-40" />
           </CardHeader>
           <CardContent>
-            <TableSkeleton columns={7} rows={5} />
+            <TableSkeleton columns={6} rows={5} />
           </CardContent>
         </Card>
       </div>
@@ -219,7 +219,7 @@ export function CampaignsAdminView() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <AdminKPICard label="Total de Campañas" value={totalCampaigns} icon={Target} color="amber" />
         <AdminKPICard
           label="Campañas Activas"
@@ -227,12 +227,12 @@ export function CampaignsAdminView() {
           icon={TrendingUp}
           color="red"
         />
-        <AdminKPICard
+        {/* <AdminKPICard
           label="Presupuesto Total"
           value={formatCurrency(totalBudget)}
           icon={DollarSign}
           color="amber"
-        />
+        /> */}
         <AdminKPICard
           label="Por Estado"
           value={`${campaignsByStatus.planificacion}P / ${campaignsByStatus.activa}A / ${campaignsByStatus.completada}C`}

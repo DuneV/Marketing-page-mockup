@@ -17,7 +17,8 @@ export type ChartType =
   | "gauge"           // Gauge/Meter
   | "heatmap"         // Heat map
   | "treemap"         // Tree map
-  | "tabla";          // Data table
+  | "tabla"          // Data table
+  | "combo";
 
 // Columnas de Bootstrap (1-12)
 export type BootstrapCol = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
@@ -82,13 +83,46 @@ export interface DateFilter {
 }
 
 // Definición de un KPI
+export type KPIKind = "field" | "formula"
+export type KPIFormulaOp = "add" | "sub" | "mul" | "div" | "pct"
+export type MeasureType = "count" | "numeric"
+export type MetricAxis = "left" | "right"
+export type MetricRender = "bar" | "line"
+
+export interface ChartMetricDefinition {
+  field: DataSource
+  agg: KPIOperation          // sum/mean/min/max/etc.
+  axis: MetricAxis           // left/right
+  render?: MetricRender      // 
+}
+
+export type KPIFormat = "number" | "currency" | "percent"
+
 export interface KPIDefinition {
-  id: string;
-  nombre: string;                    // Ej: "Promedio Ventas Club Colombia"
-  operacion: KPIOperation;           // Ej: "mean"
-  fuente: DataSource;                // Ej: "ventas_clubcolombia"
-  descripcion?: string;              // Descripción opcional del KPI
+  id: string
+  nombre: string
+
+  kind?: KPIKind
+
+  operacion: KPIOperation
+  fuente: DataSource
+  descripcion?: string
   countField?: CountField
+
+  // ✅ nuevo: controla si sale en el dashboard
+  visible?: boolean
+
+  // ✅ nuevo: “dimensión / formato”
+  formato?: KPIFormat       // number | currency | percent
+  unidad?: string           // ej: "COP", "USD", "visitas", "unid"
+  decimales?: number        // ej: 0, 1, 2
+
+  // ✅ fórmula
+  formula?: {
+    aKpiId: string
+    op: KPIFormulaOp
+    bKpiId: string
+  }
 }
 
 // Definición de un gráfico individual
@@ -98,28 +132,35 @@ export interface ChartDefinition {
   titulo: string
   columnas: BootstrapCol
   fuente?: DataSource
-  
-  //modelo genérico para gráficas
-  metric?: DataSource            // Y principal (ej: ventas)
-  metric2?: DataSource           // para combo (line) o 2da serie (ej: impulsos)
-  groupBy?: DataSource           // X (ej: ciudad, actividad, fecha)
-  seriesBy?: DataSource          // segmentación (ej: actividad dentro de ciudad)
 
-  // BARRAS
+  // ✅ nuevo: define si el Y es count o numeric
+  measureType?: MeasureType
+
+  // ✅ nuevo: para count (ej: "__rows__" o un campo específico)
+  countField?: CountField
+
+  // ✅ nuevo: legacy single-metric numeric (para compatibilidad)
+  agg?: KPIOperation
+
+  metric?: DataSource
+  metric2?: DataSource
+  groupBy?: DataSource
+  seriesBy?: DataSource
+
+  // ✅ nuevo: multi-métricas (incluye combo)
+  metrics?: ChartMetricDefinition[]
+
   barOrientation?: BarOrientation
-  barMode?: BarMode              // stacked o grouped
+  barMode?: BarMode
 
-  //  LABELS
-  labelField?: DataSource        // “nombre de etiqueta” en tooltip/legend (ej: nombre_promotora)
+  labelField?: DataSource
 
-  // MAPA
   map?: {
     geoLevel: "city" | "dept" | "country"
-    locationField: DataSource    // ej: ciudad
-    valueField: DataSource       // ej: ventas
+    locationField: DataSource
+    valueField: DataSource
   }
 
-  // Opcional extra
   configuracion?: {
     showLegend?: boolean
     showGrid?: boolean

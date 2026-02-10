@@ -1,5 +1,3 @@
-// components/dashboard-from-config.tsx
-
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
@@ -11,12 +9,12 @@ import {
   AreaChart, Area,
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
   ScatterChart, Scatter, ZAxis,
+  ComposedChart,
 } from "recharts"
 
 import { Download, TrendingUp, Users, Activity, Eye } from "lucide-react"
 
 import type { ReportConfiguration } from "@/types/report-config"
-
 import { runCampaignReport, getCampaignFilterOptions } from "@/lib/api/reportRunner"
 import { DashboardFiltersBar, type FilterCondition, type FilterOption } from "@/components/dashboard-filters-bar"
 
@@ -29,14 +27,15 @@ type Operator =
   | "in" | "between"
   | "before" | "after"
 
-function isEmptyValor(op: Operator, v: any) {
+function isEmptyValor(op: Operator, v: unknown) {
   if (v === null || v === undefined) return true
   if (typeof v === "string" && v.trim() === "") return true
   if (Array.isArray(v) && v.length === 0) return true
 
   if (op === "between" && typeof v === "object" && v && !Array.isArray(v)) {
-    const a = v?.inicio
-    const b = v?.fin
+    const vv = v as { inicio?: string; fin?: string }
+    const a = vv?.inicio
+    const b = vv?.fin
     const ea = a == null || String(a).trim() === ""
     const eb = b == null || String(b).trim() === ""
     return ea && eb
@@ -50,33 +49,56 @@ const KPI_ICONS = {
   impulsos: Users,
   promedio: Activity,
   conversion: Eye,
-}
+} as const
 
-function pickMetricFields(ch: any, data: any[]) {
+type MetricAxis = "left" | "right"
+type MetricRender = "bar" | "line"
+
+type MetricField = { field: string; axis: MetricAxis; render?: MetricRender }
+
+function pickMetricFields(ch: unknown, data: unknown[]): MetricField[] {
+  const chart = ch as any
+
   // 1) Nuevo: metrics[]
-  if (Array.isArray(ch?.metrics) && ch.metrics.length > 0) {
-    return ch.metrics.map((m: any) => ({
+  if (Array.isArray(chart?.metrics) && chart.metrics.length > 0) {
+    return chart.metrics.map((m: any) => ({
       field: String(m.field),
-      axis: (m.axis === "right" ? "right" : "left") as "left" | "right",
+      axis: (m.axis === "right" ? "right" : "left") as MetricAxis,
+      render: (m.render === "line" ? "line" : m.render === "bar" ? "bar" : undefined) as MetricRender | undefined,
     }))
   }
 
   // 2) legacy numeric: metric
-  if (ch?.measureType === "numeric" && ch?.metric) {
-    return [{ field: String(ch.metric), axis: "left" as const }]
+  if (chart?.measureType === "numeric" && chart?.metric) {
+    return [{ field: String(chart.metric), axis: "left" as const }]
   }
 
   // 3) count default: value
-  if (data?.[0] && "value" in data[0]) {
+  const first = data?.[0] as any
+  if (first && typeof first === "object" && "value" in first) {
     return [{ field: "value", axis: "left" as const }]
   }
 
   // 4) fallback: keys numéricas
-  const first = data?.[0]
-  if (!first) return []
+  if (!first || typeof first !== "object") return []
   return Object.keys(first)
-    .filter(k => !["name", "date", "series", "__axis__"].includes(k))
-    .map(k => ({ field: k, axis: "left" as const }))
+    .filter((k) => !["name", "date", "series", "__axis__"].includes(k))
+    .map((k) => ({ field: k, axis: "left" as const }))
+}
+
+type FormulaOp = "add" | "sub" | "mul" | "div" | "pct"
+type KPIKind = "field" | "formula"
+type ExtendedKPI = {
+  id: string
+  nombre: string
+  kind?: KPIKind
+  formula?: { aKpiId: string; op: FormulaOp; bKpiId: string }
+}
+
+function safeDiv(a: number, b: number) {
+  if (!Number.isFinite(a)) return 0
+  if (!Number.isFinite(b) || b === 0) return 0
+  return a / b
 }
 
 export function DashboardFromConfig({ config }: { config: ReportConfiguration }) {
@@ -92,7 +114,7 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
 
   const initialConditions = useMemo<FilterCondition[]>(() => {
     const cs = (config?.filtros?.condiciones ?? []) as any[]
-    return cs.map(c => ({
+    return cs.map((c) => ({
       campo: String(c?.campo ?? ""),
       operador: (c?.operador ?? "eq") as Operator,
       valor: (c?.operador === "between") ? { inicio: "", fin: "" } : "",
@@ -106,8 +128,8 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
     setUiConditions(initialConditions)
   }, [initialConditions])
 
-  function setValor(idx: number, nextValor: any) {
-    setUiConditions(prev => {
+  function setValor(idx: number, nextValor: unknown) {
+    setUiConditions((prev) => {
       const copy = [...prev]
       copy[idx] = { ...copy[idx], valor: nextValor }
       return copy
@@ -119,9 +141,9 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
     setError(null)
     try {
       const condicionesParaBackend = aplicar
-        ? uiConditions.filter(c => {
+        ? uiConditions.filter((c) => {
             if (!c?.campo || !c?.operador) return false
-            if (isEmptyValor(c.operador as any, c.valor)) return false
+            if (isEmptyValor(c.operador as Operator, c.valor)) return false
             return true
           })
         : []
@@ -155,12 +177,12 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
     if (!initialConditions.length) return
 
     try {
-      const fields = initialConditions.map(c => c.campo).filter(Boolean)
+      const fields = initialConditions.map((c) => c.campo).filter(Boolean)
       if (!fields.length) return
 
-      const result = await getCampaignFilterOptions(config.campaignId, fields)
+      const r = await getCampaignFilterOptions(config.campaignId, fields)
 
-      const formatted: FilterOption[] = Object.entries(result.options ?? {}).map(([campo, opts]) => ({
+      const formatted: FilterOption[] = Object.entries(r.options ?? {}).map(([campo, opts]) => ({
         campo,
         options: (opts ?? []).map((o: any) => ({
           value: String(o.value ?? o),
@@ -175,12 +197,41 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
     }
   }
 
+  // -----------------------------
+  // ✅ KPIs: base + fórmula
+  // -----------------------------
   const kpiCards = useMemo(() => {
     if (!result) return []
-    return (config.kpis ?? []).map(k => ({
+    const kpis = (config.kpis ?? []) as unknown as ExtendedKPI[]
+
+    const baseValues: Record<string, number> = {}
+    for (const k of (config.kpis ?? []) as any[]) {
+      baseValues[k.id] = Number(result.kpis?.[k.id]?.value ?? 0)
+    }
+
+    const computedValues: Record<string, number> = { ...baseValues }
+    for (const k of kpis) {
+      const kind = (k.kind ?? "field") as KPIKind
+      if (kind !== "formula") continue
+
+      const a = computedValues[k.formula?.aKpiId ?? ""] ?? 0
+      const b = computedValues[k.formula?.bKpiId ?? ""] ?? 0
+      const op = k.formula?.op
+
+      let v = 0
+      if (op === "add") v = a + b
+      else if (op === "sub") v = a - b
+      else if (op === "mul") v = a * b
+      else if (op === "div") v = safeDiv(a, b)
+      else if (op === "pct") v = safeDiv(a, b) * 100
+
+      computedValues[k.id] = v
+    }
+
+    return kpis.map((k) => ({
       id: k.id,
       nombre: k.nombre,
-      value: result.kpis?.[k.id]?.value ?? 0,
+      value: computedValues[k.id] ?? 0,
     }))
   }, [config.kpis, result])
 
@@ -270,7 +321,9 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
                       </div>
 
                       <p className="text-sm font-medium text-muted-foreground uppercase">{kpi.nombre}</p>
-                      <p className="text-3xl font-bold mt-1">{Number(kpi.value).toLocaleString()}</p>
+                      <p className="text-3xl font-bold mt-1">
+                        {Number(kpi.value).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </p>
                     </div>
                   )
                 })}
@@ -282,11 +335,11 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
           {(config.filas ?? [])
             .slice()
             .sort((a, b) => a.orden - b.orden)
-            .map(row => (
+            .map((row) => (
               <section key={row.id} className="mb-8">
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                  {row.graficos.map(ch => {
-                    const data = result.charts?.[ch.id] ?? []
+                  {row.graficos.map((ch: any) => {
+                    const data: any[] = result.charts?.[ch.id] ?? []
                     const colSpan =
                       ch.columnas === 12 ? "lg:col-span-12" :
                       ch.columnas === 6 ? "lg:col-span-6" :
@@ -298,10 +351,60 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
                       <div key={ch.id} className={`p-6 rounded-lg shadow-lg bg-card border border-border ${colSpan}`}>
                         <h3 className="text-xl font-bold mb-4 text-card-foreground">{ch.titulo}</h3>
 
+                        {/* ✅ COMBO (Bar + Line) */}
+                        {String(ch.tipo) === "combo" && (() => {
+                          const metrics = pickMetricFields(ch, data)
+                          // por defecto: si no trae render, la 1ra bar y el resto line
+                          const normalized = metrics.map((m, i) => ({
+                            ...m,
+                            render: m.render ?? (i === 0 ? "bar" : "line"),
+                          }))
+
+                          return (
+                            <ResponsiveContainer width="100%" height={320}>
+                              <ComposedChart data={data}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#444" />
+                                <XAxis dataKey="name" stroke="#888" />
+                                <YAxis yAxisId="left" stroke="#888" />
+                                <YAxis yAxisId="right" orientation="right" stroke="#888" />
+                                <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
+                                <Legend />
+
+                                {normalized.map((m, idx) => {
+                                  const key = `${m.field}-${m.render}-${m.axis}`
+                                  if (m.render === "bar") {
+                                    return (
+                                      <Bar
+                                        key={key}
+                                        dataKey={m.field}
+                                        fill={COLORS[idx % COLORS.length]}
+                                        name={m.field}
+                                        yAxisId={m.axis}
+                                        stackId={(ch as any).barMode === "stacked" ? "stack" : undefined}
+                                      />
+                                    )
+                                  }
+                                  return (
+                                    <Line
+                                      key={key}
+                                      type="monotone"
+                                      dataKey={m.field}
+                                      stroke={COLORS[idx % COLORS.length]}
+                                      strokeWidth={2}
+                                      name={m.field}
+                                      yAxisId={m.axis}
+                                    />
+                                  )
+                                })}
+                              </ComposedChart>
+                            </ResponsiveContainer>
+                          )
+                        })()}
+
                         {/* BARRAS (multi-métricas + seriesBy) */}
                         {ch.tipo === "barras" && (() => {
                           const metrics = pickMetricFields(ch, data)
-                          const hasSeries = data?.[0] && "series" in data[0]
+                          const hasSeries = data?.[0] && typeof data[0] === "object" && "series" in data[0]
 
                           if (hasSeries) {
                             const m0 = metrics[0]?.field ?? "value"
@@ -323,7 +426,7 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
                                   <YAxis yAxisId="left" stroke="#888" />
                                   <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
                                   <Legend />
-                                  {seriesKeys.map((s, idx) => (
+                                  {seriesKeys.map((s, idx: number) => (
                                     <Bar
                                       key={s}
                                       dataKey={s}
@@ -347,7 +450,7 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
                                 <YAxis yAxisId="right" orientation="right" stroke="#888" />
                                 <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
                                 <Legend />
-                                {metrics.map((m, idx) => (
+                                {metrics.map((m: MetricField, idx: number) => (
                                   <Bar
                                     key={m.field}
                                     dataKey={m.field}
@@ -377,7 +480,7 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
                           </ResponsiveContainer>
                         )}
 
-                        {/* SPLINE (multi-métricas + ejes) */}
+                        {/* SPLINE */}
                         {ch.tipo === "spline" && (
                           <ResponsiveContainer width="100%" height={320}>
                             <LineChart data={data}>
@@ -387,7 +490,7 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
                               <YAxis yAxisId="right" orientation="right" stroke="#888" />
                               <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
                               <Legend />
-                              {pickMetricFields(ch, data).map((m, idx) => (
+                              {pickMetricFields(ch, data).map((m: MetricField, idx: number) => (
                                 <Line
                                   key={m.field}
                                   type="monotone"
@@ -402,7 +505,7 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
                           </ResponsiveContainer>
                         )}
 
-                        {/* AREA (multi-métricas + ejes) */}
+                        {/* AREA */}
                         {ch.tipo === "area" && (
                           <ResponsiveContainer width="100%" height={320}>
                             <AreaChart data={data}>
@@ -412,7 +515,7 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
                               <YAxis yAxisId="right" orientation="right" stroke="#888" />
                               <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
                               <Legend />
-                              {pickMetricFields(ch, data).map((m, idx) => (
+                              {pickMetricFields(ch, data).map((m: MetricField, idx: number) => (
                                 <Area
                                   key={m.field}
                                   type="monotone"
@@ -430,7 +533,7 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
                           </ResponsiveContainer>
                         )}
 
-                        {/* RADAR (multi-métricas como varios Radar) */}
+                        {/* RADAR */}
                         {ch.tipo === "radar" && (
                           <ResponsiveContainer width="100%" height={320}>
                             <RadarChart data={data}>
@@ -439,7 +542,7 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
                               <PolarRadiusAxis stroke="#888" />
                               <Legend />
                               <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
-                              {pickMetricFields(ch, data).map((m, idx) => (
+                              {pickMetricFields(ch, data).map((m: MetricField, idx: number) => (
                                 <Radar
                                   key={m.field}
                                   name={m.field}
@@ -474,17 +577,17 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
                             <table className="w-full text-sm">
                               <thead className="bg-muted sticky top-0">
                                 <tr>
-                                  {data[0] && Object.keys(data[0]).filter(k => k !== "__axis__").map((key) => (
+                                  {data[0] && Object.keys(data[0]).filter((k) => k !== "__axis__").map((key: string) => (
                                     <th key={key} className="px-4 py-2 text-left font-medium">{key}</th>
                                   ))}
                                 </tr>
                               </thead>
                               <tbody>
                                 {data.map((row: any, idx: number) => {
-                                  const keys = Object.keys(row).filter(k => k !== "__axis__")
+                                  const keys = Object.keys(row).filter((k) => k !== "__axis__")
                                   return (
                                     <tr key={idx} className="border-t border-border">
-                                      {keys.map((k) => (
+                                      {keys.map((k: string) => (
                                         <td key={k} className="px-4 py-2">
                                           {typeof row[k] === "number" ? Number(row[k]).toLocaleString() : String(row[k])}
                                         </td>
@@ -497,9 +600,9 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
                           </div>
                         )}
 
-                        {!(["barras", "torta", "spline", "area", "radar", "scatter", "tabla"] as string[]).includes(ch.tipo) && (
+                        {!(["barras", "torta", "spline", "area", "radar", "scatter", "tabla", "combo"] as string[]).includes(String(ch.tipo)) && (
                           <div className="text-sm text-muted-foreground">
-                            Tipo de gráfico <strong>{ch.tipo}</strong> aún no implementado. Dataset: {data.length} filas.
+                            Tipo de gráfico <strong>{String(ch.tipo)}</strong> aún no implementado. Dataset: {data.length} filas.
                           </div>
                         )}
                       </div>

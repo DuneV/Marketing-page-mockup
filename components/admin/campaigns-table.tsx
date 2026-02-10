@@ -41,14 +41,14 @@ export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssi
     })
   }
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("es-CO", {
-      style: "currency",
-      currency: "COP",
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(amount)
-  }
+  // const formatCurrency = (amount: number) => {
+  //   return new Intl.NumberFormat("es-CO", {
+  //     style: "currency",
+  //     currency: "COP",
+  //     minimumFractionDigits: 0,
+  //     maximumFractionDigits: 0,
+  //   }).format(amount)
+  // }
 
   return (
     <TooltipProvider>
@@ -60,14 +60,14 @@ export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssi
             <TableHead className="hidden md:table-cell md:w-[15%]">Usuario Responsable</TableHead>
             <TableHead className="hidden md:table-cell md:w-[10%]">Estado</TableHead>
             <TableHead className="hidden md:table-cell md:w-[15%]">Fechas</TableHead>
-            <TableHead className="hidden md:table-cell md:w-[12%] text-right">Presupuesto</TableHead>
+            {/* <TableHead className="hidden md:table-cell md:w-[12%] text-right">Presupuesto</TableHead> */}
             <TableHead className="w-[55%] md:w-[15%] text-right">Acciones</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {campaigns.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={7} className="h-[400px] p-0">
+              <TableCell colSpan={6} className="h-[400px] p-0">
                 <EmptyState
                   icon={Target}
                   title="No hay campañas creadas"
@@ -114,9 +114,9 @@ export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssi
                 <TableCell className="hidden md:table-cell text-sm text-slate-600 dark:text-slate-400">
                   {formatDate(campaign.fechaInicio)} - {formatDate(campaign.fechaFin)}
                 </TableCell>
-                <TableCell className="hidden md:table-cell text-right font-medium">
+                {/* <TableCell className="hidden md:table-cell text-right font-medium">
                   {formatCurrency(campaign.presupuesto)}
-                </TableCell>
+                </TableCell> */}
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                     <ReportConfigBuilderCampaign campaign={campaign} onSaved={onReportConfig} />

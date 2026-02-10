@@ -10,7 +10,7 @@ export interface Campaign {
   estado: "planificacion" | "activa" | "completada" | "cancelada"
   fechaInicio: string
   fechaFin: string
-  presupuesto: number
+  // presupuesto: number
   descripcion: string
   objetivos?: string
   productosAsociados: string[]
@@ -30,7 +30,7 @@ export interface CampaignFormData {
   estado: "planificacion" | "activa" | "completada" | "cancelada"
   fechaInicio: string
   fechaFin: string
-  presupuesto: number
+  // presupuesto: number
   descripcion: string
   objetivos?: string
   productosAsociados: string[]
@@ -72,6 +72,6 @@ export interface CampaignStats {
     completada: number
     cancelada: number
   }
-  presupuestoTotal: number
-  presupuestoPromedio: number
+  // presupuestoTotal: number
+  // presupuestoPromedio: number
 }

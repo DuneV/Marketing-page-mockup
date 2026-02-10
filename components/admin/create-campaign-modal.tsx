@@ -49,7 +49,7 @@ const campaignSchema = z.object({
   estado: z.enum(["planificacion", "activa", "completada", "cancelada"]),
   fechaInicio: z.string().min(1, "Fecha de inicio requerida"),
   fechaFin: z.string().min(1, "Fecha fin requerida"),
-  presupuesto: z.coerce.number().nonnegative("El presupuesto no puede ser negativo"),
+  // presupuesto: z.coerce.number().nonnegative("El presupuesto no puede ser negativo"),
   descripcion: z.string().min(1, "Descripción requerida"),
   objetivos: z.string().optional(),
   productosAsociados: z.string().optional(),
@@ -101,7 +101,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
       estado: "planificacion",
       fechaInicio: "",
       fechaFin: "",
-      presupuesto: 0,
+      // presupuesto: 0,
       descripcion: "",
       objetivos: "",
       productosAsociados: "",
@@ -144,7 +144,6 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
         estado: data.estado,
         fechaInicio: data.fechaInicio,
         fechaFin: data.fechaFin,
-        presupuesto: data.presupuesto,
         descripcion: data.descripcion,
         objetivos: data.objetivos,
         productosAsociados: productos,
@@ -152,7 +151,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
       })
 
       await assignUserToCampaign(currentUser.uid, campaignId)
-      await incrementCompanyCampaignCount(data.empresaId, data.presupuesto)
+      // await incrementCompanyCampaignCount(data.empresaId, data.presupuesto)
       createdCampaignIdRef.current = campaignId;
       setCreatedCampaignId(campaignId)
       setSelectedCompanyId(data.empresaId)  // ✅ Guardar el ID (UUID) de la empresa
@@ -445,7 +444,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
                   )}
                 />
 
-                <FormField
+                {/* <FormField
                   control={form.control}
                   name="presupuesto"
                   render={({ field }) => (
@@ -457,7 +456,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
                       <FormMessage />
                     </FormItem>
                   )}
-                />
+                /> */}
               </div>
 
               <div className="grid grid-cols-2 gap-4">

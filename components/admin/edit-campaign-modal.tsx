@@ -44,7 +44,7 @@ const campaignSchema = z.object({
   estado: z.enum(["planificacion", "activa", "completada", "cancelada"]),
   fechaInicio: z.string().min(1, "Fecha de inicio requerida"),
   fechaFin: z.string().min(1, "Fecha fin requerida"),
-  presupuesto: z.coerce.number().nonnegative("El presupuesto no puede ser negativo"),
+  // presupuesto: z.coerce.number().nonnegative("El presupuesto no puede ser negativo"),
   descripcion: z.string().min(1, "Descripción requerida"),
   objetivos: z.string().optional(),
   productosAsociados: z.string().optional(),
@@ -76,7 +76,7 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
     estado: "planificacion" | "activa" | "completada" | "cancelada"
     fechaInicio: string
     fechaFin: string
-    presupuesto: number
+    // presupuesto: number
     descripcion: string
     objetivos?: string
     productosAsociados: string
@@ -89,7 +89,7 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
       estado: "planificacion",
       fechaInicio: "",
       fechaFin: "",
-      presupuesto: 0,
+      // presupuesto: 0,
       descripcion: "",
       objetivos: "",
       productosAsociados: "",
@@ -105,7 +105,7 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
         estado: campaign.estado,
         fechaInicio: campaign.fechaInicio,
         fechaFin: campaign.fechaFin,
-        presupuesto: campaign.presupuesto,
+        // presupuesto: campaign.presupuesto,
         descripcion: campaign.descripcion,
         objetivos: campaign.objetivos || "",
         productosAsociados: campaign.productosAsociados.join(", "),
@@ -120,7 +120,7 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
     estado: "planificacion" | "activa" | "completada" | "cancelada"
     fechaInicio: string
     fechaFin: string
-    presupuesto: number
+    // presupuesto: number
     descripcion: string
     objetivos?: string
     productosAsociados: string
@@ -150,7 +150,7 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
         estado: data.estado,
         fechaInicio: data.fechaInicio,
         fechaFin: data.fechaFin,
-        presupuesto: data.presupuesto,
+        // presupuesto: data.presupuesto,
         descripcion: data.descripcion,
         objetivos: data.objetivos,
         productosAsociados: productos,
@@ -254,7 +254,7 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
                 )}
               />
 
-              <FormField
+              {/* <FormField
                 control={form.control}
                 name="presupuesto"
                 render={({ field }) => (
@@ -266,7 +266,7 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
                     <FormMessage />
                   </FormItem>
                 )}
-              />
+              /> */}
             </div>
 
             <div className="grid grid-cols-2 gap-4">
