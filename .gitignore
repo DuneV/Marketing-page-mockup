@@ -12,7 +12,7 @@ dist/
 # Turbopack / Next.js caching
 .next/cache/
 .turbo/
-
+*.yaml
 # Env files
 .env
 .env.local

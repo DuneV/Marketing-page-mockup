@@ -82,3 +82,11 @@ export async function deleteJson(gsUriOrPath: string) {
 
   return { ok: true, bucket, objectPath }
 }
+/** NUEVO: borrar cualquier archivo en GCS usando gs://bucket/path */
+export async function deleteGsUri(gsUri: string) {
+  const m = gsUri.match(/^gs:\/\/([^/]+)\/(.+)$/)
+  if (!m) throw new Error(`Invalid gs:// URI format: ${gsUri}`)
+  const [, bucket, objectPath] = m
+  await storage.bucket(bucket).file(objectPath).delete({ ignoreNotFound: true })
+  return { ok: true, bucket, objectPath }
+}

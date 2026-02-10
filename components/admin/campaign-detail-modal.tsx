@@ -2,19 +2,18 @@
 
 "use client"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { 
-  Calendar, 
-  DollarSign, 
-  Building2, 
-  User, 
-  FileText, 
+import {
+  Calendar,
+  DollarSign,
+  Building2,
+  User,
+  FileText,
   Target,
   Download,
   Upload,
@@ -22,7 +21,16 @@ import {
   AlertCircle,
 } from "lucide-react"
 import { toast } from "sonner"
-import { downloadTemplate, createImport, analyzeImport, commitImport } from "@/lib/api/importApi"
+import {
+  downloadTemplate,
+  createImport,
+  analyzeImport,
+  commitImport,
+  replaceCampaignExcel,
+  commitImportFromPrevious,
+  getLatestCampaignImport,
+  listCampaignImports,
+} from "@/lib/api/importApi"
 import type { Campaign } from "@/types/campaign"
 
 interface CampaignDetailModalProps {
@@ -31,14 +39,28 @@ interface CampaignDetailModalProps {
   onClose: () => void
 }
 
-const statusColors = {
+type LatestInfo = {
+  filename: string
+  status: string
+  createdAt: string
+}
+
+type ImportVersion = {
+  id: string
+  filename?: string
+  status?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+const statusColors: Record<string, string> = {
   planificacion: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100",
   activa: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100",
   completada: "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-100",
   cancelada: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100",
 }
 
-const statusLabels = {
+const statusLabels: Record<string, string> = {
   planificacion: "Planificación",
   activa: "Activa",
   completada: "Completada",
@@ -46,6 +68,7 @@ const statusLabels = {
 }
 
 export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetailModalProps) {
+  // Hooks SIEMPRE arriba, sin returns antes.
   const [file, setFile] = useState<File | null>(null)
   const [importId, setImportId] = useState<string | null>(null)
   const [preview, setPreview] = useState<any>(null)
@@ -53,11 +76,15 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
   const [uploadLog, setUploadLog] = useState<string>("")
   const [isUploading, setIsUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [latest, setLatest] = useState<LatestInfo | null>(null)
+  const [versions, setVersions] = useState<ImportVersion[]>([])
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null)
 
-  if (!campaign) return null
+  const campaignId = campaign?.id ?? null
+  const companyId = campaign?.empresaId ?? null
 
   const appendLog = (message: string) => {
-    setUploadLog(prev => `${prev}${message}\n`)
+    setUploadLog((prev) => `${prev}${message}\n`)
   }
 
   const formatDate = (dateString: string) => {
@@ -76,6 +103,47 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
     }).format(amount)
   }
 
+  // useEffect SIEMPRE se declara, y adentro haces el guard.
+  useEffect(() => {
+  if (!isOpen || !campaignId) return
+
+  ;(async () => {
+    try {
+      // 1) Latest (lo que ya tenías)
+      const r = await getLatestCampaignImport(campaignId)
+      if (r?.exists && r?.latest) {
+        setLatest({
+          filename: r.latest.filename,
+          status: r.latest.status,
+          createdAt: r.latest.createdAt,
+        })
+      } else {
+        setLatest(null)
+      }
+
+      // 2) Versions (NUEVO)
+      const v = await listCampaignImports(campaignId)
+      const imports: ImportVersion[] = (v?.imports ?? []).map((it: any) => ({
+        id: it.id,
+        filename: it.filename ?? it.originalFilename ?? it.original_filename,
+        status: it.status,
+        createdAt: it.createdAt ?? it.created_at,
+        updatedAt: it.updatedAt ?? it.updated_at,
+      }))
+
+      setVersions(imports)
+      setSelectedVersionId(imports[0]?.id ?? null) // asumiendo orden desc
+    } catch {
+      setLatest(null)
+      setVersions([])
+      setSelectedVersionId(null)
+    }
+  })()
+}, [isOpen, campaignId])
+
+  // Ahora sí, puedes hacer early return (después de hooks)
+  if (!campaign) return null
+
   // Descargar plantilla específica para esta campaña
   const handleDownloadTemplate = async () => {
     try {
@@ -84,12 +152,10 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
       const url = URL.createObjectURL(blob)
       const a = document.createElement("a")
       a.href = url
-      a.download = `${campaign.nombre.replace(/\s+/g, '_')}_plantilla.xlsx`
+      a.download = `${campaign.nombre.replace(/\s+/g, "_")}_plantilla.xlsx`
       a.click()
       URL.revokeObjectURL(url)
-      toast.success("Plantilla descargada", {
-        description: `Plantilla para ${campaign.nombre}`
-      })
+      toast.success("Plantilla descargada", { description: `Plantilla para ${campaign.nombre}` })
     } catch (e: any) {
       toast.error(e?.message ?? "Error al descargar plantilla")
       appendLog(`ERROR: ${e?.message ?? e}`)
@@ -121,23 +187,27 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
     appendLog(`✓ Archivo seleccionado: ${selectedFile.name}`)
   }
 
-  // Subir y analizar archivo
+  // Subir y analizar archivo (flujo manual)
   const handleUploadFile = async () => {
     if (!file) {
       toast.error("Selecciona un archivo primero")
+      return
+    }
+    if (!companyId) {
+      toast.error("Falta companyId en la campaña")
       return
     }
 
     try {
       setIsUploading(true)
       appendLog("1) Creando importación...")
-      
+
       const { importId: newImportId, uploadUrl } = await createImport({
-        companyId: campaign.empresaId,
+        companyId,
         importType: "campaigns",
         filename: file.name,
       })
-      
+
       setImportId(newImportId)
       appendLog("✓ Importación creada")
 
@@ -145,14 +215,13 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
       const uploadResponse = await fetch(uploadUrl, {
         method: "PUT",
         headers: {
-          "Content-Type": file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "Content-Type":
+            file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         },
         body: file,
       })
 
-      if (!uploadResponse.ok) {
-        throw new Error(await uploadResponse.text())
-      }
+      if (!uploadResponse.ok) throw new Error(await uploadResponse.text())
       appendLog("✓ Archivo subido correctamente")
 
       appendLog("3) Analizando datos...")
@@ -160,10 +229,8 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
       setPreview(analyzed)
       setMapping(analyzed.suggestions ?? {})
       appendLog("✓ Análisis completado")
-      
-      toast.success("Archivo analizado", {
-        description: "Revisa el mapeo de columnas y confirma"
-      })
+
+      toast.success("Archivo analizado", { description: "Revisa el mapeo de columnas y confirma" })
     } catch (e: any) {
       toast.error(e?.message ?? "Error al procesar archivo")
       appendLog(`ERROR: ${e?.message ?? e}`)
@@ -172,24 +239,21 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
     }
   }
 
-  // Confirmar importación
+  // Confirmar importación (flujo manual)
   const handleConfirmImport = async () => {
     if (!importId) return
 
     try {
       setIsUploading(true)
       appendLog("4) Confirmando importación...")
-      
+
       await commitImport(importId, mapping)
-      
+
       appendLog("✓ Importación confirmada")
       appendLog("Los datos se procesarán en segundo plano")
-      
-      toast.success("Importación iniciada", {
-        description: "Los datos se están procesando"
-      })
 
-      // Limpiar estado después de un momento
+      toast.success("Importación iniciada", { description: "Los datos se están procesando" })
+
       setTimeout(() => {
         setFile(null)
         setImportId(null)
@@ -199,6 +263,103 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
     } catch (e: any) {
       toast.error(e?.message ?? "Error al confirmar importación")
       appendLog(`ERROR: ${e?.message ?? e}`)
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  // Reemplazar Excel + commit automático copiando mapping anterior
+  const handleReplaceAndAutoCommit = async () => {
+    if (!file) {
+      toast.error("Selecciona un archivo primero")
+      return
+    }
+    if (!companyId || !campaignId) {
+      toast.error("Faltan IDs de campaña/empresa")
+      return
+    }
+
+    try {
+      setIsUploading(true)
+      setUploadLog("")
+      appendLog("1) Reemplazando import anterior y creando nuevo import...")
+
+      const created = await replaceCampaignExcel({
+        campaignId,
+        companyId,
+        filename: file.name,
+      })
+
+      setImportId(created.importId)
+      appendLog(`Import creado: ${created.importId}`)
+      appendLog(`Imports anteriores borrados: ${created.deletedPreviousImports}`)
+
+      appendLog("2) Subiendo XLSX a GCS (signed URL)...")
+      const uploadResponse = await fetch(created.uploadUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type":
+            file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+        body: file,
+      })
+
+      if (!uploadResponse.ok) throw new Error(await uploadResponse.text())
+      appendLog("Archivo subido correctamente")
+
+      appendLog("3) Commit automático (copiando mapping anterior) + encolando procesamiento...")
+      await commitImportFromPrevious(created.importId)
+      appendLog("Importación iniciada (auto)")
+
+      toast.success("Excel actualizado", {
+        description: "Se reemplazó el anterior y se re-procesó con el mismo mapping.",
+      })
+      try {
+        const v = await listCampaignImports(campaignId)
+        const imports: ImportVersion[] = (v?.imports ?? []).map((it: any) => ({
+          id: it.id,
+          filename: it.filename ?? it.originalFilename ?? it.original_filename,
+          status: it.status,
+          createdAt: it.createdAt ?? it.created_at,
+          updatedAt: it.updatedAt ?? it.updated_at,
+        }))
+        setVersions(imports)
+        setSelectedVersionId(imports[0]?.id ?? null)
+      } catch {}
+      // refrescar “versión actual”
+      try {
+        const r = await getLatestCampaignImport(campaignId)
+        if (r?.exists && r?.latest) {
+          setLatest({
+            filename: r.latest.filename,
+            status: r.latest.status,
+            createdAt: r.latest.createdAt,
+          })
+        } else {
+          setLatest(null)
+        }
+      } catch {}
+
+      setTimeout(() => {
+        setFile(null)
+        setImportId(null)
+        setPreview(null)
+        setMapping({})
+      }, 800)
+    } catch (e: any) {
+      const msg = e?.message ?? String(e)
+      const isNoPrev = msg.includes("NO_PREVIOUS_IMPORT") || msg.includes("NO_PREVIOUS_MAPPING")
+
+      if (isNoPrev) {
+        toast.warning("No hay mapping previo", {
+          description: "Se requiere análisis y mapeo manual (primera carga).",
+        })
+        appendLog("⚠ No hay mapping previo. Usa 'Subir y Analizar' + 'Confirmar Importación'.")
+      } else {
+        toast.error("Error al actualizar Excel", { description: msg })
+      }
+
+      appendLog(`ERROR: ${msg}`)
     } finally {
       setIsUploading(false)
     }
@@ -247,7 +408,9 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                   <div className="flex items-start gap-3">
                     <User className="h-5 w-5 text-amber-600 mt-0.5" />
                     <div>
-                      <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Usuario Responsable</p>
+                      <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+                        Usuario Responsable
+                      </p>
                       <p className="text-base font-semibold">{campaign.usuarioResponsableNombre}</p>
                     </div>
                   </div>
@@ -257,7 +420,9 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                   <div className="flex items-start gap-3">
                     <Calendar className="h-5 w-5 text-amber-600 mt-0.5" />
                     <div>
-                      <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Fecha de Inicio</p>
+                      <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+                        Fecha de Inicio
+                      </p>
                       <p className="text-base">{formatDate(campaign.fechaInicio)}</p>
                     </div>
                   </div>
@@ -275,7 +440,9 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                   <DollarSign className="h-5 w-5 text-amber-600 mt-0.5" />
                   <div>
                     <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Presupuesto</p>
-                    <p className="text-xl font-bold text-amber-600">{formatCurrency(campaign.presupuesto)}</p>
+                    <p className="text-xl font-bold text-amber-600">
+                      {formatCurrency(campaign.presupuesto)}
+                    </p>
                   </div>
                 </div>
               </CardContent>
@@ -364,7 +531,43 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
 
           {/* TAB: Datos Excel */}
           <TabsContent value="excel" className="space-y-4">
-            {/* Descargar Plantilla */}
+            <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Versiones</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {versions.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Aún no hay imports para esta campaña.</p>
+              ) : (
+                <div className="space-y-2">
+                  {versions.map((v) => (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => setSelectedVersionId(v.id)}
+                      className={`w-full text-left border rounded p-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-900 ${
+                        selectedVersionId === v.id
+                          ? "border-amber-600"
+                          : "border-slate-200 dark:border-slate-800"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="font-mono truncate">{v.id}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {v.createdAt ? new Date(v.createdAt).toLocaleString("es-ES") : ""}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3 mt-1">
+                        <div className="truncate">{v.filename ?? "(sin filename)"}</div>
+                        <div className="text-xs">{v.status ?? ""}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">Plantilla de Datos</CardTitle>
@@ -380,12 +583,23 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
               </CardContent>
             </Card>
 
-            {/* Subir Archivo */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">Subir Datos</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                <div className="text-sm text-muted-foreground">
+                  {latest ? (
+                    <span>
+                      Versión actual:{" "}
+                      <span className="font-medium text-foreground">{latest.filename}</span> ·{" "}
+                      {new Date(latest.createdAt).toLocaleString("es-ES")} · {latest.status}
+                    </span>
+                  ) : (
+                    <span>Versión actual: (sin import)</span>
+                  )}
+                </div>
+
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -393,7 +607,7 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                   onChange={onFileChange}
                   className="hidden"
                 />
-                
+
                 <div className="flex items-center gap-2">
                   <Button variant="outline" onClick={handleFileSelect} disabled={isUploading}>
                     Seleccionar Archivo
@@ -403,19 +617,19 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                   </span>
                 </div>
 
-                <div className="flex gap-2">
-                  <Button 
-                    onClick={handleUploadFile} 
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    onClick={handleUploadFile}
                     disabled={!file || isUploading}
                     className="bg-amber-600 hover:bg-amber-700"
                   >
                     <Upload className="h-4 w-4 mr-2" />
                     Subir y Analizar
                   </Button>
-                  
+
                   {preview && (
-                    <Button 
-                      onClick={handleConfirmImport} 
+                    <Button
+                      onClick={handleConfirmImport}
                       disabled={!importId || isUploading}
                       className="bg-emerald-600 hover:bg-emerald-700"
                     >
@@ -423,11 +637,20 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                       Confirmar Importación
                     </Button>
                   )}
+
+                  <Button
+                    onClick={handleReplaceAndAutoCommit}
+                    disabled={!file || isUploading}
+                    variant="outline"
+                    className="border-amber-600 text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+                  >
+                    <Upload className="h-4 w-4 mr-2" />
+                    Actualizar Excel (auto)
+                  </Button>
                 </div>
               </CardContent>
             </Card>
 
-            {/* Vista Previa */}
             {preview && (
               <>
                 <Card>
@@ -445,7 +668,9 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                         <p className="text-sm text-muted-foreground">Filas</p>
                       </div>
                       <div className="text-center">
-                        <p className="text-2xl font-bold text-amber-600">{preview.missingRequired?.length || 0}</p>
+                        <p className="text-2xl font-bold text-amber-600">
+                          {preview.missingRequired?.length || 0}
+                        </p>
                         <p className="text-sm text-muted-foreground">Faltantes</p>
                       </div>
                       <div className="text-center">
@@ -467,7 +692,7 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                         <select
                           className="flex-1 border rounded px-2 py-1 text-sm bg-background"
                           value={mapping[header] ?? ""}
-                          onChange={(e) => setMapping(m => ({ ...m, [header]: e.target.value }))}
+                          onChange={(e) => setMapping((m) => ({ ...m, [header]: e.target.value }))}
                         >
                           <option value="">(ignorar)</option>
                           {schemaFields.map((field: string) => (
@@ -478,7 +703,7 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                         </select>
                       </div>
                     ))}
-                    
+
                     {preview.missingRequired?.length > 0 && (
                       <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded">
                         <p className="text-sm text-amber-800 dark:text-amber-200 flex items-center gap-2">
@@ -492,7 +717,6 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
               </>
             )}
 
-            {/* Log */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">Log de Actividad</CardTitle>

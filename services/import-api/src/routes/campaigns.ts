@@ -4,8 +4,9 @@ import { Router } from "express"
 import { requireAdmin } from "../middleware/requireAdmin.js"
 import { requireAuth } from "../middleware/requireAuth.js"
 import { query, queryOne } from "../lib/db.js"
-import { uploadJson, downloadJson, deleteJson, bucketName } from "../lib/gcs.js"
+import { uploadJson, downloadJson, deleteJson, bucketName, createSignedUploadUrl, deleteGsUri } from "../lib/gcs.js"
 import { admin } from "../lib/firebaseAdmin.js"
+import { getActiveSchema } from "../lib/schemas.js"
 
 export const campaignsRouter = Router()
 
@@ -30,6 +31,43 @@ function reportConfigObjectPath(campaignId: string) {
   return `report-configs/campaigns/${campaignId}.json`
 }
 
+type MeasureType = "count" | "numeric"
+
+interface ChartMetric {
+  field: string            // canonical_field numérico
+  agg?: KPIAgg             // sum/mean/max...
+  axis?: "left" | "right"  // para multi-eje (si lo soportas en el front)
+}
+
+interface ChartConfig {
+  id: string
+  tipo: string
+  titulo: string
+  columnas: number
+
+  // Compat legacy (tu builder lo sigue mandando)
+  fuente?: string
+
+  // Ejes nuevos
+  groupBy?: string         // X axis (dimensión)
+  labelField?: string      // texto para labels (default = groupBy)
+  seriesBy?: string        // split por categoría (stack/legend)
+
+  // Medición Y
+  measureType?: MeasureType
+  countField?: string | "__rows__"
+
+  // 1 o muchas métricas
+  metric?: string          // legacy (1 métrica)
+  metric2?: string         // legacy (2 métricas - scatter)
+  agg?: KPIAgg             // legacy
+  metrics?: ChartMetric[]  // nuevo (N métricas)
+
+  // Opcionales
+  barOrientation?: "vertical" | "horizontal"
+  barMode?: "grouped" | "stacked"
+}
+
 interface ReportConfig {
   campaignId: string
   filtros?: {
@@ -42,7 +80,7 @@ interface ReportConfig {
   filas?: Array<{
     id: string
     orden: number
-    graficos: Array<{ id: string; tipo: string; titulo: string; fuente: string; columnas: number }>
+    graficos: ChartConfig[]
   }>
 }
 
@@ -64,6 +102,12 @@ function normalizeSchemaType(t: any): AvailableFieldType {
   if (t === "image") return "text"
 
   return "unknown"
+}
+
+function getNumber(v: any) {
+  if (v === "" || v == null) return NaN
+  const n = Number(v)
+  return Number.isFinite(n) ? n : NaN
 }
 
 // Operadores por tipo (para filtros)
@@ -689,31 +733,196 @@ campaignsRouter.post("/:campaignId/run-report", async (req, res) => {
     const charts: Record<string, any> = {}
 
     for (const fila of (config.filas ?? [])) {
-      for (const ch of fila.graficos) {
-        if (ch.tipo === "barras" || ch.tipo === "torta") {
-          const grouped: Record<string, number> = {}
-          for (const d of data) {
-            const key = String(d?.[ch.fuente] ?? "N/A")
-            grouped[key] = (grouped[key] ?? 0) + 1
-          }
-          charts[ch.id] = Object.entries(grouped)
-            .map(([name, value]) => ({ name, value }))
-            .sort((a, b) => b.value - a.value)
-            .slice(0, 20)
-        } else if (ch.tipo === "spline" || ch.tipo === "area") {
-          const grouped: Record<string, number> = {}
-          for (const d of data) {
-            const dt = String(d?.date ?? "")
-            if (!dt) continue
-            const val = Number(d?.[ch.fuente] ?? 0)
-            grouped[dt] = (grouped[dt] ?? 0) + (Number.isFinite(val) ? val : 0)
-          }
-          charts[ch.id] = Object.entries(grouped)
-            .map(([date, value]) => ({ date, value }))
-            .sort((a, b) => (a.date < b.date ? -1 : 1))
-        } else {
+      for (const ch of (fila.graficos ?? [])) {
+        const tipo = ch.tipo
+        const groupBy = (ch.groupBy ?? ch.labelField ?? ch.fuente ?? "fuente") as string
+        const labelField = (ch.labelField ?? groupBy) as string
+        const seriesBy = ch.seriesBy
+        
+        if (!groupBy) {
           charts[ch.id] = []
+          continue
         }
+        
+        const measureType: "count" | "numeric" = (ch.measureType as any) ?? "count"
+        const countField = (ch.countField ?? "__rows__") as any
+
+        // Normaliza lista de métricas (N)
+        const metrics: ChartMetric[] =
+          (Array.isArray(ch.metrics) && ch.metrics.length > 0)
+            ? ch.metrics
+            : (measureType === "numeric" && (ch.metric || ch.fuente))
+              ? [{ field: (ch.metric ?? ch.fuente) as string, agg: (ch.agg ?? "sum") as KPIAgg, axis: "left" }]
+              : []
+
+        // -----------------------
+        // barras / tabla / torta
+        // -----------------------
+        if (tipo === "barras" || tipo === "tabla" || tipo === "torta") {
+          // grouped[groupKey][seriesKey] => acumuladores
+          // Si NO hay seriesBy, usa "__all__"
+          const acc: Record<string, Record<string, any>> = {}
+
+          for (const d of data) {
+            const g = String(d?.[groupBy] ?? "N/A")
+            const s = seriesBy ? String(d?.[seriesBy] ?? "N/A") : "__all__"
+
+            acc[g] ??= {}
+            acc[g][s] ??= {
+              __count_rows__: 0,
+              __count_fields__: {}, // count por campo
+              __nums__: {},         // {metricField: number[]}
+            }
+
+            // count base
+            acc[g][s].__count_rows__++
+
+            // countField
+            if (countField && countField !== "__rows__") {
+              const v = d?.[countField]
+              if (v != null && String(v).trim() !== "") {
+                acc[g][s].__count_fields__[countField] = (acc[g][s].__count_fields__[countField] ?? 0) + 1
+              }
+            }
+
+            // numeric metrics values
+            for (const m of metrics) {
+              const field = m.field
+              acc[g][s].__nums__[field] ??= []
+              const n = getNumber(d?.[field])
+              if (Number.isFinite(n)) acc[g][s].__nums__[field].push(n)
+            }
+          }
+
+          // Construye dataset final
+          // Caso A) sin seriesBy: [{ name, <metric1>, <metric2>, ... }] o count
+          // Caso B) con seriesBy: [{ name, series, <metric1>, ... }] (para stacked/grouped en front)
+          const out: any[] = []
+          const groups = Object.keys(acc)
+
+          for (const g of groups) {
+            const seriesKeys = Object.keys(acc[g])
+
+            for (const s of seriesKeys) {
+              const cell = acc[g][s]
+
+              const row: any = {
+                name: String((labelField && labelField !== groupBy) ? (data.find(x => String(x?.[groupBy] ?? "N/A") === g)?.[labelField] ?? g) : g),
+              }
+
+              if (seriesBy) row.series = s
+
+              if (measureType === "count") {
+                const v =
+                  countField === "__rows__"
+                    ? cell.__count_rows__
+                    : (cell.__count_fields__[countField] ?? 0)
+
+                // Para barras/torta/tabla en count, expón "value"
+                row.value = v
+              } else {
+                // numeric: agrega N métricas
+                for (const m of metrics) {
+                  const xs = cell.__nums__[m.field] ?? []
+                  row[m.field] = agg(xs, (m.agg ?? "sum") as KPIAgg)
+                  row.__axis__ ??= {}
+                  row.__axis__[m.field] = m.axis ?? "left"
+                }
+              }
+
+              out.push(row)
+            }
+          }
+
+          // Para torta: normalmente quieres 1 métrica (o value)
+          if (tipo === "torta") {
+            // si numeric y hay 1 métrica, mapearla a value
+            if (measureType === "numeric") {
+              const first = metrics[0]?.field
+              charts[ch.id] = out
+                .map(r => ({ name: r.name, value: Number(r[first] ?? 0) }))
+                .sort((a, b) => b.value - a.value)
+                .slice(0, 20)
+            } else {
+              charts[ch.id] = out
+                .map(r => ({ name: r.name, value: Number(r.value ?? 0) }))
+                .sort((a, b) => b.value - a.value)
+                .slice(0, 20)
+            }
+          } else {
+            // barras/tabla: devuelve todo (puedes limitar top-N si quieres)
+            charts[ch.id] = out
+          }
+
+          continue
+        }
+
+        // -----------------------
+        // spline / area (time series)
+        // -----------------------
+        if (tipo === "spline" || tipo === "area") {
+          const timeField = groupBy ?? "date" // si groupBy apunta a una fecha, perfecto
+          const accT: Record<string, any> = {}
+
+          for (const d of data) {
+            const t = String(d?.[timeField] ?? "")
+            if (!t) continue
+
+            const s = seriesBy ? String(d?.[seriesBy] ?? "N/A") : "__all__"
+            accT[t] ??= {}
+            accT[t][s] ??= { __count_rows__: 0, __nums__: {} }
+
+            accT[t][s].__count_rows__++
+
+            for (const m of metrics) {
+              accT[t][s].__nums__[m.field] ??= []
+              const n = getNumber(d?.[m.field])
+              if (Number.isFinite(n)) accT[t][s].__nums__[m.field].push(n)
+            }
+          }
+
+          const out: any[] = []
+          const ts = Object.keys(accT).sort()
+
+          for (const t of ts) {
+            for (const s of Object.keys(accT[t])) {
+              const cell = accT[t][s]
+              const row: any = { date: t }
+              if (seriesBy) row.series = s
+
+              if (measureType === "count") {
+                row.value = cell.__count_rows__
+              } else {
+                for (const m of metrics) {
+                  row[m.field] = agg(cell.__nums__[m.field] ?? [], (m.agg ?? "sum") as KPIAgg)
+                }
+              }
+              out.push(row)
+            }
+          }
+
+          charts[ch.id] = out
+          continue
+        }
+
+        // -----------------------
+        // scatter
+        // -----------------------
+        if (tipo === "scatter") {
+          const xField = ch.metric ?? metrics[0]?.field
+          const yField = ch.metric2 ?? metrics[1]?.field ?? metrics[0]?.field
+
+          const out = data
+            .map(d => ({ x: getNumber(d?.[xField]), y: getNumber(d?.[yField]), name: String(d?.[labelField] ?? "") }))
+            .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y))
+            .slice(0, 5000)
+
+          charts[ch.id] = out
+          continue
+        }
+
+        // default
+        charts[ch.id] = []
       }
     }
 
@@ -1091,6 +1300,156 @@ campaignsRouter.get("/mine-with-dashboard", async (req, res) => {
     })
   } catch (e: any) {
     console.error("GET /campaigns/mine-with-dashboard error:", e)
+    return res.status(e?.status ?? 500).json({ error: e?.message ?? "error" })
+  }
+})
+
+// --------------------------------------------------------------------
+// NUEVO: GET /campaigns/:campaignId/latest-import
+// --------------------------------------------------------------------
+campaignsRouter.get("/:campaignId/latest-import", async (req, res) => {
+  try {
+    const auth = await requireAuth(req)
+    const { campaignId } = req.params
+
+    // company: debe existir un import DONE de su empresa
+    if (auth.role === "company") {
+      if (!auth.companyId) return res.status(400).json({ error: "MISSING_COMPANY_ID" })
+
+      const check = await queryOne(
+        `SELECT 1
+         FROM imports.imports
+         WHERE campaign_id = $1
+           AND company_id = $2
+         LIMIT 1`,
+        [campaignId, auth.companyId]
+      )
+      if (!check) {
+        return res.status(403).json({ error: "FORBIDDEN", message: "No tienes acceso a esta campaña" })
+      }
+    }
+
+    const row = await queryOne<any>(
+      `SELECT id, original_filename, status, created_at, updated_at
+       FROM imports.imports
+       WHERE campaign_id = $1
+         AND import_type = 'campaigns'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [campaignId]
+    )
+
+    if (!row) return res.json({ exists: false, latest: null })
+    return res.json({
+      exists: true,
+      latest: {
+        id: row.id,
+        filename: row.original_filename,
+        status: row.status,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      },
+    })
+  } catch (e: any) {
+    console.error("latest-import error:", e)
+    return res.status(500).json({ error: e?.message ?? "error" })
+  }
+})
+
+// --------------------------------------------------------------------
+// NUEVO: POST /campaigns/:campaignId/imports/replace
+// - Borra imports previos + staging + mappings
+// - Borra archivos en GCS (gcs_uri)
+// - Crea un nuevo import y devuelve uploadUrl
+// --------------------------------------------------------------------
+campaignsRouter.post("/:campaignId/imports/replace", async (req, res) => {
+  try {
+    const user = await requireAdmin(req)
+    const { campaignId } = req.params
+
+    const body = req.body as { companyId?: string; filename: string }
+    const filename = body?.filename
+    if (!filename || !filename.toLowerCase().endsWith(".xlsx")) {
+      return res.status(400).json({ error: "Only .xlsx allowed and filename is required" })
+    }
+
+    // 1) agarrar imports actuales de esa campaña
+    const existing = await query<{ id: string; gcs_uri: string; company_id: string }>(
+      `SELECT id, gcs_uri, company_id
+       FROM imports.imports
+       WHERE campaign_id = $1
+         AND import_type = 'campaigns'`,
+      [campaignId]
+    )
+
+    const existingIds = existing.map(x => x.id)
+    const resolvedCompanyId =
+      body.companyId ??
+      existing[0]?.company_id ?? null
+
+    if (!resolvedCompanyId) {
+      return res.status(400).json({
+        error: "MISSING_COMPANY_ID",
+        message: "No se pudo inferir companyId. Envíalo en el body.",
+      })
+    }
+
+    // 2) borrar archivos GCS anteriores (best-effort)
+    await Promise.all(
+      existing
+        .map(x => x.gcs_uri)
+        .filter(Boolean)
+        .map(async (uri) => {
+          try { await deleteGsUri(uri) } catch { /* ignore */ }
+        })
+    )
+
+    // 3) borrar staging_rows + mappings + imports (si existen)
+    if (existingIds.length > 0) {
+      // staging_rows
+      await query(`DELETE FROM staging.staging_rows WHERE import_id = ANY($1)`, [existingIds])
+      // mappings
+      await query(`DELETE FROM imports.import_mappings WHERE import_id = ANY($1)`, [existingIds])
+      // imports
+      await query(`DELETE FROM imports.imports WHERE id = ANY($1)`, [existingIds])
+    }
+
+    // 4) crear nuevo import igual que importsRouter.post("/")
+    const importType = "campaigns"
+    const schema = await getActiveSchema(importType)
+
+    const importId = crypto.randomUUID()
+    const safeFilename = filename.replace(/[^\w.\-() ]/g, "_")
+    const objectPath = `imports/${resolvedCompanyId}/${importType}/${importId}-${safeFilename}`
+
+    const uploadUrl = await createSignedUploadUrl(objectPath)
+    const gcsUri = `gs://${process.env.GCS_BUCKET}/${objectPath}`
+
+    await query(
+      `INSERT INTO imports.imports
+        (id, company_id, campaign_id, import_type, schema_version, uploaded_by, original_filename, gcs_uri, status, created_at, updated_at)
+       VALUES
+        ($1, $2, $3, $4, $5, $6, $7, $8, 'UPLOADED', now(), now())`,
+      [
+        importId,
+        resolvedCompanyId,
+        campaignId,
+        importType,
+        schema.version,
+        user.uid,
+        safeFilename,
+        gcsUri,
+      ]
+    )
+
+    return res.json({
+      ok: true,
+      importId,
+      uploadUrl,
+      deletedPreviousImports: existingIds.length,
+    })
+  } catch (e: any) {
+    console.error("replace import error:", e)
     return res.status(e?.status ?? 500).json({ error: e?.message ?? "error" })
   }
 })

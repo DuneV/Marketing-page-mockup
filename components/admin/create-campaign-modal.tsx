@@ -64,6 +64,9 @@ const campaignSchema = z.object({
   path: ["fechaFin"],
 })
 
+type CampaignModalForm = z.infer<typeof campaignSchema>
+
+
 interface CreateCampaignModalProps {
   isOpen: boolean
   onClose: () => void
@@ -90,7 +93,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
   const [isUploading, setIsUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-  const form = useForm<CampaignFormData & { productosAsociados: string; bucketPath?: string }>({
+  const form = useForm<CampaignModalForm>({
     resolver: zodResolver(campaignSchema),
     defaultValues: {
       nombre: "",
@@ -110,7 +113,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
     setUploadLog(prev => `${prev}${message}\n`)
   }
 
-  const handleSubmit = async (data: CampaignFormData & { productosAsociados: string; bucketPath?: string }) => {
+  const handleSubmit = async (data: CampaignModalForm) => {
     if (!currentUser) {
       toast.error("Usuario no autenticado")
       return

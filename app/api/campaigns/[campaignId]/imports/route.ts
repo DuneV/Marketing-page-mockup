@@ -31,3 +31,24 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ campaignId: 
     return NextResponse.json({ error: e?.message ?? "error" }, { status: 500 })
   }
 }
+
+export async function GET(req: Request, ctx: { params: Promise<{ campaignId: string }> }) {
+  try {
+    if (!BASE) return NextResponse.json({ error: "Missing IMPORT_API_BASE_URL" }, { status: 500 })
+    const auth = passthroughAuth(req)
+    const { campaignId } = await ctx.params
+
+    const upstream = await fetch(`${BASE}/imports/campaigns/${campaignId}`, {
+      headers: { Authorization: auth },
+      cache: "no-store",
+    })
+
+    const text = await upstream.text()
+    return new NextResponse(text, {
+      status: upstream.status,
+      headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },
+    })
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "error" }, { status: 500 })
+  }
+}

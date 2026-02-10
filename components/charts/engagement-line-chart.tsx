@@ -30,7 +30,11 @@ export default function EngagementLineChart() {
               color: "#1f2937",
             }}
             labelStyle={{ color: "#1f2937" }}
-            formatter={(value) => value.toLocaleString()}
+            formatter={(value) => {
+              if (typeof value === "number") return value.toLocaleString()
+              if (typeof value === "string") return value
+              return ""
+            }}
           />
           <Legend wrapperStyle={{ color: "#6b7280" }} />
           <Line

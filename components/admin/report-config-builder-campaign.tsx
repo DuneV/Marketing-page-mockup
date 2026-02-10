@@ -1,4 +1,3 @@
-// components/admin/report-config-builder-campaign.tsx
 "use client"
 
 import { useState, useEffect } from "react"
@@ -79,17 +78,27 @@ const ALL_CHART_TYPES: ChartType[] = [
 
 // Helpers de compatibilidad (por si tu ChartDefinition aún no tiene estos campos tipados)
 type MeasureType = "count" | "numeric"
-type ChartAgg = KPIOperation // reusamos tus operaciones: sum, mean, count, max, min, median, std, variance
+type ChartAgg = KPIOperation // sum, mean, count, max, min, median, std, variance
+
+type MetricAxis = "left" | "right"
+type MetricDef = { field: string; agg: ChartAgg; axis: MetricAxis }
+
 type AnyChart = ChartDefinition & {
   fuente?: string
   groupBy?: string
   seriesBy?: string
   labelField?: string
+
+  // legacy
   metric?: string
   metric2?: string
   agg?: ChartAgg
   measureType?: MeasureType
   countField?: string | "__rows__"
+
+  // new multi metrics
+  metrics?: MetricDef[]
+
   barOrientation?: "vertical" | "horizontal"
   barMode?: "grouped" | "stacked"
 }
@@ -102,16 +111,11 @@ function validateChart(chart: AnyChart) {
     if (!chart.groupBy) return "Este gráfico necesita un Group By (eje X)."
   }
 
-  // Scatter requiere 2 métricas (si lo manejas en tu renderer)
   if (t === "scatter") {
-    // permitimos:
-    // - numeric: metric + metric2
-    // - count: no tiene sentido para scatter, entonces forzamos numeric
     if (chart.measureType !== "numeric") return "Scatter requiere métrica numérica (activa 'Usar métrica numérica')."
     if (!chart.metric || !chart.metric2) return "Scatter necesita 2 métricas (X y Y)."
   }
 
-  // Para barras/torta/tabla: metric se interpreta como Y.
   const needsMetric = ["barras", "torta", "tabla", "spline", "area", "radar", "heatmap", "treemap", "funnel"].includes(t)
 
   if (needsMetric) {
@@ -119,12 +123,21 @@ function validateChart(chart: AnyChart) {
     if (mt === "count") {
       if (!chart.countField) return "Selecciona qué campo quieres contar (o Filas)."
     } else {
-      if (!chart.metric) return "Selecciona un campo numérico (métrica Y)."
-      if (!chart.agg) return "Selecciona una operación (sum/mean/etc)."
+      // ✅ si usa multi-métricas, con 1+ basta (y ya trae agg por métrica)
+      if (Array.isArray(chart.metrics) && chart.metrics.length > 0) {
+        for (const m of chart.metrics) {
+          if (!m?.field) return "Hay una métrica sin campo seleccionado."
+          if (!m?.agg) return "Hay una métrica sin operación (agg)."
+          if (!m?.axis) return "Hay una métrica sin eje (left/right)."
+        }
+      } else {
+        // legacy
+        if (!chart.metric) return "Selecciona un campo numérico (métrica Y)."
+        if (!chart.agg) return "Selecciona una operación (sum/mean/etc)."
+      }
     }
   }
 
-  // si agregas combo como nuevo ChartType:
   if ((t as any) === "combo") {
     if (!chart.groupBy || !chart.metric || !chart.metric2) return "Combo necesita Group By + 2 métricas."
   }
@@ -301,8 +314,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
       nombre: "Nuevo KPI",
       operacion: firstField?.type === "number" ? ("sum" as KPIOperation) : ("count" as KPIOperation),
       fuente: ((firstField?.name as DataSource) ?? ("unknown" as DataSource)) as DataSource,
-
-      // ✅ NUEVO: para KPIs count, por defecto cuenta filas
+      // ✅ para KPIs count, por defecto cuenta filas
       countField: "__rows__",
     }
 
@@ -351,43 +363,6 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
     setConfig({ ...config, filas: reordered })
   }
 
-  const addChartToRow = (rowId: string) => {
-    if (!config) return
-    const row = config.filas.find((r) => r.id === rowId)
-    if (!row) return
-
-    if (row.graficos.length >= DEFAULT_LIMITS.maxGraficosPorFila) {
-      alert(`Límite de gráficos por fila alcanzado (${DEFAULT_LIMITS.maxGraficosPorFila})`)
-      return
-    }
-
-    // Defaults: barras + count por filas, groupBy primer text si existe
-    const defaultGroupBy = (textFields[0]?.name ?? availableFields[0]?.name ?? "") as any
-
-    const newChart: AnyChart = {
-      id: crypto.randomUUID(),
-      tipo: ALL_CHART_TYPES[1] ?? ALL_CHART_TYPES[0], // barras por defecto si existe
-      titulo: "Nuevo Gráfico",
-      fuente: ((availableFields[0]?.name as DataSource) ?? ("unknown" as DataSource)) as DataSource,
-      columnas: 6 as BootstrapCol,
-
-      // ✅ nuevo
-      groupBy: defaultGroupBy || undefined,
-      measureType: "count",
-      countField: "__rows__",
-      agg: "sum",
-      metric: numericFields[0]?.name,
-      labelField: defaultGroupBy || undefined,
-      barOrientation: "vertical",
-      barMode: "grouped",
-    }
-
-    setConfig({
-      ...config,
-      filas: config.filas.map((r) => (r.id === rowId ? { ...r, graficos: [...r.graficos, newChart as any] } : r)),
-    })
-  }
-
   const updateChart = (rowId: string, chartId: string, updates: Partial<AnyChart>) => {
     if (!config) return
     setConfig({
@@ -411,6 +386,84 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
     })
   }
 
+  // ✅ Multi-métricas CRUD
+  const addMetricToChart = (rowId: string, chartId: string) => {
+    if (!config) return
+    const first = numericFields[0]?.name
+    if (!first) return
+
+    const chart = config.filas.find((r) => r.id === rowId)?.graficos.find((c) => c.id === chartId) as AnyChart | undefined
+    const current = (chart?.metrics ?? []) as MetricDef[]
+
+    const next: MetricDef[] = [
+      ...current,
+      { field: first, agg: ((current?.[0]?.agg ?? chart?.agg ?? "sum") as ChartAgg) || "sum", axis: "left" },
+    ]
+
+    updateChart(rowId, chartId, { measureType: "numeric", metrics: next } as any)
+  }
+
+  const updateMetric = (rowId: string, chartId: string, idx: number, patch: Partial<MetricDef>) => {
+    if (!config) return
+    const chart = config.filas.find((r) => r.id === rowId)?.graficos.find((c) => c.id === chartId) as AnyChart | undefined
+    const current = (chart?.metrics ?? []) as MetricDef[]
+    const next = current.map((m, i) => (i === idx ? { ...m, ...patch } : m))
+    updateChart(rowId, chartId, { metrics: next } as any)
+  }
+
+  const deleteMetric = (rowId: string, chartId: string, idx: number) => {
+    if (!config) return
+    const chart = config.filas.find((r) => r.id === rowId)?.graficos.find((c) => c.id === chartId) as AnyChart | undefined
+    const current = (chart?.metrics ?? []) as MetricDef[]
+    const next = current.filter((_, i) => i !== idx)
+    updateChart(rowId, chartId, { metrics: next } as any)
+  }
+
+  const addChartToRow = (rowId: string) => {
+    if (!config) return
+    const row = config.filas.find((r) => r.id === rowId)
+    if (!row) return
+
+    if (row.graficos.length >= DEFAULT_LIMITS.maxGraficosPorFila) {
+      alert(`Límite de gráficos por fila alcanzado (${DEFAULT_LIMITS.maxGraficosPorFila})`)
+      return
+    }
+
+    // Defaults: barras + count por filas, groupBy primer text si existe
+    const defaultGroupBy = (textFields[0]?.name ?? availableFields[0]?.name ?? "") as any
+
+    const newChart: AnyChart = {
+      id: crypto.randomUUID(),
+      tipo: ALL_CHART_TYPES[1] ?? ALL_CHART_TYPES[0], // barras por defecto si existe
+      titulo: "Nuevo Gráfico",
+      fuente: ((availableFields[0]?.name as DataSource) ?? ("unknown" as DataSource)) as DataSource,
+      columnas: 6 as BootstrapCol,
+
+      // X / group
+      groupBy: defaultGroupBy || undefined,
+      labelField: defaultGroupBy || undefined,
+
+      // Y default: count rows
+      measureType: "count",
+      countField: "__rows__",
+
+      // legacy numeric defaults
+      agg: "sum",
+      metric: numericFields[0]?.name,
+
+      // new multi metrics defaults (vacío)
+      metrics: [],
+
+      barOrientation: "vertical",
+      barMode: "grouped",
+    }
+
+    setConfig({
+      ...config,
+      filas: config.filas.map((r) => (r.id === rowId ? { ...r, graficos: [...r.graficos, newChart as any] } : r)),
+    })
+  }
+
   // -----------------------------
   // ✅ Save to API (GCS)
   // -----------------------------
@@ -419,7 +472,6 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
     setIsLoading(true)
 
     try {
-      // Validación rápida por gráfico (eje X / Y / count)
       const localErrors: string[] = []
       for (const fila of config.filas ?? []) {
         for (const ch of fila.graficos ?? []) {
@@ -816,12 +868,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                             <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
                               <div className="col-span-1 md:col-span-4">
                                 <Label className="text-xs">Nombre</Label>
-                                <Input
-                                  value={kpi.nombre}
-                                  onChange={(e) => updateKPI(kpi.id, { nombre: e.target.value })}
-                                  placeholder="Nombre del KPI"
-                                  className="h-8"
-                                />
+                                <Input value={kpi.nombre} onChange={(e) => updateKPI(kpi.id, { nombre: e.target.value })} placeholder="Nombre del KPI" className="h-8" />
                               </div>
 
                               <div className="col-span-1 md:col-span-4">
@@ -840,14 +887,11 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                     const field = availableFields.find((f) => f.name === value)
                                     const newOps = field ? getValidOperations(field.type) : ["count"]
                                     const currentOpValid = newOps.includes(kpi.operacion)
-
                                     const nextOp = (currentOpValid ? kpi.operacion : (newOps[0] as KPIOperation)) as KPIOperation
 
                                     updateKPI(kpi.id, {
                                       fuente: value as DataSource,
                                       operacion: nextOp,
-
-                                      // ✅ si seguimos en count, preserva/asegura countField
                                       countField: nextOp === "count" ? ((kpi as any).countField ?? "__rows__") : undefined,
                                     })
                                   }}
@@ -878,8 +922,6 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                     const op = value as KPIOperation
                                     updateKPI(kpi.id, {
                                       operacion: op,
-
-                                      // ✅ si es count, asegura countField; si no, lo limpia
                                       countField: op === "count" ? ((kpi as any).countField ?? "__rows__") : undefined,
                                     })
                                   }}
@@ -904,15 +946,11 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                               </div>
                             </div>
 
-                            {/* ✅ EXTRA PARAM: countField para KPIs cuando operacion === "count" */}
                             {kpi.operacion === "count" && (
                               <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
                                 <div className="col-span-1 md:col-span-8">
                                   <Label className="text-xs">Qué contar</Label>
-                                  <Select
-                                    value={String((kpi as any).countField ?? "__rows__")}
-                                    onValueChange={(value) => updateKPI(kpi.id, { countField: value as any })}
-                                  >
+                                  <Select value={String((kpi as any).countField ?? "__rows__")} onValueChange={(value) => updateKPI(kpi.id, { countField: value as any })}>
                                     <SelectTrigger className="h-8">
                                       <SelectValue />
                                     </SelectTrigger>
@@ -925,9 +963,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                       ))}
                                     </SelectContent>
                                   </Select>
-                                  <p className="text-[11px] text-muted-foreground mt-1">
-                                    Filas = total registros. Campo = cuenta registros donde ese campo no está vacío.
-                                  </p>
+                                  <p className="text-[11px] text-muted-foreground mt-1">Filas = total registros. Campo = cuenta registros donde ese campo no está vacío.</p>
                                 </div>
                               </div>
                             )}
@@ -992,6 +1028,11 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                               const groupableFields = textFields.length ? textFields : availableFields
                               const canToggleNumeric = numericFields.length > 0
 
+                              const showMultiMetrics =
+                                mt === "numeric" &&
+                                chart.tipo !== "scatter" &&
+                                ["barras", "spline", "area", "radar", "tabla", "heatmap", "treemap", "funnel"].includes(chart.tipo)
+
                               return (
                                 <div key={chart.id} className="border rounded p-2 sm:p-3 bg-muted/30 space-y-2">
                                   {err && (
@@ -1012,7 +1053,6 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                       <Select
                                         value={chart.tipo}
                                         onValueChange={(value) => {
-                                          // si cambia a scatter, forzamos numeric
                                           const nextType = value as ChartType
                                           const nextUpdates: Partial<AnyChart> = { tipo: nextType }
 
@@ -1091,13 +1131,10 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
 
                                   {/* ✅ CONFIG EJE X / Y */}
                                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-2">
-                                    {/* X: Group By */}
+                                    {/* X */}
                                     <div className="lg:col-span-4">
                                       <Label className="text-xs">Eje X (Group By)</Label>
-                                      <Select
-                                        value={chart.groupBy ?? ""}
-                                        onValueChange={(value) => updateChart(row.id, chart.id, { groupBy: value, labelField: chart.labelField ?? value })}
-                                      >
+                                      <Select value={chart.groupBy ?? ""} onValueChange={(value) => updateChart(row.id, chart.id, { groupBy: value, labelField: chart.labelField ?? value })}>
                                         <SelectTrigger className="h-8">
                                           <SelectValue placeholder="Seleccionar campo..." />
                                         </SelectTrigger>
@@ -1124,7 +1161,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                         <span className="text-xs text-muted-foreground">Usar métrica numérica</span>
                                         <Switch
                                           checked={mt === "numeric"}
-                                          disabled={!canToggleNumeric || chart.tipo === "scatter"} // scatter siempre numeric
+                                          disabled={!canToggleNumeric || chart.tipo === "scatter"}
                                           onCheckedChange={(checked) => {
                                             if (!canToggleNumeric) return
 
@@ -1134,6 +1171,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                                 agg: (chart.agg ?? "sum") as ChartAgg,
                                                 metric: chart.metric ?? numericFields[0]?.name,
                                                 countField: undefined,
+                                                metrics: (chart.metrics ?? []).length ? chart.metrics : [],
                                               })
                                             } else {
                                               updateChart(row.id, chart.id, {
@@ -1141,24 +1179,20 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                                 countField: chart.countField ?? "__rows__",
                                                 metric: undefined,
                                                 agg: undefined,
+                                                metrics: [],
                                               })
                                             }
                                           }}
                                         />
                                       </div>
-                                      {!canToggleNumeric && (
-                                        <p className="text-[11px] text-muted-foreground mt-1">No hay campos numéricos disponibles en el import.</p>
-                                      )}
+                                      {!canToggleNumeric && <p className="text-[11px] text-muted-foreground mt-1">No hay campos numéricos disponibles en el import.</p>}
                                     </div>
 
-                                    {/* Y: count or numeric */}
+                                    {/* Y */}
                                     {mt === "count" ? (
                                       <div className="lg:col-span-5">
                                         <Label className="text-xs">Eje Y (Conteo)</Label>
-                                        <Select
-                                          value={String(chart.countField ?? "__rows__")}
-                                          onValueChange={(value) => updateChart(row.id, chart.id, { measureType: "count", countField: value as any })}
-                                        >
+                                        <Select value={String(chart.countField ?? "__rows__")} onValueChange={(value) => updateChart(row.id, chart.id, { measureType: "count", countField: value as any })}>
                                           <SelectTrigger className="h-8">
                                             <SelectValue />
                                           </SelectTrigger>
@@ -1171,19 +1205,15 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                             ))}
                                           </SelectContent>
                                         </Select>
-                                        <p className="text-[11px] text-muted-foreground mt-1">
-                                          Ej: X=city, Y=promoter_or_seller_name → cuenta cuántos registros tienen ese campo por ciudad.
-                                        </p>
+                                        <p className="text-[11px] text-muted-foreground mt-1">Ej: X=city, Y=promoter → cuenta cuántos registros tienen ese campo por ciudad.</p>
                                       </div>
                                     ) : (
                                       <div className="lg:col-span-5">
+                                        {/* ✅ legacy single metric */}
                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                           <div>
-                                            <Label className="text-xs">Operación</Label>
-                                            <Select
-                                              value={String(chart.agg ?? "sum")}
-                                              onValueChange={(value) => updateChart(row.id, chart.id, { agg: value as any, measureType: "numeric" })}
-                                            >
+                                            <Label className="text-xs">Operación (legacy)</Label>
+                                            <Select value={String(chart.agg ?? "sum")} onValueChange={(value) => updateChart(row.id, chart.id, { agg: value as any, measureType: "numeric" })}>
                                               <SelectTrigger className="h-8">
                                                 <SelectValue />
                                               </SelectTrigger>
@@ -1198,11 +1228,8 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                           </div>
 
                                           <div>
-                                            <Label className="text-xs">Campo numérico (Eje Y)</Label>
-                                            <Select
-                                              value={String(chart.metric ?? "")}
-                                              onValueChange={(value) => updateChart(row.id, chart.id, { metric: value, measureType: "numeric" })}
-                                            >
+                                            <Label className="text-xs">Campo numérico (legacy)</Label>
+                                            <Select value={String(chart.metric ?? "")} onValueChange={(value) => updateChart(row.id, chart.id, { metric: value, measureType: "numeric" })}>
                                               <SelectTrigger className="h-8">
                                                 <SelectValue placeholder="Seleccionar..." />
                                               </SelectTrigger>
@@ -1222,7 +1249,6 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                           </div>
                                         </div>
 
-                                        {/* Scatter: metric2 */}
                                         {chart.tipo === "scatter" && (
                                           <div className="mt-2">
                                             <Label className="text-xs">Campo numérico 2 (Scatter Y)</Label>
@@ -1244,14 +1270,93 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                     )}
                                   </div>
 
+                                  {/* ✅ Multi-métricas UI */}
+                                  {showMultiMetrics && (
+                                    <div className="border rounded bg-background p-3 space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <div>
+                                          <p className="text-sm font-medium">Métricas (multi-eje)</p>
+                                          <p className="text-xs text-muted-foreground">Agrega todas las métricas que quieras. Cada una puede ir en eje izquierdo o derecho.</p>
+                                        </div>
+                                        <Button size="sm" variant="outline" onClick={() => addMetricToChart(row.id, chart.id)} disabled={!numericFields.length}>
+                                          <Plus className="h-4 w-4 mr-2" />
+                                          Agregar métrica
+                                        </Button>
+                                      </div>
+
+                                      {(chart.metrics ?? []).length === 0 ? (
+                                        <p className="text-xs text-muted-foreground">No hay métricas aún. Agrega una para que el chart renderice varias series.</p>
+                                      ) : (
+                                        <div className="space-y-2">
+                                          {(chart.metrics ?? []).map((m, idx) => (
+                                            <div key={idx} className="grid grid-cols-1 lg:grid-cols-12 gap-2 border rounded p-2">
+                                              <div className="lg:col-span-5">
+                                                <Label className="text-xs">Campo</Label>
+                                                <Select value={String(m.field)} onValueChange={(value) => updateMetric(row.id, chart.id, idx, { field: value })}>
+                                                  <SelectTrigger className="h-8">
+                                                    <SelectValue />
+                                                  </SelectTrigger>
+                                                  <SelectContent>
+                                                    {numericFields.map((f) => (
+                                                      <SelectItem key={f.name} value={f.name}>
+                                                        <div className="flex items-center gap-2">
+                                                          <span>{safeLabel(f.name)}</span>
+                                                          <Badge variant="outline" className="text-xs">
+                                                            {f.type}
+                                                          </Badge>
+                                                        </div>
+                                                      </SelectItem>
+                                                    ))}
+                                                  </SelectContent>
+                                                </Select>
+                                              </div>
+
+                                              <div className="lg:col-span-4">
+                                                <Label className="text-xs">Operación</Label>
+                                                <Select value={String(m.agg ?? "sum")} onValueChange={(value) => updateMetric(row.id, chart.id, idx, { agg: value as any })}>
+                                                  <SelectTrigger className="h-8">
+                                                    <SelectValue />
+                                                  </SelectTrigger>
+                                                  <SelectContent>
+                                                    {getNumericAggOps().map((op) => (
+                                                      <SelectItem key={op} value={op}>
+                                                        {KPI_OPERATION_LABELS[op as KPIOperation] ?? op}
+                                                      </SelectItem>
+                                                    ))}
+                                                  </SelectContent>
+                                                </Select>
+                                              </div>
+
+                                              <div className="lg:col-span-2">
+                                                <Label className="text-xs">Eje</Label>
+                                                <Select value={String(m.axis ?? "left")} onValueChange={(value) => updateMetric(row.id, chart.id, idx, { axis: value as any })}>
+                                                  <SelectTrigger className="h-8">
+                                                    <SelectValue />
+                                                  </SelectTrigger>
+                                                  <SelectContent>
+                                                    <SelectItem value="left">Left</SelectItem>
+                                                    <SelectItem value="right">Right</SelectItem>
+                                                  </SelectContent>
+                                                </Select>
+                                              </div>
+
+                                              <div className="lg:col-span-1 flex items-end">
+                                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => deleteMetric(row.id, chart.id, idx)}>
+                                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                                </Button>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
                                   {/* Opcionales: Series / Label / orientación */}
                                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-2">
                                     <div className="lg:col-span-4">
                                       <Label className="text-xs">Series (opcional)</Label>
-                                      <Select
-                                        value={String(chart.seriesBy ?? "")}
-                                        onValueChange={(value) => updateChart(row.id, chart.id, { seriesBy: value === "__none__" ? undefined : value })}
-                                      >
+                                      <Select value={String(chart.seriesBy ?? "")} onValueChange={(value) => updateChart(row.id, chart.id, { seriesBy: value === "__none__" ? undefined : value })}>
                                         <SelectTrigger className="h-8">
                                           <SelectValue placeholder="Sin series" />
                                         </SelectTrigger>
@@ -1269,12 +1374,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
 
                                     <div className="lg:col-span-4">
                                       <Label className="text-xs">Label field (opcional)</Label>
-                                      <Select
-                                        value={String(chart.labelField ?? "__auto__")}
-                                        onValueChange={(value) =>
-                                          updateChart(row.id, chart.id, { labelField: value === "__auto__" ? (chart.groupBy ?? undefined) : value })
-                                        }
-                                      >
+                                      <Select value={String(chart.labelField ?? "__auto__")} onValueChange={(value) => updateChart(row.id, chart.id, { labelField: value === "__auto__" ? (chart.groupBy ?? undefined) : value })}>
                                         <SelectTrigger className="h-8">
                                           <SelectValue />
                                         </SelectTrigger>
@@ -1291,10 +1391,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
 
                                     <div className="lg:col-span-2">
                                       <Label className="text-xs">Orientación</Label>
-                                      <Select
-                                        value={String(chart.barOrientation ?? "vertical")}
-                                        onValueChange={(value) => updateChart(row.id, chart.id, { barOrientation: value as any })}
-                                      >
+                                      <Select value={String(chart.barOrientation ?? "vertical")} onValueChange={(value) => updateChart(row.id, chart.id, { barOrientation: value as any })}>
                                         <SelectTrigger className="h-8">
                                           <SelectValue />
                                         </SelectTrigger>

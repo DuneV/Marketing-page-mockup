@@ -1,4 +1,4 @@
-// Schema de validación para campañas en Firestore
+// lib\schemas\campaign.ts
 
 import { z } from "zod"
 
@@ -20,7 +20,15 @@ export const CampaignDocSchema = z.object({
   presupuesto: z.number(),
   descripcion: z.string(),
   objetivos: z.string().optional(),
-  productosAsociados: z.array(z.string()),
+  productosAsociados: z.preprocess(
+      (v) => {
+        if (typeof v === "string") {
+          return v.split(",").map(s => s.trim()).filter(Boolean)
+        }
+        return v
+      },
+      z.array(z.string())
+    ).default([]),
   bucketPath: z.string().optional(), // ✅ Ruta del bucket GCS para la campaña
   createdAt: z.any(),
   updatedAt: z.any(),

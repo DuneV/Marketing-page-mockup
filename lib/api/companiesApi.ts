@@ -1,6 +1,4 @@
 // lib/api/companiesApi.ts
-
-
 import { auth } from "@/lib/firebase/client"
 
 async function authHeaders() {
@@ -11,6 +9,29 @@ async function authHeaders() {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
   }
+}
+
+// ✅ evita /undefined
+function assertCompanyId(companyId: any) {
+  const id = typeof companyId === "string" ? companyId.trim() : ""
+  if (!id || id === "undefined" || id === "null") {
+    throw new Error("INVALID_COMPANY_ID_CLIENT")
+  }
+  return id
+}
+
+// ✅ parsea json si puede, si no devuelve texto
+async function safeJsonOrText(res: Response) {
+  const ct = res.headers.get("content-type") ?? ""
+  const text = await res.text()
+  if (ct.includes("application/json")) {
+    try {
+      return JSON.parse(text)
+    } catch {
+      return { raw: text }
+    }
+  }
+  return { raw: text }
 }
 
 type CreateCompanyWithUserInput =
@@ -30,6 +51,7 @@ function normalizeCreateCompanyPayload(input: CreateCompanyWithUserInput) {
         : Array.isArray(company.productos)
           ? company.productos
           : []
+
     return {
       company: {
         name: company.nombre,
@@ -39,13 +61,14 @@ function normalizeCreateCompanyPayload(input: CreateCompanyWithUserInput) {
         quantity: company.cantidad,
         status: company.estado,
         username: company.username,
+        nit: company.nit ?? null,
       },
       user: {
         email: user.email,
         password: user.password,
         nombre: user.nombre,
         cedula: user.cedula,
-      }
+      },
     }
   }
 
@@ -66,17 +89,16 @@ function normalizeCreateCompanyPayload(input: CreateCompanyWithUserInput) {
       quantity: anyIn.cantidad,
       status: anyIn.estado,
       username: anyIn.username,
+      nit: anyIn.nit ?? null,
     },
     user: {
       email: anyIn.email ?? anyIn.userEmail,
       password: anyIn.password ?? anyIn.userPassword ?? anyIn.contraseña,
       nombre: anyIn.userNombre,
       cedula: anyIn.cedula,
-    }
+    },
   }
 }
-
-// NO PROBADA
 
 export async function apiGetAllCompanies() {
   const headers = await authHeaders()
@@ -85,56 +107,84 @@ export async function apiGetAllCompanies() {
     headers,
     cache: "no-store",
   })
-  if (!res.ok) throw new Error(await res.text())
+
+  if (!res.ok) {
+    const err = await safeJsonOrText(res)
+    throw new Error((err as any)?.error ?? (err as any)?.raw ?? `HTTP_${res.status}`)
+  }
+
   return res.json()
 }
-
-// PROBANDO
 
 export async function apiCreateCompanyWithUser(payload: CreateCompanyWithUserInput) {
   const headers = await authHeaders()
   const body = normalizeCreateCompanyPayload(payload)
-
-  console.log("CREATE COMPANY BODY SENT =>", JSON.stringify(body, null, 2))
 
   const res = await fetch("/api/admin/companies", {
     method: "POST",
     headers,
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(await res.text())
+
+  if (!res.ok) {
+    const err = await safeJsonOrText(res)
+    throw new Error((err as any)?.error ?? (err as any)?.raw ?? `HTTP_${res.status}`)
+  }
+
   return res.json() as Promise<{ ok: true; companyId: string; uid: string }>
 }
 
 export async function apiDeleteCompany(companyId: string) {
   const headers = await authHeaders()
-  const res = await fetch(`/api/admin/companies/${encodeURIComponent(companyId)}`, {
+  const id = assertCompanyId(companyId)
+
+  const res = await fetch(`/api/admin/companies/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers,
   })
-  if (!res.ok) throw new Error(await res.text())
+
+  if (!res.ok) {
+    const err = await safeJsonOrText(res)
+    throw new Error((err as any)?.error ?? (err as any)?.raw ?? `HTTP_${res.status}`)
+  }
+
   return res.json()
 }
 
 export async function apiDecrementCompanyCampaignCount(companyId: string, budget: number) {
   const headers = await authHeaders()
-  const res = await fetch(`/api/admin/companies/${encodeURIComponent(companyId)}/campaign-stats`, {
+  const id = assertCompanyId(companyId)
+
+  const res = await fetch(`/api/admin/companies/${encodeURIComponent(id)}/campaign-stats`, {
     method: "PATCH",
     headers,
     body: JSON.stringify({ deltaCampaigns: -1, deltaBudget: -Math.abs(budget || 0) }),
   })
-  if (!res.ok) throw new Error(await res.text())
+
+  if (!res.ok) {
+    const err = await safeJsonOrText(res)
+    throw new Error((err as any)?.error ?? (err as any)?.raw ?? `HTTP_${res.status}`)
+  }
+
   return res.json()
 }
+
 export async function apiGetCompany(companyId: string) {
   const headers = await authHeaders()
-  const res = await fetch(`/api/admin/companies/${encodeURIComponent(companyId)}`, {
+  const id = assertCompanyId(companyId)
+
+  const res = await fetch(`/api/admin/companies/${encodeURIComponent(id)}`, {
     method: "GET",
     headers,
     cache: "no-store",
   })
-  if (!res.ok) throw new Error(await res.text())
-  return res.json()
+
+  if (!res.ok) {
+    const err = await safeJsonOrText(res)
+    throw new Error((err as any)?.error ?? (err as any)?.raw ?? `HTTP_${res.status}`)
+  }
+
+  return res.json() // { company, user }
 }
 
 export async function apiUpdateCompanyCampaignStats(
@@ -142,11 +192,54 @@ export async function apiUpdateCompanyCampaignStats(
   input: { deltaCampaigns: number; deltaBudget: number }
 ) {
   const headers = await authHeaders()
-  const res = await fetch(`/api/admin/companies/${encodeURIComponent(companyId)}/campaign-stats`, {
+  const id = assertCompanyId(companyId)
+
+  const res = await fetch(`/api/admin/companies/${encodeURIComponent(id)}/campaign-stats`, {
     method: "PATCH",
     headers,
     body: JSON.stringify(input),
   })
-  if (!res.ok) throw new Error(await res.text())
+
+  if (!res.ok) {
+    const err = await safeJsonOrText(res)
+    throw new Error((err as any)?.error ?? (err as any)?.raw ?? `HTTP_${res.status}`)
+  }
+
+  return res.json()
+}
+
+export async function apiUpdateCompanySql(
+  companyId: string,
+  patch: {
+    name?: string
+    type?: string
+    size?: string
+    status?: string
+    products?: string[]
+    nit?: string | null
+    user?: {
+      uid?: string
+      email?: string
+      password?: string
+      nombre?: string
+      cedula?: string
+    }
+  }
+) {
+  const headers = await authHeaders()
+  const id = assertCompanyId(companyId)
+
+  const res = await fetch(`/api/admin/companies/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify(patch),
+    cache: "no-store",
+  })
+
+  if (!res.ok) {
+    const err = await safeJsonOrText(res)
+    throw new Error((err as any)?.error ?? (err as any)?.raw ?? `HTTP_${res.status}`)
+  }
+
   return res.json()
 }

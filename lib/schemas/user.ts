@@ -11,7 +11,9 @@ export const UserDocSchema = z.object({
   role: RoleSchema,
   empresaActualId: z.string().nullable().optional(),
   campanaActualId: z.string().nullable().optional(),
-  unidadesProductos: z.record(z.number().int().nonnegative()).default({}),
+  unidadesProductos: z
+  .record(z.string(), z.number().int().nonnegative())
+  .default({}),
 
   createdAt: z.any().optional(),
   updatedAt: z.any().optional(),

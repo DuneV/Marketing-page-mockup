@@ -40,6 +40,9 @@ const createCompanyWithUserSchema = z.object({
   tipo: z.string().min(2, "Tipo requerido"),
   tamaño: z.enum(tamaños, { message: "Selecciona un tamaño" }),
 
+  // ✅ NIT (opcional)
+  nit: z.string().optional().default(""),
+
   // ✅ productos como lista real
   productos: z
     .string()
@@ -64,6 +67,7 @@ export type CreateCompanyWithUserPayload = {
     tipo: string
     tamaño?: string
     estado?: "activa" | "inactiva"
+    nit?: string | null
     productos?: string[]
     cantidad?: number
     username?: string
@@ -91,6 +95,8 @@ export function CreateCompanyModal({ isOpen, onClose, onSubmit }: CreateCompanyM
       nombre: "",
       tipo: "",
       tamaño: "mediano",
+      nit: "",
+
       productos: "" as any, // porque en schema entra string pero sale string[]
       cantidad: 0,
       username: "",
@@ -104,12 +110,12 @@ export function CreateCompanyModal({ isOpen, onClose, onSubmit }: CreateCompanyM
   })
 
   const handleValidSubmit = async (data: CreateCompanyWithUserFormData) => {
-    // ✅ aquí data.productos ya es string[]
     const payload: CreateCompanyWithUserPayload = {
       company: {
         nombre: data.nombre,
         tipo: data.tipo,
         tamaño: data.tamaño,
+        nit: data.nit?.trim() ? data.nit.trim() : null,
         productos: data.productos,
         cantidad: data.cantidad,
         username: data.username?.trim() ? data.username.trim() : undefined,
@@ -130,14 +136,12 @@ export function CreateCompanyModal({ isOpen, onClose, onSubmit }: CreateCompanyM
       form.reset()
       onClose()
     } catch (e: any) {
-      // ✅ NO cerrar modal si falla API
       console.error("Create company failed:", e)
       toast.error(e?.message ?? "Error al crear empresa")
     }
   }
 
   const handleInvalidSubmit = () => {
-    // ✅ evita “no pasa nada”
     toast.error("Revisa los campos marcados en rojo")
   }
 
@@ -190,6 +194,25 @@ export function CreateCompanyModal({ isOpen, onClose, onSubmit }: CreateCompanyM
                 />
               </div>
 
+              {/* ✅ NIT */}
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="nit"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>NIT (opcional)</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Ej: 900123456-7" {...field} value={field.value ?? ""} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div /> {/* spacer para mantener el grid */}
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
@@ -237,7 +260,6 @@ export function CreateCompanyModal({ isOpen, onClose, onSubmit }: CreateCompanyM
                   <FormItem>
                     <FormLabel>Productos (separados por coma)</FormLabel>
                     <FormControl>
-                      {/* field.value aquí puede ser string[] (post-transform), así que lo mostramos como string */}
                       <Textarea
                         placeholder="Ej: Águila, Poker, Club Colombia"
                         rows={2}

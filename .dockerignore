@@ -1,0 +1,35 @@
+# Dependencies
+node_modules
+
+# Next.js build outputs
+.next
+out
+.vercel
+
+# Git
+.git
+
+# Firebase
+.firebase
+firebase-debug.log
+firestore-debug.log
+
+# Logs
+npm-debug.log
+yarn-error.log
+*.log
+
+# Env files (no subir secretos al build context)
+.env*
+*.yaml
+# Docs
+README.md
+readme.md
+CLAUDE.md
+
+# IDE/OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+services

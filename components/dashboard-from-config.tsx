@@ -11,10 +11,9 @@ import {
   AreaChart, Area,
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
   ScatterChart, Scatter, ZAxis,
-  ComposedChart
 } from "recharts"
 
-import { Download, TrendingUp, Users, Activity, Eye, Filter } from "lucide-react"
+import { Download, TrendingUp, Users, Activity, Eye } from "lucide-react"
 
 import type { ReportConfiguration } from "@/types/report-config"
 
@@ -31,16 +30,10 @@ type Operator =
   | "before" | "after"
 
 function isEmptyValor(op: Operator, v: any) {
-  // Valores claramente vacíos
   if (v === null || v === undefined) return true
-  
-  // String vacío o solo espacios
   if (typeof v === "string" && v.trim() === "") return true
-  
-  // Array vacío
   if (Array.isArray(v) && v.length === 0) return true
-  
-  // Objeto between con ambos campos vacíos
+
   if (op === "between" && typeof v === "object" && v && !Array.isArray(v)) {
     const a = v?.inicio
     const b = v?.fin
@@ -48,7 +41,7 @@ function isEmptyValor(op: Operator, v: any) {
     const eb = b == null || String(b).trim() === ""
     return ea && eb
   }
-  
+
   return false
 }
 
@@ -57,6 +50,33 @@ const KPI_ICONS = {
   impulsos: Users,
   promedio: Activity,
   conversion: Eye,
+}
+
+function pickMetricFields(ch: any, data: any[]) {
+  // 1) Nuevo: metrics[]
+  if (Array.isArray(ch?.metrics) && ch.metrics.length > 0) {
+    return ch.metrics.map((m: any) => ({
+      field: String(m.field),
+      axis: (m.axis === "right" ? "right" : "left") as "left" | "right",
+    }))
+  }
+
+  // 2) legacy numeric: metric
+  if (ch?.measureType === "numeric" && ch?.metric) {
+    return [{ field: String(ch.metric), axis: "left" as const }]
+  }
+
+  // 3) count default: value
+  if (data?.[0] && "value" in data[0]) {
+    return [{ field: "value", axis: "left" as const }]
+  }
+
+  // 4) fallback: keys numéricas
+  const first = data?.[0]
+  if (!first) return []
+  return Object.keys(first)
+    .filter(k => !["name", "date", "series", "__axis__"].includes(k))
+    .map(k => ({ field: k, axis: "left" as const }))
 }
 
 export function DashboardFromConfig({ config }: { config: ReportConfiguration }) {
@@ -70,7 +90,6 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
   const [error, setError] = useState<string | null>(null)
   const [filterOptions, setFilterOptions] = useState<FilterOption[]>([])
 
-  // Filtros UI
   const initialConditions = useMemo<FilterCondition[]>(() => {
     const cs = (config?.filtros?.condiciones ?? []) as any[]
     return cs.map(c => ({
@@ -96,49 +115,41 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
   }
 
   async function run(aplicar: boolean) {
-  setLoading(true)
-  setError(null)
-  try {
-    const condicionesParaBackend = aplicar
-      ? uiConditions.filter(c => {
-          // Filtrar condiciones que tienen campo y operador válidos
-          if (!c?.campo || !c?.operador) return false
-          
-          // Filtrar condiciones con valores vacíos
-          if (isEmptyValor(c.operador as any, c.valor)) return false
-          
-          return true
-        })
-      : []
+    setLoading(true)
+    setError(null)
+    try {
+      const condicionesParaBackend = aplicar
+        ? uiConditions.filter(c => {
+            if (!c?.campo || !c?.operador) return false
+            if (isEmptyValor(c.operador as any, c.valor)) return false
+            return true
+          })
+        : []
 
-    console.log("🔍 Condiciones a enviar:", condicionesParaBackend)
+      const payload: any = {
+        ...config,
+        filtros: {
+          ...(config.filtros ?? {}),
+          aplicar,
+          condiciones: condicionesParaBackend,
+        },
+      }
 
-    const payload: any = {
-      ...config,
-      filtros: {
-        ...(config.filtros ?? {}),
-        aplicar,
-        condiciones: condicionesParaBackend,
-      },
+      const r = await runCampaignReport(config.campaignId, payload)
+      setResult(r)
+    } catch (e: any) {
+      console.error("Error en run:", e)
+      setError(e?.message ?? "Error")
+    } finally {
+      setLoading(false)
     }
-
-    const r = await runCampaignReport(config.campaignId, payload)
-    setResult(r)
-  } catch (e: any) {
-    console.error("Error en run:", e)
-    setError(e?.message ?? "Error")
-  } finally {
-    setLoading(false)
   }
-}
 
   useEffect(() => {
     run(false)
     loadFilterOptions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.campaignId])
-
-  // Cargar opciones de filtros usando Server Action
 
   async function loadFilterOptions() {
     if (!initialConditions.length) return
@@ -147,11 +158,7 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
       const fields = initialConditions.map(c => c.campo).filter(Boolean)
       if (!fields.length) return
 
-      console.log("📊 Loading filter options for fields:", fields)
-
       const result = await getCampaignFilterOptions(config.campaignId, fields)
-
-      console.log("Filter options received:", result.options)
 
       const formatted: FilterOption[] = Object.entries(result.options ?? {}).map(([campo, opts]) => ({
         campo,
@@ -162,13 +169,11 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
       }))
 
       setFilterOptions(formatted)
-      console.log("✅ Filter options set:", formatted.length, "fields")
     } catch (e: any) {
       console.error("❌ Error loading filter options:", e)
       setFilterOptions([])
     }
   }
-
 
   const kpiCards = useMemo(() => {
     if (!result) return []
@@ -203,310 +208,320 @@ export function DashboardFromConfig({ config }: { config: ReportConfiguration })
   if (!result) return null
 
   return (
-  <div className="w-full flex justify-center">
-    <div className="w-full max-w-7xl px-4">
-      {/* TODO tu contenido actual va aquí */}
-    <>
-      <style>{`
-        @media print {
-          .no-print { display: none !important; }
-          body { background: white !important; }
-        }
-      `}</style>
+    <div className="w-full flex justify-center">
+      <div className="w-full max-w-7xl px-4">
+        <>
+          <style>{`
+            @media print {
+              .no-print { display: none !important; }
+              body { background: white !important; }
+            }
+          `}</style>
 
-      {/* Header */}
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">
-            {config.campaignNombre || "Dashboard de Activaciones"}
-          </h1>
-          {config.empresaNombre && (
-            <p className="text-sm text-muted-foreground mt-1">{config.empresaNombre}</p>
-          )}
-        </div>
-        <div className="flex gap-3 no-print">
-          <button
-            onClick={handlePrint}
-            className="px-4 py-2 rounded-lg flex items-center gap-2 transition-all hover:scale-105 bg-primary text-primary-foreground"
-          >
-            <Download size={20} />
-            Generar Reporte
-          </button>
-        </div>
-      </div>
-
-      {/* Filtros */}
-      {uiConditions.length > 0 && (
-        <DashboardFiltersBar
-          conditions={uiConditions}
-          filterOptions={filterOptions}
-          loading={loading}
-          error={error}
-          onApply={() => run(true)}
-          onClear={() => {
-            setUiConditions(initialConditions)
-            run(false)
-          }}
-          onChangeValor={setValor}
-        />
-      )}
-
-      {/* KPI Cards */}
-      {kpiCards.length > 0 && (
-      <section className="mb-8">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {kpiCards.map((kpi, idx) => {
-            const IconComponent =
-              Object.values(KPI_ICONS)[idx % Object.keys(KPI_ICONS).length]
-
-            return (
-              <div
-                key={kpi.id}
-                className="p-6 rounded-xl bg-card border border-border shadow-md"
-              >
-                <div className="mb-3">
-                  <div className="inline-flex p-3 rounded-lg bg-primary text-primary-foreground">
-                    <IconComponent size={22} />
-                  </div>
-                </div>
-
-                <p className="text-sm font-medium text-muted-foreground uppercase">
-                  {kpi.nombre}
-                </p>
-
-                <p className="text-3xl font-bold mt-1">
-                  {Number(kpi.value).toLocaleString()}
-                </p>
-              </div>
-            )
-          })}
-        </div>
-      </section>
-    )}
-
-      {/* Filas de Gráficos */}
-      {(config.filas ?? [])
-        .slice()
-        .sort((a, b) => a.orden - b.orden)
-        .map(row => (
-          <section key={row.id} className="mb-8">
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {row.graficos.map(ch => {
-                const data = result.charts?.[ch.id] ?? []
-                const colSpan =
-                  ch.columnas === 12 ? "lg:col-span-12" :
-                  ch.columnas === 6 ? "lg:col-span-6" :
-                  ch.columnas === 4 ? "lg:col-span-4" :
-                  ch.columnas === 3 ? "lg:col-span-3" :
-                  "lg:col-span-6"
-
-                return (
-                  <div
-                    key={ch.id}
-                    className={`p-6 rounded-lg shadow-lg bg-card border border-border ${colSpan}`}
-                  >
-                    <h3 className="text-xl font-bold mb-4 text-card-foreground">
-                      {ch.titulo}
-                    </h3>
-
-                    {ch.tipo === "barras" && (
-                      <ResponsiveContainer width="100%" height={320}>
-                        <BarChart data={data}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-                          <XAxis dataKey="name" stroke="#888" />
-                          <YAxis stroke="#888" />
-                          <Tooltip
-                            contentStyle={{
-                              backgroundColor: "#ffffff",
-                              border: "1px solid #e5e7eb",
-                              color: "#1f2937",
-                            }}
-                          />
-                          <Legend />
-                          <Bar dataKey="value" fill={COLORS[0]} name="Valor" />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    )}
-
-                    {ch.tipo === "torta" && (
-                      <ResponsiveContainer width="100%" height={320}>
-                        <PieChart>
-                          <Pie 
-                            data={data} 
-                            dataKey="value" 
-                            nameKey="name" 
-                            cx="50%" 
-                            cy="50%" 
-                            outerRadius={100} 
-                            label
-                          >
-                            {data.map((_: any, idx: number) => (
-                              <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
-                            ))}
-                          </Pie>
-                          <Tooltip
-                            contentStyle={{
-                              backgroundColor: "#ffffff",
-                              border: "1px solid #e5e7eb",
-                              color: "#1f2937",
-                            }}
-                          />
-                          <Legend />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    )}
-
-                    {ch.tipo === "spline" && (
-                      <ResponsiveContainer width="100%" height={320}>
-                        <LineChart data={data}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-                          <XAxis dataKey="date" stroke="#888" />
-                          <YAxis stroke="#888" />
-                          <Tooltip
-                            contentStyle={{
-                              backgroundColor: "#ffffff",
-                              border: "1px solid #e5e7eb",
-                              color: "#1f2937",
-                            }}
-                          />
-                          <Legend />
-                          <Line 
-                            type="monotone" 
-                            dataKey="value" 
-                            stroke={COLORS[0]} 
-                            strokeWidth={2} 
-                            name="Valor"
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    )}
-
-                    {ch.tipo === "area" && (
-                      <ResponsiveContainer width="100%" height={320}>
-                        <AreaChart data={data}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-                          <XAxis dataKey="date" stroke="#888" />
-                          <YAxis stroke="#888" />
-                          <Tooltip
-                            contentStyle={{
-                              backgroundColor: "#ffffff",
-                              border: "1px solid #e5e7eb",
-                              color: "#1f2937",
-                            }}
-                          />
-                          <Legend />
-                          <Area 
-                            type="monotone" 
-                            dataKey="value" 
-                            fill={COLORS[0]} 
-                            stroke={COLORS[0]} 
-                            fillOpacity={0.25} 
-                            strokeWidth={2}
-                            name="Valor"
-                          />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    )}
-
-                    {ch.tipo === "radar" && (
-                      <ResponsiveContainer width="100%" height={320}>
-                        <RadarChart data={data}>
-                          <PolarGrid stroke="#444" />
-                          <PolarAngleAxis dataKey="name" stroke="#888" />
-                          <PolarRadiusAxis stroke="#888" />
-                          <Radar 
-                            name="Valor" 
-                            dataKey="value" 
-                            stroke={COLORS[0]} 
-                            fill={COLORS[0]} 
-                            fillOpacity={0.3} 
-                          />
-                          <Legend />
-                          <Tooltip
-                            contentStyle={{
-                              backgroundColor: "#ffffff",
-                              border: "1px solid #e5e7eb",
-                              color: "#1f2937",
-                            }}
-                          />
-                        </RadarChart>
-                      </ResponsiveContainer>
-                    )}
-
-                    {ch.tipo === "scatter" && (
-                      <ResponsiveContainer width="100%" height={320}>
-                        <ScatterChart>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-                          <XAxis dataKey="x" name="X" stroke="#888" />
-                          <YAxis dataKey="y" name="Y" stroke="#888" />
-                          <ZAxis dataKey="z" range={[100, 1000]} name="Tamaño" />
-                          <Tooltip
-                            cursor={{ strokeDasharray: "3 3" }}
-                            contentStyle={{
-                              backgroundColor: "#ffffff",
-                              border: "1px solid #e5e7eb",
-                              color: "#1f2937",
-                            }}
-                          />
-                          <Legend />
-                          <Scatter name="Datos" data={data} fill={COLORS[4]} />
-                        </ScatterChart>
-                      </ResponsiveContainer>
-                    )}
-
-                    {ch.tipo === "tabla" && (
-                      <div className="overflow-auto max-h-[320px]">
-                        <table className="w-full text-sm">
-                          <thead className="bg-muted sticky top-0">
-                            <tr>
-                              {data[0] && Object.keys(data[0]).map((key) => (
-                                <th key={key} className="px-4 py-2 text-left font-medium">
-                                  {key}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {data.map((row: any, idx: number) => (
-                              <tr key={idx} className="border-t border-border">
-                                {Object.values(row).map((val: any, i: number) => (
-                                  <td key={i} className="px-4 py-2">
-                                    {typeof val === 'number' ? val.toLocaleString() : String(val)}
-                                  </td>
-                                ))}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-
-                    {!(["barras", "torta", "spline", "area", "radar", "scatter", "tabla"] as string[]).includes(ch.tipo) && (
-                      <div className="text-sm text-muted-foreground">
-                        Tipo de gráfico <strong>{ch.tipo}</strong> aún no implementado. 
-                        Dataset: {data.length} filas.
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
+          {/* Header */}
+          <div className="flex justify-between items-center mb-8">
+            <div>
+              <h1 className="text-3xl font-bold text-foreground">
+                {config.campaignNombre || "Dashboard de Activaciones"}
+              </h1>
+              {config.empresaNombre && (
+                <p className="text-sm text-muted-foreground mt-1">{config.empresaNombre}</p>
+              )}
             </div>
-          </section>
-        ))}
+            <div className="flex gap-3 no-print">
+              <button
+                onClick={handlePrint}
+                className="px-4 py-2 rounded-lg flex items-center gap-2 transition-all hover:scale-105 bg-primary text-primary-foreground"
+              >
+                <Download size={20} />
+                Generar Reporte
+              </button>
+            </div>
+          </div>
 
-      {/* Footer con información */}
-      {result.rowCount !== undefined && (
-        <section className="mt-8 p-4 rounded-lg bg-muted/50 border border-border">
-          <p className="text-sm text-muted-foreground text-center">
-            Dashboard generado con <strong>{result.rowCount}</strong> registros
-            {config.filtros?.fechas && (
-              <> • Período: {config.filtros.fechas.inicio} - {config.filtros.fechas.fin}</>
-            )}
-          </p>
-        </section>
-      )}
-    </>
-     </div>
-  </div>
+          {/* Filtros */}
+          {uiConditions.length > 0 && (
+            <DashboardFiltersBar
+              conditions={uiConditions}
+              filterOptions={filterOptions}
+              loading={loading}
+              error={error}
+              onApply={() => run(true)}
+              onClear={() => {
+                setUiConditions(initialConditions)
+                run(false)
+              }}
+              onChangeValor={setValor}
+            />
+          )}
+
+          {/* KPI Cards */}
+          {kpiCards.length > 0 && (
+            <section className="mb-8">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                {kpiCards.map((kpi, idx) => {
+                  const IconComponent = Object.values(KPI_ICONS)[idx % Object.keys(KPI_ICONS).length]
+                  return (
+                    <div key={kpi.id} className="p-6 rounded-xl bg-card border border-border shadow-md">
+                      <div className="mb-3">
+                        <div className="inline-flex p-3 rounded-lg bg-primary text-primary-foreground">
+                          <IconComponent size={22} />
+                        </div>
+                      </div>
+
+                      <p className="text-sm font-medium text-muted-foreground uppercase">{kpi.nombre}</p>
+                      <p className="text-3xl font-bold mt-1">{Number(kpi.value).toLocaleString()}</p>
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* Filas de Gráficos */}
+          {(config.filas ?? [])
+            .slice()
+            .sort((a, b) => a.orden - b.orden)
+            .map(row => (
+              <section key={row.id} className="mb-8">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {row.graficos.map(ch => {
+                    const data = result.charts?.[ch.id] ?? []
+                    const colSpan =
+                      ch.columnas === 12 ? "lg:col-span-12" :
+                      ch.columnas === 6 ? "lg:col-span-6" :
+                      ch.columnas === 4 ? "lg:col-span-4" :
+                      ch.columnas === 3 ? "lg:col-span-3" :
+                      "lg:col-span-6"
+
+                    return (
+                      <div key={ch.id} className={`p-6 rounded-lg shadow-lg bg-card border border-border ${colSpan}`}>
+                        <h3 className="text-xl font-bold mb-4 text-card-foreground">{ch.titulo}</h3>
+
+                        {/* BARRAS (multi-métricas + seriesBy) */}
+                        {ch.tipo === "barras" && (() => {
+                          const metrics = pickMetricFields(ch, data)
+                          const hasSeries = data?.[0] && "series" in data[0]
+
+                          if (hasSeries) {
+                            const m0 = metrics[0]?.field ?? "value"
+                            const pivot: Record<string, any> = {}
+                            for (const r of data) {
+                              const n = String((r as any).name ?? "N/A")
+                              const s = String((r as any).series ?? "N/A")
+                              pivot[n] ??= { name: n }
+                              pivot[n][s] = Number((r as any)[m0] ?? 0)
+                            }
+                            const pivoted = Object.values(pivot)
+                            const seriesKeys = Array.from(new Set(data.map((r: any) => String(r.series ?? "N/A"))))
+
+                            return (
+                              <ResponsiveContainer width="100%" height={320}>
+                                <BarChart data={pivoted}>
+                                  <CartesianGrid strokeDasharray="3 3" stroke="#444" />
+                                  <XAxis dataKey="name" stroke="#888" />
+                                  <YAxis yAxisId="left" stroke="#888" />
+                                  <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
+                                  <Legend />
+                                  {seriesKeys.map((s, idx) => (
+                                    <Bar
+                                      key={s}
+                                      dataKey={s}
+                                      fill={COLORS[idx % COLORS.length]}
+                                      name={s}
+                                      yAxisId="left"
+                                      stackId={(ch as any).barMode === "stacked" ? "stack" : undefined}
+                                    />
+                                  ))}
+                                </BarChart>
+                              </ResponsiveContainer>
+                            )
+                          }
+
+                          return (
+                            <ResponsiveContainer width="100%" height={320}>
+                              <BarChart data={data}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#444" />
+                                <XAxis dataKey="name" stroke="#888" />
+                                <YAxis yAxisId="left" stroke="#888" />
+                                <YAxis yAxisId="right" orientation="right" stroke="#888" />
+                                <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
+                                <Legend />
+                                {metrics.map((m, idx) => (
+                                  <Bar
+                                    key={m.field}
+                                    dataKey={m.field}
+                                    fill={COLORS[idx % COLORS.length]}
+                                    name={m.field}
+                                    yAxisId={m.axis}
+                                    stackId={(ch as any).barMode === "stacked" ? "stack" : undefined}
+                                  />
+                                ))}
+                              </BarChart>
+                            </ResponsiveContainer>
+                          )
+                        })()}
+
+                        {/* TORTA */}
+                        {ch.tipo === "torta" && (
+                          <ResponsiveContainer width="100%" height={320}>
+                            <PieChart>
+                              <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} label>
+                                {data.map((_: any, idx: number) => (
+                                  <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
+                                ))}
+                              </Pie>
+                              <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
+                              <Legend />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        )}
+
+                        {/* SPLINE (multi-métricas + ejes) */}
+                        {ch.tipo === "spline" && (
+                          <ResponsiveContainer width="100%" height={320}>
+                            <LineChart data={data}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#444" />
+                              <XAxis dataKey="date" stroke="#888" />
+                              <YAxis yAxisId="left" stroke="#888" />
+                              <YAxis yAxisId="right" orientation="right" stroke="#888" />
+                              <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
+                              <Legend />
+                              {pickMetricFields(ch, data).map((m, idx) => (
+                                <Line
+                                  key={m.field}
+                                  type="monotone"
+                                  dataKey={m.field}
+                                  stroke={COLORS[idx % COLORS.length]}
+                                  strokeWidth={2}
+                                  name={m.field}
+                                  yAxisId={m.axis}
+                                />
+                              ))}
+                            </LineChart>
+                          </ResponsiveContainer>
+                        )}
+
+                        {/* AREA (multi-métricas + ejes) */}
+                        {ch.tipo === "area" && (
+                          <ResponsiveContainer width="100%" height={320}>
+                            <AreaChart data={data}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#444" />
+                              <XAxis dataKey="date" stroke="#888" />
+                              <YAxis yAxisId="left" stroke="#888" />
+                              <YAxis yAxisId="right" orientation="right" stroke="#888" />
+                              <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
+                              <Legend />
+                              {pickMetricFields(ch, data).map((m, idx) => (
+                                <Area
+                                  key={m.field}
+                                  type="monotone"
+                                  dataKey={m.field}
+                                  fill={COLORS[idx % COLORS.length]}
+                                  stroke={COLORS[idx % COLORS.length]}
+                                  fillOpacity={0.2}
+                                  strokeWidth={2}
+                                  name={m.field}
+                                  yAxisId={m.axis}
+                                  stackId={(ch as any).barMode === "stacked" ? "stack" : undefined}
+                                />
+                              ))}
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        )}
+
+                        {/* RADAR (multi-métricas como varios Radar) */}
+                        {ch.tipo === "radar" && (
+                          <ResponsiveContainer width="100%" height={320}>
+                            <RadarChart data={data}>
+                              <PolarGrid stroke="#444" />
+                              <PolarAngleAxis dataKey="name" stroke="#888" />
+                              <PolarRadiusAxis stroke="#888" />
+                              <Legend />
+                              <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
+                              {pickMetricFields(ch, data).map((m, idx) => (
+                                <Radar
+                                  key={m.field}
+                                  name={m.field}
+                                  dataKey={m.field}
+                                  stroke={COLORS[idx % COLORS.length]}
+                                  fill={COLORS[idx % COLORS.length]}
+                                  fillOpacity={0.2}
+                                />
+                              ))}
+                            </RadarChart>
+                          </ResponsiveContainer>
+                        )}
+
+                        {/* SCATTER */}
+                        {ch.tipo === "scatter" && (
+                          <ResponsiveContainer width="100%" height={320}>
+                            <ScatterChart>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#444" />
+                              <XAxis dataKey="x" name="X" stroke="#888" />
+                              <YAxis dataKey="y" name="Y" stroke="#888" />
+                              <ZAxis dataKey="z" range={[100, 1000]} name="Tamaño" />
+                              <Tooltip cursor={{ strokeDasharray: "3 3" }} contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
+                              <Legend />
+                              <Scatter name="Datos" data={data} fill={COLORS[4]} />
+                            </ScatterChart>
+                          </ResponsiveContainer>
+                        )}
+
+                        {/* TABLA */}
+                        {ch.tipo === "tabla" && (
+                          <div className="overflow-auto max-h-[320px]">
+                            <table className="w-full text-sm">
+                              <thead className="bg-muted sticky top-0">
+                                <tr>
+                                  {data[0] && Object.keys(data[0]).filter(k => k !== "__axis__").map((key) => (
+                                    <th key={key} className="px-4 py-2 text-left font-medium">{key}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {data.map((row: any, idx: number) => {
+                                  const keys = Object.keys(row).filter(k => k !== "__axis__")
+                                  return (
+                                    <tr key={idx} className="border-t border-border">
+                                      {keys.map((k) => (
+                                        <td key={k} className="px-4 py-2">
+                                          {typeof row[k] === "number" ? Number(row[k]).toLocaleString() : String(row[k])}
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  )
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+
+                        {!(["barras", "torta", "spline", "area", "radar", "scatter", "tabla"] as string[]).includes(ch.tipo) && (
+                          <div className="text-sm text-muted-foreground">
+                            Tipo de gráfico <strong>{ch.tipo}</strong> aún no implementado. Dataset: {data.length} filas.
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
+            ))}
+
+          {/* Footer */}
+          {result.rowCount !== undefined && (
+            <section className="mt-8 p-4 rounded-lg bg-muted/50 border border-border">
+              <p className="text-sm text-muted-foreground text-center">
+                Dashboard generado con <strong>{result.rowCount}</strong> registros
+                {config.filtros?.fechas && (
+                  <> • Período: {config.filtros.fechas.inicio} - {config.filtros.fechas.fin}</>
+                )}
+              </p>
+            </section>
+          )}
+        </>
+      </div>
+    </div>
   )
 }

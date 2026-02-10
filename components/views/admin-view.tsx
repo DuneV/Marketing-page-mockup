@@ -16,7 +16,7 @@ import { CompanyDetailModal } from "@/components/admin/company-detail-modal"
 import { TableSkeleton } from "@/components/admin/table-skeleton"
 import { KPISkeleton } from "@/components/admin/kpi-skeleton"
 import { toast } from "sonner"
-import { Shield, Plus, Building2, CheckCircle, Target, DollarSign, Upload } from "lucide-react"
+import { Shield, Plus, Building2, CheckCircle, Target, Boxes } from "lucide-react"
 
 import type { Company } from "@/types/company"
 import { getAllCompanies, createCompanyWithUser, deleteCompany } from "@/lib/data/companies"
@@ -30,8 +30,10 @@ export function AdminView() {
   const [companies, setCompanies] = useState<Company[]>([])
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [deleteCompanyId, setDeleteCompanyId] = useState<string | null>(null)
+
+  // único estado fuente de verdad para modal de detalle
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null)
-  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
+
   const [isLoading, setIsLoading] = useState(true)
 
   const [searchQuery, setSearchQuery] = useState("")
@@ -89,17 +91,15 @@ export function AdminView() {
     setDeleteCompanyId(companyId)
   }
 
+  // abre el modal poniendo el id
   const handleRowClick = (companyId: string) => {
     setSelectedCompanyId(companyId)
-    setIsDetailModalOpen(true)
   }
 
+  // cierra el modal limpiando el id
   const handleCloseDetailModal = () => {
-    setIsDetailModalOpen(false)
     setSelectedCompanyId(null)
   }
-
-
 
   // Filtrado de empresas
   const filteredCompanies = useMemo(() => {
@@ -118,7 +118,7 @@ export function AdminView() {
   const totalCompanies = companies.length
   const activeCompanies = companies.filter((c) => c.estado === "activa").length
   const totalCampaigns = companies.reduce((sum, c) => sum + (c.totalCampañas || 0), 0)
-  const totalInvestment = companies.reduce((sum, c) => sum + (c.inversionTotal || 0), 0)
+  const totalProducts = companies.reduce((sum, c) => sum + (c.cantidad || 0), 0)
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("es-CO", {
@@ -130,6 +130,7 @@ export function AdminView() {
 
   const companyToDelete = deleteCompanyId ? companies.find((c) => c.id === deleteCompanyId) || null : null
   const selectedCompany = selectedCompanyId ? companies.find((c) => c.id === selectedCompanyId) || null : null
+  const isCompanyModalOpen = Boolean(selectedCompanyId && selectedCompany)
 
   if (isLoading) {
     return (
@@ -170,7 +171,10 @@ export function AdminView() {
         </div>
 
         <div className="flex gap-2">
-          <Button onClick={() => setIsCreateModalOpen(true)} className="bg-amber-600 hover:bg-amber-700 w-full sm:w-auto">
+          <Button
+            onClick={() => setIsCreateModalOpen(true)}
+            className="bg-amber-600 hover:bg-amber-700 w-full sm:w-auto"
+          >
             <Plus className="h-4 w-4 mr-2" />
             Nueva Empresa
           </Button>
@@ -187,7 +191,7 @@ export function AdminView() {
           color="red"
         />
         <AdminKPICard label="Total Campañas" value={totalCampaigns} icon={Target} color="amber" />
-        <AdminKPICard label="Inversión Total" value={formatCurrency(totalInvestment)} icon={DollarSign} color="red" />
+        <AdminKPICard label="Total Productos" value={totalProducts} icon={Boxes} color="red" />
       </div>
 
       {/* Companies Table */}
@@ -218,7 +222,6 @@ export function AdminView() {
             companies={filteredCompanies}
             onDelete={handleDeleteClick}
             onRowClick={handleRowClick}
-
             onCreateClick={() => setIsCreateModalOpen(true)}
           />
         </CardContent>
@@ -238,7 +241,14 @@ export function AdminView() {
         onConfirm={handleDeleteCompany}
       />
 
-      <CompanyDetailModal company={selectedCompany} isOpen={isDetailModalOpen} onClose={handleCloseDetailModal} />
+      {selectedCompany ? (
+        <CompanyDetailModal
+          company={selectedCompany}
+          isOpen={isCompanyModalOpen}
+          onClose={handleCloseDetailModal}
+          onUpdated={loadCompanies}
+        />
+      ) : null}
     </div>
   )
 }

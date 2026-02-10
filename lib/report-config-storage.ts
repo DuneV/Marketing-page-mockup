@@ -5,6 +5,7 @@ import {
   CompanyServiceAssignment,
   ChartType,
   DataSource,
+  ChartDefinition,
 } from "@/types/report-config";
 
 const STORAGE_KEYS = {
@@ -219,6 +220,21 @@ const DEFAULT_SERVICE_PACKAGES: ServicePackage[] = [
   },
 ];
 
+function getChartSources(g: ChartDefinition): DataSource[] {
+  const sources: Array<DataSource | undefined> = [
+    g.fuente,
+    g.metric,
+    g.metric2,
+    g.groupBy,
+    g.seriesBy,
+    g.labelField,
+    g.map?.locationField,
+    g.map?.valueField,
+  ];
+
+  return sources.filter((s): s is DataSource => typeof s === "string" && s.length > 0);
+}
+
 // ==================== FUNCIONES DE ALMACENAMIENTO ====================
 
 export const reportConfigStorage = {
@@ -399,73 +415,64 @@ export const reportConfigStorage = {
   // ==================== VALIDACIONES ====================
 
   validateConfiguration: (
-    config: ReportConfiguration,
-    empresaId: string
-  ): { valid: boolean; errors: string[] } => {
-    const errors: string[] = [];
-    const assignment = reportConfigStorage.getCompanyServiceAssignment(empresaId);
+  config: ReportConfiguration,
+  empresaId: string
+): { valid: boolean; errors: string[] } => {
+  const errors: string[] = [];
+  const assignment = reportConfigStorage.getCompanyServiceAssignment(empresaId);
 
-    if (!assignment) {
-      // Si no hay paquete asignado, no aplicamos límites (modo libre)
-      return { valid: true, errors: [] };
-    }
+  if (!assignment) return { valid: true, errors: [] };
 
-    const servicePackage = reportConfigStorage.getServicePackageById(assignment.paqueteId);
+  const servicePackage = reportConfigStorage.getServicePackageById(assignment.paqueteId);
+  if (!servicePackage) return { valid: true, errors: [] };
 
-    if (!servicePackage) {
-      return { valid: true, errors: [] };
-    }
+  // Validar número de KPIs
+  if (config.kpis.length > servicePackage.maxKPIs) {
+    errors.push(`Excede el límite de KPIs (${config.kpis.length}/${servicePackage.maxKPIs})`);
+  }
 
-    // Validar número de KPIs
-    if (config.kpis.length > servicePackage.maxKPIs) {
+  // Validar número de filas
+  if (config.filas.length > servicePackage.maxFilas) {
+    errors.push(`Excede el límite de filas (${config.filas.length}/${servicePackage.maxFilas})`);
+  }
+
+  // Validar filas y gráficos
+  config.filas.forEach((fila, index) => {
+    if (fila.graficos.length > servicePackage.maxGraficosPorFila) {
       errors.push(
-        `Excede el límite de KPIs (${config.kpis.length}/${servicePackage.maxKPIs})`
+        `Fila ${index + 1} excede el límite de gráficos (${fila.graficos.length}/${servicePackage.maxGraficosPorFila})`
       );
     }
 
-    // Validar número de filas
-    if (config.filas.length > servicePackage.maxFilas) {
-      errors.push(
-        `Excede el límite de filas (${config.filas.length}/${servicePackage.maxFilas})`
-      );
+    fila.graficos.forEach((grafico) => {
+      // Tipo permitido
+      if (!servicePackage.graficosPermitidos.includes(grafico.tipo)) {
+        errors.push(`Tipo de gráfico '${grafico.tipo}' no permitido en el paquete actual`);
+      }
+
+      // Fuentes usadas por el gráfico (fuente/metric/groupBy/map/etc.)
+      const usedSources = getChartSources(grafico);
+
+      if (usedSources.length === 0) {
+        errors.push(`El gráfico '${grafico.titulo}' no tiene campos/fuentes configurados`);
+        return;
+      }
+
+      usedSources.forEach((src) => {
+        if (!servicePackage.fuentesDatos.includes(src)) {
+          errors.push(`El gráfico '${grafico.titulo}' usa fuente no permitida: ${src}`);
+        }
+      });
+    });
+  });
+
+  // Validar fuentes de KPIs (kpi.fuente NO es opcional)
+  config.kpis.forEach((kpi) => {
+    if (!servicePackage.fuentesDatos.includes(kpi.fuente)) {
+      errors.push(`KPI '${kpi.nombre}' usa fuente de datos no permitida: ${kpi.fuente}`);
     }
+  });
 
-    // Validar gráficos por fila
-    config.filas.forEach((fila, index) => {
-      if (fila.graficos.length > servicePackage.maxGraficosPorFila) {
-        errors.push(
-          `Fila ${index + 1} excede el límite de gráficos (${fila.graficos.length}/${servicePackage.maxGraficosPorFila})`
-        );
-      }
-
-      // Validar tipos de gráficos permitidos
-      fila.graficos.forEach((grafico) => {
-        if (!servicePackage.graficosPermitidos.includes(grafico.tipo)) {
-          errors.push(
-            `Tipo de gráfico '${grafico.tipo}' no permitido en el paquete actual`
-          );
-        }
-      });
-
-      // Validar fuentes de datos
-      fila.graficos.forEach((grafico) => {
-        if (!servicePackage.fuentesDatos.includes(grafico.fuente)) {
-          errors.push(
-            `Fuente de datos '${grafico.fuente}' no permitida en el paquete actual`
-          );
-        }
-      });
-    });
-
-    // Validar fuentes de datos de KPIs
-    config.kpis.forEach((kpi) => {
-      if (!servicePackage.fuentesDatos.includes(kpi.fuente)) {
-        errors.push(
-          `KPI '${kpi.nombre}' usa fuente de datos no permitida: ${kpi.fuente}`
-        );
-      }
-    });
-
-    return { valid: errors.length === 0, errors };
-  },
+  return { valid: errors.length === 0, errors };
+},
 };

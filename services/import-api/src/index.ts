@@ -7,6 +7,7 @@ import { templatesRouter } from "./routes/templates.js"
 import { adminCompaniesRouter } from "./routes/admin-companies.js";
 import { campaignsRouter } from "./routes/campaigns.js"
 import { adminSchemasRouter } from "./routes/admin-schemas.js"
+import { companyUsersRouter } from "./routes/company-users.js"
 
 const app = express()
 
@@ -23,6 +24,7 @@ app.use("/templates", templatesRouter)
 app.use("/admin/companies", adminCompaniesRouter);
 app.use("/campaigns", campaignsRouter)
 app.use("/admin/schemas", adminSchemasRouter)
+app.use("/company/users", companyUsersRouter)
 app.get("/debug/firebase", (_req, res) => {
   res.json({
     FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID ?? null,

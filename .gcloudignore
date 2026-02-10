@@ -1,0 +1,30 @@
+# Ignore deps
+node_modules
+
+# Next build outputs (se regeneran en el build)
+.next
+out
+
+# VCS
+.git
+.gitignore
+
+# Firebase local artifacts
+.firebase
+firebase-debug.log
+firestore-debug.log
+
+# Logs
+npm-debug.log
+yarn-error.log
+*.log
+*.yaml
+# Local env only (si quieres subir .env.production, NO lo ignores aquí)
+.env.local
+.env*
+
+# Always include these
+!package.json
+!yarn.lock
+!Dockerfile
+!next.config.mjs
