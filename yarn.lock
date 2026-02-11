@@ -4042,7 +4042,7 @@ readdir-glob@^1.1.2:
   dependencies:
     minimatch "^5.1.0"
 
-recharts@latest:
+recharts@^3.7.0:
   version "3.7.0"
   resolved "https://registry.yarnpkg.com/recharts/-/recharts-3.7.0.tgz#e3c72656ba18841085293e83bfc9a4f78b20abdd"
   integrity sha512-l2VCsy3XXeraxIID9fx23eCb6iCBsxUQDnE8tWm6DFdszVAO7WVY/ChAD9wVit01y6B2PMupYiMmQwhgPHc9Ew==

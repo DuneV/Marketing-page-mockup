@@ -1,629 +1,512 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import React, { useMemo } from "react"
+import type {
+  ReportConfiguration,
+  KPIDefinition,
+  ChartDefinition,
+  DashboardRow,
+  KPIOperation,
+  DataSource,
+  ChartMetricDefinition,
+} from "@/types/report-config"
+
 import {
-  BarChart, Bar,
-  LineChart, Line,
-  PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  AreaChart, Area,
-  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
-  ScatterChart, Scatter, ZAxis,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  Legend,
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  AreaChart,
+  Area,
+  ScatterChart,
+  Scatter,
+  XAxis,
+  YAxis,
+  CartesianGrid,
   ComposedChart,
 } from "recharts"
 
-import { Download, TrendingUp, Users, Activity, Eye } from "lucide-react"
+// -----------------------------
+// Types
+// -----------------------------
+type RowData = Record<string, any>
 
-import type { ReportConfiguration } from "@/types/report-config"
-import { runCampaignReport, getCampaignFilterOptions } from "@/lib/api/reportRunner"
-import { DashboardFiltersBar, type FilterCondition, type FilterOption } from "@/components/dashboard-filters-bar"
+type KPIValueMap = Record<string, number> // kpiId -> value
 
-const COLORS = ["#f59e0b", "#dc2626", "#0891b2", "#10b981", "#8b5cf6", "#ec4899"]
-
-type Operator =
-  | "eq" | "ne"
-  | "gt" | "gte" | "lt" | "lte"
-  | "contains" | "startsWith" | "endsWith"
-  | "in" | "between"
-  | "before" | "after"
-
-function isEmptyValor(op: Operator, v: unknown) {
-  if (v === null || v === undefined) return true
-  if (typeof v === "string" && v.trim() === "") return true
-  if (Array.isArray(v) && v.length === 0) return true
-
-  if (op === "between" && typeof v === "object" && v && !Array.isArray(v)) {
-    const vv = v as { inicio?: string; fin?: string }
-    const a = vv?.inicio
-    const b = vv?.fin
-    const ea = a == null || String(a).trim() === ""
-    const eb = b == null || String(b).trim() === ""
-    return ea && eb
-  }
-
-  return false
+// -----------------------------
+// Helpers: stats
+// -----------------------------
+function isFiniteNumber(v: any): v is number {
+  return typeof v === "number" && Number.isFinite(v)
 }
 
-const KPI_ICONS = {
-  ventas: TrendingUp,
-  impulsos: Users,
-  promedio: Activity,
-  conversion: Eye,
-} as const
-
-type MetricAxis = "left" | "right"
-type MetricRender = "bar" | "line"
-
-type MetricField = { field: string; axis: MetricAxis; render?: MetricRender }
-
-function pickMetricFields(ch: unknown, data: unknown[]): MetricField[] {
-  const chart = ch as any
-
-  // 1) Nuevo: metrics[]
-  if (Array.isArray(chart?.metrics) && chart.metrics.length > 0) {
-    return chart.metrics.map((m: any) => ({
-      field: String(m.field),
-      axis: (m.axis === "right" ? "right" : "left") as MetricAxis,
-      render: (m.render === "line" ? "line" : m.render === "bar" ? "bar" : undefined) as MetricRender | undefined,
-    }))
-  }
-
-  // 2) legacy numeric: metric
-  if (chart?.measureType === "numeric" && chart?.metric) {
-    return [{ field: String(chart.metric), axis: "left" as const }]
-  }
-
-  // 3) count default: value
-  const first = data?.[0] as any
-  if (first && typeof first === "object" && "value" in first) {
-    return [{ field: "value", axis: "left" as const }]
-  }
-
-  // 4) fallback: keys numéricas
-  if (!first || typeof first !== "object") return []
-  return Object.keys(first)
-    .filter((k) => !["name", "date", "series", "__axis__"].includes(k))
-    .map((k) => ({ field: k, axis: "left" as const }))
+function toNumber(v: any): number | null {
+  if (v == null) return null
+  if (typeof v === "number") return Number.isFinite(v) ? v : null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
 }
 
-type FormulaOp = "add" | "sub" | "mul" | "div" | "pct"
-type KPIKind = "field" | "formula"
-type ExtendedKPI = {
-  id: string
-  nombre: string
-  kind?: KPIKind
-  formula?: { aKpiId: string; op: FormulaOp; bKpiId: string }
+function median(nums: number[]): number {
+  const a = [...nums].sort((x, y) => x - y)
+  const mid = Math.floor(a.length / 2)
+  return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2
 }
 
-function safeDiv(a: number, b: number) {
-  if (!Number.isFinite(a)) return 0
-  if (!Number.isFinite(b) || b === 0) return 0
-  return a / b
+function variance(nums: number[]): number {
+  if (nums.length === 0) return 0
+  const m = nums.reduce((s, x) => s + x, 0) / nums.length
+  const v = nums.reduce((s, x) => s + (x - m) ** 2, 0) / nums.length
+  return v
 }
 
-export function DashboardFromConfig({ config }: { config: ReportConfiguration }) {
-  const [result, setResult] = useState<null | {
-    kpis: Record<string, { id: string; nombre: string; value: number }>
-    charts: Record<string, any[]>
-    rowCount: number
-  }>(null)
+function std(nums: number[]): number {
+  return Math.sqrt(variance(nums))
+}
 
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [filterOptions, setFilterOptions] = useState<FilterOption[]>([])
+function aggregateNumeric(values: number[], op: KPIOperation): number {
+  if (op === "count") return values.length
+  if (values.length === 0) return 0
+  switch (op) {
+    case "sum":
+      return values.reduce((s, x) => s + x, 0)
+    case "mean":
+      return values.reduce((s, x) => s + x, 0) / values.length
+    case "min":
+      return Math.min(...values)
+    case "max":
+      return Math.max(...values)
+    case "median":
+      return median(values)
+    case "std":
+      return std(values)
+    case "variance":
+      return variance(values)
+    default:
+      return values.reduce((s, x) => s + x, 0)
+  }
+}
 
-  const initialConditions = useMemo<FilterCondition[]>(() => {
-    const cs = (config?.filtros?.condiciones ?? []) as any[]
-    return cs.map((c) => ({
-      campo: String(c?.campo ?? ""),
-      operador: (c?.operador ?? "eq") as Operator,
-      valor: (c?.operador === "between") ? { inicio: "", fin: "" } : "",
-      label: c?.label,
-    }))
-  }, [config])
+function countByField(rows: RowData[], field: string | "__rows__"): number {
+  if (field === "__rows__") return rows.length
+  let c = 0
+  for (const r of rows) {
+    const v = r?.[field]
+    if (v !== null && v !== undefined && String(v).trim() !== "") c++
+  }
+  return c
+}
 
-  const [uiConditions, setUiConditions] = useState<FilterCondition[]>(initialConditions)
+// -----------------------------
+// Helpers: formatting
+// -----------------------------
+function formatKpiValue(v: number, kpi: KPIDefinition): string {
+  const dec = Math.max(0, Math.min(6, Number(kpi.decimales ?? 0)))
+  const unidad = (kpi.unidad ?? "").trim()
+  const fmt = kpi.formato ?? "number"
 
-  useEffect(() => {
-    setUiConditions(initialConditions)
-  }, [initialConditions])
-
-  function setValor(idx: number, nextValor: unknown) {
-    setUiConditions((prev) => {
-      const copy = [...prev]
-      copy[idx] = { ...copy[idx], valor: nextValor }
-      return copy
-    })
+  // nota: puedes ajustar locale si quieres "es-CO"
+  if (fmt === "percent") {
+    // asumimos que v ya viene como porcentaje (0-100) si usas op pct,
+    // si no, cámbialo aquí (v * 100)
+    const s = v.toFixed(dec) + "%"
+    return unidad ? `${s} ${unidad}` : s
   }
 
-  async function run(aplicar: boolean) {
-    setLoading(true)
-    setError(null)
-    try {
-      const condicionesParaBackend = aplicar
-        ? uiConditions.filter((c) => {
-            if (!c?.campo || !c?.operador) return false
-            if (isEmptyValor(c.operador as Operator, c.valor)) return false
-            return true
-          })
-        : []
+  if (fmt === "currency") {
+    // si unidad es "COP" / "USD" etc. intentamos usar Intl con esa moneda
+    if (unidad && /^[A-Z]{3}$/.test(unidad)) {
+      try {
+        return new Intl.NumberFormat("es-CO", {
+          style: "currency",
+          currency: unidad,
+          minimumFractionDigits: dec,
+          maximumFractionDigits: dec,
+        }).format(v)
+      } catch {
+        // fallback
+      }
+    }
+    const s = v.toFixed(dec)
+    return unidad ? `${s} ${unidad}` : s
+  }
 
-      const payload: any = {
-        ...config,
-        filtros: {
-          ...(config.filtros ?? {}),
-          aplicar,
-          condiciones: condicionesParaBackend,
-        },
+  // number
+  const s = new Intl.NumberFormat("es-CO", {
+    minimumFractionDigits: dec,
+    maximumFractionDigits: dec,
+  }).format(v)
+  return unidad ? `${s} ${unidad}` : s
+}
+
+// -----------------------------
+// KPI computation (field + formula)
+// -----------------------------
+function computeBaseKpiValue(rows: RowData[], kpi: KPIDefinition): number {
+  const op = kpi.operacion
+  const fuente = kpi.fuente
+
+  if (op === "count") {
+    const cf = (kpi.countField ?? "__rows__") as any
+    return countByField(rows, cf)
+  }
+
+  const nums: number[] = []
+  for (const r of rows) {
+    const n = toNumber(r?.[fuente])
+    if (n != null) nums.push(n)
+  }
+  return aggregateNumeric(nums, op)
+}
+
+function computeFormulaKpiValue(kpi: KPIDefinition, valuesById: KPIValueMap): number {
+  const f = kpi.formula
+  if (!f?.aKpiId || !f?.bKpiId || !f?.op) return 0
+  const A = valuesById[f.aKpiId] ?? 0
+  const B = valuesById[f.bKpiId] ?? 0
+
+  switch (f.op) {
+    case "add":
+      return A + B
+    case "sub":
+      return A - B
+    case "mul":
+      return A * B
+    case "div":
+      return B === 0 ? 0 : A / B
+    case "pct":
+      return B === 0 ? 0 : (A / B) * 100
+    default:
+      return 0
+  }
+}
+
+// -----------------------------
+// Chart series builder
+// -----------------------------
+function groupRows(rows: RowData[], groupBy: string): Map<string, RowData[]> {
+  const m = new Map<string, RowData[]>()
+  for (const r of rows) {
+    const key = r?.[groupBy]
+    const k = key == null || String(key).trim() === "" ? "(vacío)" : String(key)
+    const arr = m.get(k) ?? []
+    arr.push(r)
+    m.set(k, arr)
+  }
+  return m
+}
+
+function seriesForChart(rows: RowData[], chart: ChartDefinition): any[] {
+  const groupBy = chart.groupBy as string | undefined
+  if (!groupBy) return []
+
+  const grouped = groupRows(rows, groupBy)
+
+  const mt = chart.measureType ?? "count"
+  const metrics = chart.metrics ?? []
+
+  const out: any[] = []
+  for (const [name, bucket] of grouped.entries()) {
+    const point: any = { name }
+
+    if (mt === "count") {
+      const cf = (chart.countField ?? "__rows__") as any
+      point.value = countByField(bucket, cf)
+    } else {
+      // numeric
+      if (metrics.length > 0) {
+        for (const m of metrics) {
+          const field = m.field as string
+          const op = m.agg
+          const nums: number[] = []
+          for (const r of bucket) {
+            const n = toNumber(r?.[field])
+            if (n != null) nums.push(n)
+          }
+          const key = `${field}__${op}`
+          point[key] = aggregateNumeric(nums, op)
+        }
+      } else if (chart.metric && chart.agg) {
+        // legacy
+        const field = chart.metric as string
+        const op = chart.agg
+        const nums: number[] = []
+        for (const r of bucket) {
+          const n = toNumber(r?.[field])
+          if (n != null) nums.push(n)
+        }
+        point.value = aggregateNumeric(nums, op)
+      }
+    }
+
+    out.push(point)
+  }
+
+  return out
+}
+
+// -----------------------------
+// UI pieces (minimal)
+// -----------------------------
+function Card({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-lg border bg-white p-4">
+      <div className="text-xs text-muted-foreground">{title}</div>
+      <div className="mt-1 text-2xl font-semibold">{value}</div>
+    </div>
+  )
+}
+
+// -----------------------------
+// Main component
+// -----------------------------
+export function DashboardFromConfig({
+  config,
+  data,
+}: {
+  config: ReportConfiguration
+  data: RowData[]
+}) {
+  // 1) KPIs: compute in 2 passes (field first, then formulas)
+  const { kpiValues, visibleKpis } = useMemo(() => {
+    const kpis = config.kpis ?? []
+    const visible = kpis.filter((k) => k.visible !== false)
+
+    const byId: KPIValueMap = {}
+
+    // pass 1: base field KPIs
+    for (const k of kpis) {
+      const kind = (k.kind ?? "field") as any
+      if (kind === "formula") continue
+      byId[k.id] = computeBaseKpiValue(data, k)
+    }
+
+    // pass 2: formulas
+    for (const k of kpis) {
+      const kind = (k.kind ?? "field") as any
+      if (kind !== "formula") continue
+      byId[k.id] = computeFormulaKpiValue(k, byId)
+    }
+
+    return { kpiValues: byId, visibleKpis: visible }
+  }, [config.kpis, data])
+
+  // 2) Render chart by type
+  const renderChart = (chart: ChartDefinition) => {
+    const tipo = chart.tipo
+    const s = seriesForChart(data, chart)
+
+    // pie: usa "value" o una única métrica
+    if (tipo === "torta") {
+      // Si es numeric + metrics, usamos el primer metric como value.
+      let valueKey = "value"
+      if ((chart.measureType ?? "count") === "numeric" && (chart.metrics?.length ?? 0) > 0) {
+        const m0 = chart.metrics![0]
+        valueKey = `${m0.field}__${m0.agg}`
       }
 
-      const r = await runCampaignReport(config.campaignId, payload)
-      setResult(r)
-    } catch (e: any) {
-      console.error("Error en run:", e)
-      setError(e?.message ?? "Error")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    run(false)
-    loadFilterOptions()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.campaignId])
-
-  async function loadFilterOptions() {
-    if (!initialConditions.length) return
-
-    try {
-      const fields = initialConditions.map((c) => c.campo).filter(Boolean)
-      if (!fields.length) return
-
-      const r = await getCampaignFilterOptions(config.campaignId, fields)
-
-      const formatted: FilterOption[] = Object.entries(r.options ?? {}).map(([campo, opts]) => ({
-        campo,
-        options: (opts ?? []).map((o: any) => ({
-          value: String(o.value ?? o),
-          label: String(o.label ?? o.value ?? o),
-        })),
+      const pieData = s.map((p) => ({
+        name: p.name,
+        value: Number(p[valueKey] ?? 0),
       }))
 
-      setFilterOptions(formatted)
-    } catch (e: any) {
-      console.error("❌ Error loading filter options:", e)
-      setFilterOptions([])
-    }
-  }
-
-  // -----------------------------
-  // ✅ KPIs: base + fórmula
-  // -----------------------------
-  const kpiCards = useMemo(() => {
-    if (!result) return []
-    const kpis = (config.kpis ?? []) as unknown as ExtendedKPI[]
-
-    const baseValues: Record<string, number> = {}
-    for (const k of (config.kpis ?? []) as any[]) {
-      baseValues[k.id] = Number(result.kpis?.[k.id]?.value ?? 0)
-    }
-
-    const computedValues: Record<string, number> = { ...baseValues }
-    for (const k of kpis) {
-      const kind = (k.kind ?? "field") as KPIKind
-      if (kind !== "formula") continue
-
-      const a = computedValues[k.formula?.aKpiId ?? ""] ?? 0
-      const b = computedValues[k.formula?.bKpiId ?? ""] ?? 0
-      const op = k.formula?.op
-
-      let v = 0
-      if (op === "add") v = a + b
-      else if (op === "sub") v = a - b
-      else if (op === "mul") v = a * b
-      else if (op === "div") v = safeDiv(a, b)
-      else if (op === "pct") v = safeDiv(a, b) * 100
-
-      computedValues[k.id] = v
+      return (
+        <ResponsiveContainer width="100%" height={300}>
+          <PieChart>
+            <Pie
+              data={pieData}
+              dataKey="value"
+              nameKey="name"
+              label
+            >
+              {pieData.map((_, idx) => (
+                <Cell key={idx} />
+              ))}
+            </Pie>
+            <Tooltip />
+            <Legend />
+          </PieChart>
+        </ResponsiveContainer>
+      )
     }
 
-    return kpis.map((k) => ({
-      id: k.id,
-      nombre: k.nombre,
-      value: computedValues[k.id] ?? 0,
-    }))
-  }, [config.kpis, result])
+    if (tipo === "barras") {
+      // usamos value o primer metric
+      let valueKey = "value"
+      if ((chart.measureType ?? "count") === "numeric" && (chart.metrics?.length ?? 0) > 0) {
+        const m0 = chart.metrics![0]
+        valueKey = `${m0.field}__${m0.agg}`
+      }
+      return (
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={s}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="name" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey={valueKey} />
+          </BarChart>
+        </ResponsiveContainer>
+      )
+    }
 
-  const handlePrint = () => window.print()
+    if (tipo === "spline") {
+      let valueKey = "value"
+      if ((chart.measureType ?? "count") === "numeric" && (chart.metrics?.length ?? 0) > 0) {
+        const m0 = chart.metrics![0]
+        valueKey = `${m0.field}__${m0.agg}`
+      }
+      return (
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={s}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="name" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Line type="monotone" dataKey={valueKey} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      )
+    }
 
-  if (loading && !result) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-          <p className="mt-4 text-muted-foreground">Cargando dashboard...</p>
+    if (tipo === "area") {
+      let valueKey = "value"
+      if ((chart.measureType ?? "count") === "numeric" && (chart.metrics?.length ?? 0) > 0) {
+        const m0 = chart.metrics![0]
+        valueKey = `${m0.field}__${m0.agg}`
+      }
+      return (
+        <ResponsiveContainer width="100%" height={300}>
+          <AreaChart data={s}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="name" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Area type="monotone" dataKey={valueKey} />
+          </AreaChart>
+        </ResponsiveContainer>
+      )
+    }
+
+    if (tipo === "scatter" || tipo === "plot") {
+      const xKey = chart.metric as string | undefined
+      const yKey = chart.metric2 as string | undefined
+      if (!xKey || !yKey) return <div className="text-sm text-muted-foreground">Scatter requiere metric y metric2.</div>
+
+      const pts = data
+        .map((r) => ({ x: toNumber(r?.[xKey]), y: toNumber(r?.[yKey]) }))
+        .filter((p) => p.x != null && p.y != null)
+        .map((p) => ({ x: p.x!, y: p.y! }))
+
+      return (
+        <ResponsiveContainer width="100%" height={300}>
+          <ScatterChart>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="x" type="number" />
+            <YAxis dataKey="y" type="number" />
+            <Tooltip />
+            <Scatter data={pts} />
+          </ScatterChart>
+        </ResponsiveContainer>
+      )
+    }
+
+    if (tipo === "combo") {
+      const metrics = chart.metrics ?? []
+      if (metrics.length < 2) return <div className="text-sm text-muted-foreground">Combo requiere >= 2 métricas.</div>
+
+      // aseguramos que cada métrica tenga key
+      const metricKeys = metrics.map((m) => ({
+        key: `${m.field}__${m.agg}`,
+        axis: m.axis ?? "left",
+        render: m.render ?? "bar",
+      }))
+
+      return (
+        <ResponsiveContainer width="100%" height={320}>
+          <ComposedChart data={s}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="name" />
+            <YAxis yAxisId="left" />
+            <YAxis yAxisId="right" orientation="right" />
+            <Tooltip />
+            <Legend />
+
+            {metricKeys.map((m, idx) => {
+              const yAxisId = m.axis === "right" ? "right" : "left"
+              if (m.render === "line") {
+                return <Line key={idx} yAxisId={yAxisId} type="monotone" dataKey={m.key} dot={false} />
+              }
+              return <Bar key={idx} yAxisId={yAxisId} dataKey={m.key} />
+            })}
+          </ComposedChart>
+        </ResponsiveContainer>
+      )
+    }
+
+    if (tipo === "tabla") {
+      return (
+        <div className="overflow-auto">
+          <table className="min-w-[480px] w-full text-sm">
+            <thead>
+              <tr className="border-b">
+                {Object.keys(s?.[0] ?? {}).map((k) => (
+                  <th key={k} className="text-left p-2 font-medium">{k}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {s.map((row, i) => (
+                <tr key={i} className="border-b">
+                  {Object.keys(row).map((k) => (
+                    <td key={k} className="p-2">{String(row[k] ?? "")}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      </div>
-    )
-  }
+      )
+    }
 
-  if (error && !result) {
-    return (
-      <div className="p-6 rounded-lg border border-destructive bg-destructive/10">
-        <p className="text-destructive font-medium">{error}</p>
-      </div>
-    )
+    return <div className="text-sm text-muted-foreground">Tipo "{tipo}" aún no implementado.</div>
   }
-
-  if (!result) return null
 
   return (
-    <div className="w-full flex justify-center">
-      <div className="w-full max-w-7xl px-4">
-        <>
-          <style>{`
-            @media print {
-              .no-print { display: none !important; }
-              body { background: white !important; }
-            }
-          `}</style>
+    <div className="space-y-6">
+      {/* KPI cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {visibleKpis.map((kpi) => {
+          const v = kpiValues[kpi.id] ?? 0
+          return <Card key={kpi.id} title={kpi.nombre} value={formatKpiValue(v, kpi)} />
+        })}
+      </div>
 
-          {/* Header */}
-          <div className="flex justify-between items-center mb-8">
-            <div>
-              <h1 className="text-3xl font-bold text-foreground">
-                {config.campaignNombre || "Dashboard de Activaciones"}
-              </h1>
-              {config.empresaNombre && (
-                <p className="text-sm text-muted-foreground mt-1">{config.empresaNombre}</p>
-              )}
-            </div>
-            <div className="flex gap-3 no-print">
-              <button
-                onClick={handlePrint}
-                className="px-4 py-2 rounded-lg flex items-center gap-2 transition-all hover:scale-105 bg-primary text-primary-foreground"
+      {/* Rows / charts */}
+      <div className="space-y-4">
+        {(config.filas ?? []).map((row: DashboardRow) => (
+          <div key={row.id} className="grid grid-cols-12 gap-4">
+            {(row.graficos ?? []).map((chart) => (
+              <div
+                key={chart.id}
+                className="col-span-12 rounded-lg border bg-white p-4"
+                style={{ gridColumn: `span ${chart.columnas} / span ${chart.columnas}` } as any}
               >
-                <Download size={20} />
-                Generar Reporte
-              </button>
-            </div>
-          </div>
-
-          {/* Filtros */}
-          {uiConditions.length > 0 && (
-            <DashboardFiltersBar
-              conditions={uiConditions}
-              filterOptions={filterOptions}
-              loading={loading}
-              error={error}
-              onApply={() => run(true)}
-              onClear={() => {
-                setUiConditions(initialConditions)
-                run(false)
-              }}
-              onChangeValor={setValor}
-            />
-          )}
-
-          {/* KPI Cards */}
-          {kpiCards.length > 0 && (
-            <section className="mb-8">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {kpiCards.map((kpi, idx) => {
-                  const IconComponent = Object.values(KPI_ICONS)[idx % Object.keys(KPI_ICONS).length]
-                  return (
-                    <div key={kpi.id} className="p-6 rounded-xl bg-card border border-border shadow-md">
-                      <div className="mb-3">
-                        <div className="inline-flex p-3 rounded-lg bg-primary text-primary-foreground">
-                          <IconComponent size={22} />
-                        </div>
-                      </div>
-
-                      <p className="text-sm font-medium text-muted-foreground uppercase">{kpi.nombre}</p>
-                      <p className="text-3xl font-bold mt-1">
-                        {Number(kpi.value).toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                      </p>
-                    </div>
-                  )
-                })}
+                <div className="mb-2 text-sm font-medium">{chart.titulo}</div>
+                {renderChart(chart)}
               </div>
-            </section>
-          )}
-
-          {/* Filas de Gráficos */}
-          {(config.filas ?? [])
-            .slice()
-            .sort((a, b) => a.orden - b.orden)
-            .map((row) => (
-              <section key={row.id} className="mb-8">
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                  {row.graficos.map((ch: any) => {
-                    const data: any[] = result.charts?.[ch.id] ?? []
-                    const colSpan =
-                      ch.columnas === 12 ? "lg:col-span-12" :
-                      ch.columnas === 6 ? "lg:col-span-6" :
-                      ch.columnas === 4 ? "lg:col-span-4" :
-                      ch.columnas === 3 ? "lg:col-span-3" :
-                      "lg:col-span-6"
-
-                    return (
-                      <div key={ch.id} className={`p-6 rounded-lg shadow-lg bg-card border border-border ${colSpan}`}>
-                        <h3 className="text-xl font-bold mb-4 text-card-foreground">{ch.titulo}</h3>
-
-                        {/* ✅ COMBO (Bar + Line) */}
-                        {String(ch.tipo) === "combo" && (() => {
-                          const metrics = pickMetricFields(ch, data)
-                          // por defecto: si no trae render, la 1ra bar y el resto line
-                          const normalized = metrics.map((m, i) => ({
-                            ...m,
-                            render: m.render ?? (i === 0 ? "bar" : "line"),
-                          }))
-
-                          return (
-                            <ResponsiveContainer width="100%" height={320}>
-                              <ComposedChart data={data}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-                                <XAxis dataKey="name" stroke="#888" />
-                                <YAxis yAxisId="left" stroke="#888" />
-                                <YAxis yAxisId="right" orientation="right" stroke="#888" />
-                                <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
-                                <Legend />
-
-                                {normalized.map((m, idx) => {
-                                  const key = `${m.field}-${m.render}-${m.axis}`
-                                  if (m.render === "bar") {
-                                    return (
-                                      <Bar
-                                        key={key}
-                                        dataKey={m.field}
-                                        fill={COLORS[idx % COLORS.length]}
-                                        name={m.field}
-                                        yAxisId={m.axis}
-                                        stackId={(ch as any).barMode === "stacked" ? "stack" : undefined}
-                                      />
-                                    )
-                                  }
-                                  return (
-                                    <Line
-                                      key={key}
-                                      type="monotone"
-                                      dataKey={m.field}
-                                      stroke={COLORS[idx % COLORS.length]}
-                                      strokeWidth={2}
-                                      name={m.field}
-                                      yAxisId={m.axis}
-                                    />
-                                  )
-                                })}
-                              </ComposedChart>
-                            </ResponsiveContainer>
-                          )
-                        })()}
-
-                        {/* BARRAS (multi-métricas + seriesBy) */}
-                        {ch.tipo === "barras" && (() => {
-                          const metrics = pickMetricFields(ch, data)
-                          const hasSeries = data?.[0] && typeof data[0] === "object" && "series" in data[0]
-
-                          if (hasSeries) {
-                            const m0 = metrics[0]?.field ?? "value"
-                            const pivot: Record<string, any> = {}
-                            for (const r of data) {
-                              const n = String((r as any).name ?? "N/A")
-                              const s = String((r as any).series ?? "N/A")
-                              pivot[n] ??= { name: n }
-                              pivot[n][s] = Number((r as any)[m0] ?? 0)
-                            }
-                            const pivoted = Object.values(pivot)
-                            const seriesKeys = Array.from(new Set(data.map((r: any) => String(r.series ?? "N/A"))))
-
-                            return (
-                              <ResponsiveContainer width="100%" height={320}>
-                                <BarChart data={pivoted}>
-                                  <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-                                  <XAxis dataKey="name" stroke="#888" />
-                                  <YAxis yAxisId="left" stroke="#888" />
-                                  <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
-                                  <Legend />
-                                  {seriesKeys.map((s, idx: number) => (
-                                    <Bar
-                                      key={s}
-                                      dataKey={s}
-                                      fill={COLORS[idx % COLORS.length]}
-                                      name={s}
-                                      yAxisId="left"
-                                      stackId={(ch as any).barMode === "stacked" ? "stack" : undefined}
-                                    />
-                                  ))}
-                                </BarChart>
-                              </ResponsiveContainer>
-                            )
-                          }
-
-                          return (
-                            <ResponsiveContainer width="100%" height={320}>
-                              <BarChart data={data}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-                                <XAxis dataKey="name" stroke="#888" />
-                                <YAxis yAxisId="left" stroke="#888" />
-                                <YAxis yAxisId="right" orientation="right" stroke="#888" />
-                                <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
-                                <Legend />
-                                {metrics.map((m: MetricField, idx: number) => (
-                                  <Bar
-                                    key={m.field}
-                                    dataKey={m.field}
-                                    fill={COLORS[idx % COLORS.length]}
-                                    name={m.field}
-                                    yAxisId={m.axis}
-                                    stackId={(ch as any).barMode === "stacked" ? "stack" : undefined}
-                                  />
-                                ))}
-                              </BarChart>
-                            </ResponsiveContainer>
-                          )
-                        })()}
-
-                        {/* TORTA */}
-                        {ch.tipo === "torta" && (
-                          <ResponsiveContainer width="100%" height={320}>
-                            <PieChart>
-                              <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} label>
-                                {data.map((_: any, idx: number) => (
-                                  <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
-                                ))}
-                              </Pie>
-                              <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
-                              <Legend />
-                            </PieChart>
-                          </ResponsiveContainer>
-                        )}
-
-                        {/* SPLINE */}
-                        {ch.tipo === "spline" && (
-                          <ResponsiveContainer width="100%" height={320}>
-                            <LineChart data={data}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-                              <XAxis dataKey="date" stroke="#888" />
-                              <YAxis yAxisId="left" stroke="#888" />
-                              <YAxis yAxisId="right" orientation="right" stroke="#888" />
-                              <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
-                              <Legend />
-                              {pickMetricFields(ch, data).map((m: MetricField, idx: number) => (
-                                <Line
-                                  key={m.field}
-                                  type="monotone"
-                                  dataKey={m.field}
-                                  stroke={COLORS[idx % COLORS.length]}
-                                  strokeWidth={2}
-                                  name={m.field}
-                                  yAxisId={m.axis}
-                                />
-                              ))}
-                            </LineChart>
-                          </ResponsiveContainer>
-                        )}
-
-                        {/* AREA */}
-                        {ch.tipo === "area" && (
-                          <ResponsiveContainer width="100%" height={320}>
-                            <AreaChart data={data}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-                              <XAxis dataKey="date" stroke="#888" />
-                              <YAxis yAxisId="left" stroke="#888" />
-                              <YAxis yAxisId="right" orientation="right" stroke="#888" />
-                              <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
-                              <Legend />
-                              {pickMetricFields(ch, data).map((m: MetricField, idx: number) => (
-                                <Area
-                                  key={m.field}
-                                  type="monotone"
-                                  dataKey={m.field}
-                                  fill={COLORS[idx % COLORS.length]}
-                                  stroke={COLORS[idx % COLORS.length]}
-                                  fillOpacity={0.2}
-                                  strokeWidth={2}
-                                  name={m.field}
-                                  yAxisId={m.axis}
-                                  stackId={(ch as any).barMode === "stacked" ? "stack" : undefined}
-                                />
-                              ))}
-                            </AreaChart>
-                          </ResponsiveContainer>
-                        )}
-
-                        {/* RADAR */}
-                        {ch.tipo === "radar" && (
-                          <ResponsiveContainer width="100%" height={320}>
-                            <RadarChart data={data}>
-                              <PolarGrid stroke="#444" />
-                              <PolarAngleAxis dataKey="name" stroke="#888" />
-                              <PolarRadiusAxis stroke="#888" />
-                              <Legend />
-                              <Tooltip contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
-                              {pickMetricFields(ch, data).map((m: MetricField, idx: number) => (
-                                <Radar
-                                  key={m.field}
-                                  name={m.field}
-                                  dataKey={m.field}
-                                  stroke={COLORS[idx % COLORS.length]}
-                                  fill={COLORS[idx % COLORS.length]}
-                                  fillOpacity={0.2}
-                                />
-                              ))}
-                            </RadarChart>
-                          </ResponsiveContainer>
-                        )}
-
-                        {/* SCATTER */}
-                        {ch.tipo === "scatter" && (
-                          <ResponsiveContainer width="100%" height={320}>
-                            <ScatterChart>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-                              <XAxis dataKey="x" name="X" stroke="#888" />
-                              <YAxis dataKey="y" name="Y" stroke="#888" />
-                              <ZAxis dataKey="z" range={[100, 1000]} name="Tamaño" />
-                              <Tooltip cursor={{ strokeDasharray: "3 3" }} contentStyle={{ backgroundColor: "#ffffff", border: "1px solid #e5e7eb", color: "#1f2937" }} />
-                              <Legend />
-                              <Scatter name="Datos" data={data} fill={COLORS[4]} />
-                            </ScatterChart>
-                          </ResponsiveContainer>
-                        )}
-
-                        {/* TABLA */}
-                        {ch.tipo === "tabla" && (
-                          <div className="overflow-auto max-h-[320px]">
-                            <table className="w-full text-sm">
-                              <thead className="bg-muted sticky top-0">
-                                <tr>
-                                  {data[0] && Object.keys(data[0]).filter((k) => k !== "__axis__").map((key: string) => (
-                                    <th key={key} className="px-4 py-2 text-left font-medium">{key}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {data.map((row: any, idx: number) => {
-                                  const keys = Object.keys(row).filter((k) => k !== "__axis__")
-                                  return (
-                                    <tr key={idx} className="border-t border-border">
-                                      {keys.map((k: string) => (
-                                        <td key={k} className="px-4 py-2">
-                                          {typeof row[k] === "number" ? Number(row[k]).toLocaleString() : String(row[k])}
-                                        </td>
-                                      ))}
-                                    </tr>
-                                  )
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-
-                        {!(["barras", "torta", "spline", "area", "radar", "scatter", "tabla", "combo"] as string[]).includes(String(ch.tipo)) && (
-                          <div className="text-sm text-muted-foreground">
-                            Tipo de gráfico <strong>{String(ch.tipo)}</strong> aún no implementado. Dataset: {data.length} filas.
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              </section>
             ))}
-
-          {/* Footer */}
-          {result.rowCount !== undefined && (
-            <section className="mt-8 p-4 rounded-lg bg-muted/50 border border-border">
-              <p className="text-sm text-muted-foreground text-center">
-                Dashboard generado con <strong>{result.rowCount}</strong> registros
-                {config.filtros?.fechas && (
-                  <> • Período: {config.filtros.fechas.inicio} - {config.filtros.fechas.fin}</>
-                )}
-              </p>
-            </section>
-          )}
-        </>
+          </div>
+        ))}
       </div>
     </div>
   )
