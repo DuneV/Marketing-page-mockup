@@ -5,7 +5,8 @@
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
-import { useState, useRef } from "react"
+import { useState, useRef, type ChangeEvent } from "react"
+
 import {
   Dialog,
   DialogContent,
@@ -33,15 +34,18 @@ import {
 } from "@/components/ui/select"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
+
 import { createCampaign } from "@/lib/data/campaigns"
 import { assignUserToCampaign } from "@/lib/data/users"
-import { incrementCompanyCampaignCount, getCompany } from "@/lib/data/companies"
+import { getCompany } from "@/lib/data/companies"
+
 import { downloadTemplate, createImport, analyzeImport, commitImport } from "@/lib/api/importApi"
+
 import { toast } from "sonner"
 import { useAuthRole } from "@/lib/auth/useAuthRole"
 import { Download, Upload, CheckCircle, AlertCircle, ArrowRight } from "lucide-react"
+
 import type { Company } from "@/types/company"
-import type { CampaignFormData } from "@/types/campaign"
 
 const campaignSchema = z.object({
   nombre: z.string().min(1, "Nombre requerido"),
@@ -66,7 +70,6 @@ const campaignSchema = z.object({
 
 type CampaignModalForm = z.infer<typeof campaignSchema>
 
-
 interface CreateCampaignModalProps {
   isOpen: boolean
   onClose: () => void
@@ -80,11 +83,14 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
   const { user: currentUser } = useAuthRole()
   const [step, setStep] = useState<Step>("campaign")
   const [isLoading, setIsLoading] = useState(false)
+
   const [createdCampaignId, setCreatedCampaignId] = useState<string | null>(null)
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("")  // ✅ Este es el UUID/ID
+  const createdCampaignIdRef = useRef<string | null>(null)
+
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("") // UUID/ID empresa
   const [campaignName, setCampaignName] = useState<string>("")
-  const createdCampaignIdRef = useRef<string | null>(null);
-  // Estados para Excel
+
+  // === Estados para Excel ===
   const [file, setFile] = useState<File | null>(null)
   const [importId, setImportId] = useState<string | null>(null)
   const [preview, setPreview] = useState<any>(null)
@@ -92,6 +98,9 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
   const [uploadLog, setUploadLog] = useState<string>("")
   const [isUploading, setIsUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // ✅ NUEVO: URL para Google Sheets
+  const [sheetUrl, setSheetUrl] = useState<string>("")
 
   const form = useForm<CampaignModalForm>({
     resolver: zodResolver(campaignSchema),
@@ -113,6 +122,80 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
     setUploadLog(prev => `${prev}${message}\n`)
   }
 
+  // ============================================================
+  // ✅ NUEVO: Helpers para leer URL de Google Sheets
+  // ============================================================
+  function parseGoogleSheetsUrl(url: string): { spreadsheetId: string; gid?: string } | null {
+    // Ej: https://docs.google.com/spreadsheets/d/<ID>/edit?gid=123#gid=123
+    const m = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/)
+    if (!m) return null
+    const spreadsheetId = m[1]
+
+    // gid puede venir en query o hash
+    const gidMatch = url.match(/[?#]gid=(\d+)/) || url.match(/[?&]gid=(\d+)/)
+    const gid = gidMatch?.[1]
+
+    return { spreadsheetId, gid }
+  }
+
+  function buildExportXlsxUrl(spreadsheetId: string, gid?: string) {
+    const base = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=xlsx`
+    return gid ? `${base}&gid=${gid}` : base
+  }
+
+  // ✅ NUEVO: convierte URL de sheets -> File .xlsx listo para tu flujo actual
+  const handleLoadFromGoogleSheets = async () => {
+    if (!sheetUrl.trim()) {
+      toast.error("Pega una URL de Google Sheets")
+      return
+    }
+
+    const parsed = parseGoogleSheetsUrl(sheetUrl.trim())
+    if (!parsed) {
+      toast.error("URL inválida. Debe ser un link de Google Sheets")
+      return
+    }
+
+    try {
+      setIsUploading(true)
+      appendLog("📎 Leyendo Google Sheets...")
+
+      const exportUrl = buildExportXlsxUrl(parsed.spreadsheetId, parsed.gid)
+
+      // IMPORTANTE: proxy server-side para evitar CORS
+      const resp = await fetch(`/api/sheets-proxy?url=${encodeURIComponent(exportUrl)}`)
+      if (!resp.ok) {
+        const errText = await resp.text()
+        throw new Error(errText || `Error descargando sheet: ${resp.status}`)
+      }
+
+      const blob = await resp.blob()
+      const filename = `${campaignName.replace(/\s+/g, "_")}_from_sheets.xlsx`
+
+      const asFile = new File([blob], filename, {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      })
+
+      // reset estado del import
+      setFile(asFile)
+      setImportId(null)
+      setPreview(null)
+      setMapping({})
+      setUploadLog(`✓ Sheet convertido a XLSX: ${filename}\n`)
+
+      toast.success("Sheet cargado", { description: "Ahora puedes Subir y Analizar" })
+    } catch (e: any) {
+      console.error(e)
+      toast.error(e?.message ?? "Error leyendo Google Sheets")
+      appendLog(`ERROR: ${e?.message ?? e}`)
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  // ============================================================
+  // Paso 1: Crear campaña
+  // ============================================================
   const handleSubmit = async (data: CampaignModalForm) => {
     if (!currentUser) {
       toast.error("Usuario no autenticado")
@@ -126,14 +209,14 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
         : []
 
       const selectedCompany = await getCompany(data.empresaId)
-      
+
       console.log("🏢 Empresa seleccionada:", {
         empresaId: data.empresaId,
         empresaNombre: selectedCompany?.nombre
       })
 
-      const bucketPath = data.bucketPath?.trim() || 
-        `campaigns/${data.empresaId}/${Date.now()}_${data.nombre.replace(/\s+/g, '_').toLowerCase()}`
+      const bucketPath = data.bucketPath?.trim() ||
+        `campaigns/${data.empresaId}/${Date.now()}_${data.nombre.replace(/\s+/g, "_").toLowerCase()}`
 
       const campaignId = await createCampaign(currentUser.uid, {
         nombre: data.nombre,
@@ -151,16 +234,16 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
       })
 
       await assignUserToCampaign(currentUser.uid, campaignId)
-      // await incrementCompanyCampaignCount(data.empresaId, data.presupuesto)
-      createdCampaignIdRef.current = campaignId;
+
+      createdCampaignIdRef.current = campaignId
       setCreatedCampaignId(campaignId)
-      setSelectedCompanyId(data.empresaId)  // ✅ Guardar el ID (UUID) de la empresa
+      setSelectedCompanyId(data.empresaId)
       setCampaignName(data.nombre)
-      
+
       console.log("✅ Campaña creada, empresa ID guardado:", data.empresaId)
-      
+
       toast.success("Campaña creada", {
-        description: `${data.nombre} - Ahora sube el archivo Excel`
+        description: `${data.nombre} - Ahora sube Excel o pega una URL de Google Sheets`
       })
 
       setStep("excel")
@@ -172,7 +255,9 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
     }
   }
 
-  // === FUNCIONES DE EXCEL ===
+  // ============================================================
+  // Paso 2: Excel
+  // ============================================================
   const handleDownloadTemplate = async () => {
     if (!selectedCompanyId) {
       toast.error("No hay empresa seleccionada")
@@ -182,12 +267,12 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
     try {
       setIsUploading(true)
       console.log("📥 Descargando plantilla para empresa:", selectedCompanyId)
-      
+
       const blob = await downloadTemplate(selectedCompanyId, "campaigns")
       const url = URL.createObjectURL(blob)
       const a = document.createElement("a")
       a.href = url
-      a.download = `${campaignName.replace(/\s+/g, '_')}_plantilla.xlsx`
+      a.download = `${campaignName.replace(/\s+/g, "_")}_plantilla.xlsx`
       a.click()
       URL.revokeObjectURL(url)
       toast.success("Plantilla descargada")
@@ -204,7 +289,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
     fileInputRef.current?.click()
   }
 
-  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0]
     if (!selectedFile) return
 
@@ -222,9 +307,8 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
     appendLog(`✓ Archivo seleccionado: ${selectedFile.name}`)
   }
 
-
   const handleUploadFile = async () => {
-    const campaignIdToSend = createdCampaignIdRef.current;
+    const campaignIdToSend = createdCampaignIdRef.current
 
     if (!file || !selectedCompanyId || !campaignIdToSend) {
       toast.error("Faltan datos: archivo/empresa/campaña")
@@ -233,30 +317,30 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
 
     try {
       setIsUploading(true)
-      
+
       console.log("📤 Iniciando upload con:", {
         companyId: selectedCompanyId,
         importType: "campaigns",
         filename: file.name,
         campaignId: campaignIdToSend
       })
-      
+
       appendLog("1) Creando importación...")
       appendLog(`   Company ID: ${selectedCompanyId}`)
-      
+
       const { importId: newImportId, uploadUrl } = await createImport({
         companyId: selectedCompanyId,
         importType: "campaigns",
         filename: file.name,
         campaignId: campaignIdToSend,
       })
-      
+
       setImportId(newImportId)
       appendLog("✓ Importación creada")
 
       appendLog("2) Subiendo archivo a GCS...")
       console.log("📤 Uploading file via proxy")
-      
+
       const uploadResponse = await fetch("/api/upload-proxy", {
         method: "PUT",
         headers: {
@@ -274,27 +358,20 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
         const errorData = await uploadResponse.json()
         throw new Error(errorData.error || `Upload failed: ${uploadResponse.status}`)
       }
-      
+
       appendLog("✓ Archivo subido correctamente")
 
       appendLog("3) Analizando datos...")
       console.log("🔍 Starting analysis for import:", newImportId)
-      
-      try {
-        const analyzed = await analyzeImport(newImportId)
-        console.log("✅ Analysis result:", analyzed)
-        
-        setPreview(analyzed)
-        setMapping(analyzed.suggestions ?? {})
-        appendLog("✓ Análisis completado")
-        
-        toast.success("Archivo analizado correctamente")
-      } catch (analyzeError: any) {
-        console.error("❌ Analysis failed:", analyzeError)
-        appendLog(`ERROR en análisis: ${analyzeError.message}`)
-        throw analyzeError
-      }
-      
+
+      const analyzed = await analyzeImport(newImportId)
+      console.log("✅ Analysis result:", analyzed)
+
+      setPreview(analyzed)
+      setMapping(analyzed.suggestions ?? {})
+      appendLog("✓ Análisis completado")
+
+      toast.success("Archivo analizado correctamente")
     } catch (e: any) {
       console.error("Error procesando archivo:", e)
       toast.error(e?.message ?? "Error al procesar archivo")
@@ -310,9 +387,9 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
     try {
       setIsUploading(true)
       appendLog("4) Confirmando importación...")
-      
+
       await commitImport(importId, mapping)
-      
+
       appendLog("✓ Importación confirmada")
       toast.success("Campaña y datos creados exitosamente")
 
@@ -340,11 +417,14 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
     setCreatedCampaignId(null)
     setSelectedCompanyId("")
     setCampaignName("")
+
     setFile(null)
     setImportId(null)
     setPreview(null)
     setMapping({})
     setUploadLog("")
+    setSheetUrl("") // ✅ NUEVO
+
     onClose()
   }
 
@@ -359,8 +439,8 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
             {step === "campaign" ? "Paso 1: Crear Campaña" : "Paso 2: Subir Datos Excel"}
           </DialogTitle>
           <DialogDescription>
-            {step === "campaign" 
-              ? "Completa los datos básicos de la campaña" 
+            {step === "campaign"
+              ? "Completa los datos básicos de la campaña"
               : `Sube el archivo Excel para: ${campaignName}`}
           </DialogDescription>
           <Progress value={progress} className="h-2 mt-2" />
@@ -444,6 +524,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
                   )}
                 />
 
+                {/* Presupuesto comentado */}
                 {/* <FormField
                   control={form.control}
                   name="presupuesto"
@@ -561,9 +642,32 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
 
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">2. Subir Archivo Completado</CardTitle>
+                <CardTitle className="text-base">2. Subir Archivo o Leer desde Google Sheets</CardTitle>
               </CardHeader>
+
               <CardContent className="space-y-4">
+                {/* ✅ NUEVO: input para URL de Google Sheets */}
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Importar desde Google Sheets (URL)</p>
+                  <div className="flex gap-2">
+                    <Input
+                      value={sheetUrl}
+                      onChange={(e) => setSheetUrl(e.target.value)}
+                      placeholder="Pega URL de Google Sheets (https://docs.google.com/spreadsheets/d/...)"
+                      disabled={isUploading}
+                    />
+                    <Button variant="outline" onClick={handleLoadFromGoogleSheets} disabled={isUploading}>
+                      Cargar URL
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    El Sheet debe ser accesible por enlace (si es privado, solicite asistencia).
+                  </p>
+                </div>
+
+                <div className="border-t pt-4" />
+
+                {/* Upload manual */}
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -571,7 +675,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
                   onChange={onFileChange}
                   className="hidden"
                 />
-                
+
                 <div className="flex items-center gap-2">
                   <Button variant="outline" onClick={handleFileSelect} disabled={isUploading}>
                     Seleccionar Archivo
@@ -582,19 +686,19 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
                 </div>
 
                 <div className="flex gap-2">
-                  <Button 
-                    onClick={handleUploadFile} 
-                    disabled={!file || isUploading} 
+                  <Button
+                    onClick={handleUploadFile}
+                    disabled={!file || isUploading}
                     className="bg-amber-600 hover:bg-amber-700"
                   >
                     <Upload className="h-4 w-4 mr-2" />
                     Subir y Analizar
                   </Button>
-                  
+
                   {preview && (
-                    <Button 
-                      onClick={handleConfirmImport} 
-                      disabled={!importId || isUploading} 
+                    <Button
+                      onClick={handleConfirmImport}
+                      disabled={!importId || isUploading}
                       className="bg-emerald-600 hover:bg-emerald-700"
                     >
                       <CheckCircle className="h-4 w-4 mr-2" />
@@ -641,51 +745,51 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
                     {(preview.headers ?? []).map((h: string) => (
                       <div key={h} className="flex items-center gap-2">
                         <span className="w-1/3 text-sm font-medium truncate">{h}</span>
-                    <select
-                      className="flex-1 border rounded px-2 py-1 text-sm bg-background"
-                      value={mapping[h] ?? ""}
-                      onChange={(e) => setMapping(m => ({ ...m, [h]: e.target.value }))}
-                    >
-                      <option value="">(ignorar)</option>
-                      {schemaFields.map((f: string) => (
-                        <option key={f} value={f}>{f}</option>
-                      ))}
-                    </select>
-                  </div>
-                ))}
-                
-                {preview.missingRequired?.length > 0 && (
-                  <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded">
-                    <p className="text-sm text-amber-800 dark:text-amber-200 flex items-center gap-2">
-                      <AlertCircle className="h-4 w-4" />
-                      Faltan campos requeridos: {preview.missingRequired.join(", ")}
-                    </p>
-                  </div>
-                )}
+                        <select
+                          className="flex-1 border rounded px-2 py-1 text-sm bg-background"
+                          value={mapping[h] ?? ""}
+                          onChange={(e) => setMapping(m => ({ ...m, [h]: e.target.value }))}
+                        >
+                          <option value="">(ignorar)</option>
+                          {schemaFields.map((f: string) => (
+                            <option key={f} value={f}>{f}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+
+                    {preview.missingRequired?.length > 0 && (
+                      <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded">
+                        <p className="text-sm text-amber-800 dark:text-amber-200 flex items-center gap-2">
+                          <AlertCircle className="h-4 w-4" />
+                          Faltan campos requeridos: {preview.missingRequired.join(", ")}
+                        </p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            )}
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Log de Actividad</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <pre className="text-xs whitespace-pre-wrap bg-slate-50 dark:bg-slate-900 p-4 rounded min-h-[100px] max-h-[150px] overflow-y-auto font-mono">
+                  {uploadLog || "Esperando acción..."}
+                </pre>
               </CardContent>
             </Card>
-          </>
+
+            <div className="flex justify-end gap-2 pt-4">
+              <Button variant="outline" onClick={handleSkipExcel} disabled={isUploading}>
+                Omitir Excel
+              </Button>
+            </div>
+          </div>
         )}
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Log de Actividad</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <pre className="text-xs whitespace-pre-wrap bg-slate-50 dark:bg-slate-900 p-4 rounded min-h-[100px] max-h-[150px] overflow-y-auto font-mono">
-              {uploadLog || "Esperando acción..."}
-            </pre>
-          </CardContent>
-        </Card>
-
-        <div className="flex justify-end gap-2 pt-4">
-          <Button variant="outline" onClick={handleSkipExcel} disabled={isUploading}>
-            Omitir Excel
-          </Button>
-        </div>
-      </div>
-    )}
-  </DialogContent>
-</Dialog>
-)
+      </DialogContent>
+    </Dialog>
+  )
 }

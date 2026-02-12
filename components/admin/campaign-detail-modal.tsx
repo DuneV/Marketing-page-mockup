@@ -436,7 +436,7 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                   </div>
                 </div>
 
-                <div className="flex items-start gap-3">
+                {/* <div className="flex items-start gap-3">
                   <DollarSign className="h-5 w-5 text-amber-600 mt-0.5" />
                   <div>
                     <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Presupuesto</p>
@@ -444,7 +444,7 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                       {formatCurrency(campaign.presupuesto)}
                     </p>
                   </div>
-                </div>
+                </div> */}
               </CardContent>
             </Card>
 

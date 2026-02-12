@@ -54,26 +54,27 @@ templatesRouter.get("/", async (req, res) => {
     }
     headerRow.alignment = { vertical: 'middle', horizontal: 'center' }
 
-    const exampleRow: string[] = headers.map(header => {
+    headerRow.alignment = { vertical: "middle", horizontal: "center" }
+
+    const exampleRow: string[] = headers.map((header) => {
       const fieldMeta = canonicalFields[header]
-      // Usa el primer alias como ejemplo, o el nombre del campo si no hay alias
       const firstAlias = fieldMeta?.aliases?.[0]
       return firstAlias || header
     })
     ws.addRow(exampleRow)
 
-    ws.columns = headers.map(h => ({ 
-      width: Math.max(h.length + 4, 20) 
-    }))
+
+    headers.forEach((h, i) => {
+      ws.getColumn(i + 1).width = Math.max(h.length + 4, 20)
+    })
 
     headers.forEach((header, index) => {
-      const fieldMeta = canonicalFields[header]
-      if (fieldMeta?.required) {
-        const colLetter = String.fromCharCode(65 + index) // A, B, C, etc.
-        const cell = ws.getCell(`${colLetter}1`)
-        cell.note = 'Campo requerido'
-      }
-    })
+    const fieldMeta = canonicalFields[header]
+    if (fieldMeta?.required) {
+      const cell = headerRow.getCell(index + 1) // 1-based
+      cell.note = "Campo requerido"
+    }
+  })
 
     const buf = await wb.xlsx.writeBuffer()
 
@@ -86,7 +87,7 @@ templatesRouter.get("/", async (req, res) => {
       `attachment; filename="${type}_${companyId}_template.xlsx"`
     )
 
-    console.log("✅ Template created successfully")
+    console.log("Template created successfully")
 
     res.send(Buffer.from(buf))
   } catch (e: any) {

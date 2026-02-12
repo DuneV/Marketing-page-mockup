@@ -80,15 +80,26 @@ export async function commitImport(importId: string, mapping: Record<string, str
 
 export async function downloadTemplate(companyId: string, importType: string) {
   const headers = await authHeaders()
+
+  if (!headers?.Authorization) {
+    throw new Error("No auth token (Authorization header missing)")
+  }
+
   const res = await fetch(
     `/api/templates?companyId=${encodeURIComponent(companyId)}&type=${encodeURIComponent(importType)}`,
-    { headers: { Authorization: headers.Authorization } }
+    {
+      method: "GET",
+      headers,         
+      cache: "no-store",
+    }
   )
+
   if (!res.ok) {
     const errorText = await res.text()
     console.error("downloadTemplate failed:", errorText)
     throw new Error(errorText)
   }
+
   return res.blob()
 }
 
@@ -151,4 +162,18 @@ export async function getImportById(importId: string) {
   })
   if (!res.ok) throw new Error(await res.text())
   return await res.json()
+}
+
+export async function downloadGoogleSheetAsXlsxBlob(sheetUrl: string) {
+  const res = await fetch(
+    `/api/google-sheets/export?format=xlsx&url=${encodeURIComponent(sheetUrl)}`,
+    { method: "GET", cache: "no-store" }
+  )
+
+  if (!res.ok) {
+    const txt = await res.text()
+    throw new Error(txt || `HTTP ${res.status}`)
+  }
+
+  return await res.blob()
 }
