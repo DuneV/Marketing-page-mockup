@@ -7,6 +7,37 @@ import { admin } from "../lib/firebaseAdmin.js"
 
 // EVITA el error de types de `uuid` en Cloud Build:
 // usa crypto.randomUUID() para crear IDs, y valida UUID sin depender del paquete.
+const ROLE_COL_CANDIDATES = ["role_in_company", "company_role", "role"] as const
+type RoleCol = typeof ROLE_COL_CANDIDATES[number]
+let _cachedRoleCol: RoleCol | null = null
+
+async function resolveCompanyUsersRoleCol(): Promise<RoleCol> {
+  if (_cachedRoleCol) return _cachedRoleCol
+
+  const rows = await query<{ column_name: string }>(
+    `
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'marketing'
+      AND table_name = 'company_users'
+      AND column_name = ANY($1::text[])
+    `,
+    [ROLE_COL_CANDIDATES]
+  )
+
+  const found = new Set(rows.map(r => r.column_name))
+  const col = ROLE_COL_CANDIDATES.find(c => found.has(c))
+
+  if (!col) {
+    throw new Error(
+      `No role column found in marketing.company_users. Expected one of: ${ROLE_COL_CANDIDATES.join(", ")}`
+    )
+  }
+
+  _cachedRoleCol = col
+  return col
+}
+
 function isUuid(v: any): boolean {
   if (typeof v !== "string") return false
   const s = v.trim()
@@ -41,16 +72,12 @@ function assertUuidParam(res: any, companyId: string) {
  * (SQL es el directorio. Firestore es el perfil).
  */
 async function getCompanyUsers(companyId: string) {
+  // Solo columnas mínimas: firebase_uid + email
   const links = await query(
     `select firebase_uid as uid,
-            email,
-            role_in_company as "companyRole",
-            area_id as "areaId",
-            status,
-            created_at as "createdAt"
+            email
      from marketing.company_users
-     where company_id = $1
-     order by created_at desc`,
+     where company_id = $1`,
     [companyId]
   )
 
@@ -65,10 +92,11 @@ async function getCompanyUsers(companyId: string) {
           email: l.email ?? data?.correo ?? null,
           nombre: data?.nombre ?? null,
           cedula: data?.cedula ?? null,
-          companyRole: l.companyRole ?? data?.companyRole ?? "member",
-          areaId: l.areaId ?? data?.areaId ?? null,
-          status: l.status ?? "active",
-          createdAt: l.createdAt ?? null,
+          // 👇 sin rol por ahora
+          companyRole: data?.companyRole ?? null,
+          areaId: data?.areaId ?? null,
+          status: "active",
+          createdAt: data?.createdAt ?? null,
         }
       } catch {
         return {
@@ -76,10 +104,10 @@ async function getCompanyUsers(companyId: string) {
           email: l.email ?? null,
           nombre: null,
           cedula: null,
-          companyRole: l.companyRole ?? "member",
-          areaId: l.areaId ?? null,
-          status: l.status ?? "active",
-          createdAt: l.createdAt ?? null,
+          companyRole: null,
+          areaId: null,
+          status: "active",
+          createdAt: null,
         }
       }
     })
@@ -93,12 +121,11 @@ async function getCompanyUsers(companyId: string) {
  * Se usa para operaciones "legacy" del admin que asumen un usuario principal.
  */
 async function getCompanyOwnerLink(companyId: string) {
-  // si tu tabla no tiene role_in_company, cambia esta query a "limit 1"
+  // Sin rol: devuelve el primer usuario ligado (si existe)
   return queryOne(
     `select firebase_uid, email
      from marketing.company_users
      where company_id = $1
-       and role_in_company = 'owner'
      limit 1`,
     [companyId]
   ) as Promise<{ firebase_uid: string; email: string } | null>
@@ -151,8 +178,7 @@ adminCompaniesRouter.get("/:companyId", async (req, res) => {
     const users = await getCompanyUsers(companyId)
 
     // compatibilidad: "user" = owner (si tu front todavía lo muestra)
-    const owner = users.find((u: any) => u.companyRole === "owner") ?? (users[0] ?? null)
-
+    const owner = users[0] ?? null
     return res.json({ company, users, user: owner })
   } catch (e: any) {
     return res.status(e?.status ?? 500).json({ error: e?.message ?? "error" })
@@ -301,10 +327,12 @@ adminCompaniesRouter.post("/", async (req, res) => {
       { merge: true }
     )
 
+    const roleCol = await resolveCompanyUsersRoleCol()
+
     await query(
-      `insert into marketing.company_users(firebase_uid, company_id, email, role_in_company, area_id)
-       values ($1,$2,$3,$4,$5)`,
-      [userRecord.uid, companyId, email, "owner", null]
+      `insert into marketing.company_users(firebase_uid, company_id, email)
+      values ($1,$2,$3)`,
+      [userRecord.uid, companyId, email]
     )
 
     return res.json({ ok: true, companyId, uid: userRecord.uid })

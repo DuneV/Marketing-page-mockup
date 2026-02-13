@@ -422,7 +422,7 @@ export function DashboardFromConfig({
 
     if (tipo === "combo") {
       const metrics = chart.metrics ?? []
-      if (metrics.length < 2) return <div className="text-sm text-muted-foreground">Combo requiere >= 2 métricas.</div>
+      if (metrics.length < 2) return <div className="text-sm text-muted-foreground">Combo requiere `{'>'}`= 2 métricas.</div>
 
       // aseguramos que cada métrica tenga key
       const metricKeys = metrics.map((m) => ({

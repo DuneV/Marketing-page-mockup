@@ -1,38 +1,44 @@
-// app/api/upload-proxy/route.ts
-
 import { NextRequest, NextResponse } from "next/server"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
+const ALLOWED = new Set([
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/json",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+])
+
 export async function PUT(request: NextRequest) {
   try {
     const uploadUrl = request.headers.get("x-upload-url")
-    
     if (!uploadUrl) {
       return NextResponse.json({ error: "Missing upload URL" }, { status: 400 })
     }
 
-    console.log("📤 Proxying upload to GCS")
+    const contentType =
+      request.headers.get("x-content-type") ??
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    if (!ALLOWED.has(contentType)) {
+      return NextResponse.json(
+        { error: `Content-Type not allowed: ${contentType}` },
+        { status: 400 }
+      )
+    }
 
     const body = await request.arrayBuffer()
 
     const response = await fetch(uploadUrl, {
       method: "PUT",
-      headers: {
-        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      },
+      headers: { "Content-Type": contentType },
       body,
-    })
-
-    console.log("📥 GCS response:", {
-      status: response.status,
-      statusText: response.statusText
     })
 
     if (!response.ok) {
       const errorText = await response.text()
-      console.error("❌ GCS upload failed:", errorText)
       return NextResponse.json(
         { error: `Upload failed: ${errorText}` },
         { status: response.status }
@@ -41,10 +47,6 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({ success: true })
   } catch (error: any) {
-    console.error("❌ Proxy error:", error)
-    return NextResponse.json(
-      { error: error.message },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
