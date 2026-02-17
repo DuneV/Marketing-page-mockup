@@ -150,3 +150,95 @@ export async function getMyCampaignsWithDashboard() {
     campaigns: any[]
   }>
 }
+
+export async function getFilterOptions(campaignId: string, fields: string[]) {
+  const headers = await authHeaders()
+  
+  const fieldsParam = fields.join(",")
+  const res = await fetch(`/api/campaigns/${campaignId}/filter-options?fields=${encodeURIComponent(fieldsParam)}`, {
+    method: "GET",
+    headers,
+    cache: "no-store",
+  })
+
+  if (!res.ok) throw new Error(await res.text())
+  
+  // El backend devuelve: { options: { fieldName: [{value, label}] }, importId }
+  // o puede devolver directamente: { fieldName: [values] }
+  return res.json() as Promise<{
+    options?: Record<string, Array<{ value: string; label: string }>>
+    importId?: string
+    [key: string]: any
+  }>
+}
+
+/**
+ * Sube un archivo de imagen a GCS y devuelve el gsUri
+ */
+export async function uploadAsset(params: {
+  companyId: string
+  campaignId?: string
+  file: File
+}): Promise<{ gcsUri: string }> {
+  const headers = await authHeaders()
+
+  // 1) Solicitar URL de subida firmada
+  const urlRes = await fetch(`/api/assets/upload-url`, {
+    method: "POST",
+    headers: {
+      ...headers,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      companyId: params.companyId,
+      campaignId: params.campaignId,
+      filename: params.file.name,
+      contentType: params.file.type,
+    }),
+  })
+
+  if (!urlRes.ok) {
+    const errorText = await urlRes.text()
+    throw new Error(`Failed to get upload URL: ${errorText}`)
+  }
+
+  const { uploadUrl, gcsUri } = await urlRes.json()
+
+  // 2) Subir el archivo directamente a GCS usando la URL firmada
+  const uploadRes = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: {
+      "Content-Type": params.file.type,
+    },
+    body: params.file,
+  })
+
+  if (!uploadRes.ok) {
+    throw new Error(`Failed to upload file: ${uploadRes.statusText}`)
+  }
+
+  return { gcsUri }
+}
+
+/**
+ * Obtiene una URL pública temporal (firmada) para leer un asset desde GCS
+ */
+export async function getAssetReadUrl(gcsUri: string, expiresMinutes: number = 60): Promise<string> {
+  const headers = await authHeaders()
+
+  const res = await fetch(
+    `/api/assets/read-url?gsUri=${encodeURIComponent(gcsUri)}&expiresMinutes=${expiresMinutes}`,
+    {
+      method: "GET",
+      headers,
+      cache: "no-store",
+    }
+  )
+
+  if (!res.ok) {
+    throw new Error(await res.text())
+  }
+
+  const { url } = await res.json()
+  return url
+}

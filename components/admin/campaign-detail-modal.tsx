@@ -6,11 +6,11 @@ import { useState, useRef, useEffect } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Calendar,
-  DollarSign,
   Building2,
   User,
   FileText,
@@ -67,6 +67,23 @@ const statusLabels: Record<string, string> = {
   cancelada: "Cancelada",
 }
 
+// ============================
+// Helpers Google Sheets (igual Create)
+// ============================
+function parseGoogleSheetsUrl(url: string): { spreadsheetId: string; gid?: string } | null {
+  const m = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/)
+  if (!m) return null
+  const spreadsheetId = m[1]
+  const gidMatch = url.match(/[?#]gid=(\d+)/) || url.match(/[?&]gid=(\d+)/)
+  const gid = gidMatch?.[1]
+  return { spreadsheetId, gid }
+}
+
+function buildExportXlsxUrl(spreadsheetId: string, gid?: string) {
+  const base = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=xlsx`
+  return gid ? `${base}&gid=${gid}` : base
+}
+
 export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetailModalProps) {
   // Hooks SIEMPRE arriba, sin returns antes.
   const [file, setFile] = useState<File | null>(null)
@@ -79,6 +96,9 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
   const [latest, setLatest] = useState<LatestInfo | null>(null)
   const [versions, setVersions] = useState<ImportVersion[]>([])
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null)
+
+  // ✅ NUEVO: URL de Google Sheets (NO se guarda en campaña; solo para importar)
+  const [sheetUrl, setSheetUrl] = useState<string>("")
 
   const campaignId = campaign?.id ?? null
   const companyId = campaign?.empresaId ?? null
@@ -95,54 +115,106 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
     })
   }
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("es-CO", {
-      style: "currency",
-      currency: "COP",
-      minimumFractionDigits: 0,
-    }).format(amount)
-  }
+  // ✅ Fecha “última versión” para Info Adicional
+  const latestVersionDateStr =
+    latest?.createdAt ||
+    versions?.[0]?.createdAt ||
+    versions?.[0]?.updatedAt ||
+    null
 
   // useEffect SIEMPRE se declara, y adentro haces el guard.
   useEffect(() => {
-  if (!isOpen || !campaignId) return
+    if (!isOpen || !campaignId) return
 
-  ;(async () => {
-    try {
-      // 1) Latest (lo que ya tenías)
-      const r = await getLatestCampaignImport(campaignId)
-      if (r?.exists && r?.latest) {
-        setLatest({
-          filename: r.latest.filename,
-          status: r.latest.status,
-          createdAt: r.latest.createdAt,
-        })
-      } else {
+    ;(async () => {
+      try {
+        // 1) Latest
+        const r = await getLatestCampaignImport(campaignId)
+        if (r?.exists && r?.latest) {
+          setLatest({
+            filename: r.latest.filename,
+            status: r.latest.status,
+            createdAt: r.latest.createdAt,
+          })
+        } else {
+          setLatest(null)
+        }
+
+        // 2) Versions
+        const v = await listCampaignImports(campaignId)
+        const imports: ImportVersion[] = (v?.imports ?? []).map((it: any) => ({
+          id: it.id,
+          filename: it.filename ?? it.originalFilename ?? it.original_filename,
+          status: it.status,
+          createdAt: it.createdAt ?? it.created_at,
+          updatedAt: it.updatedAt ?? it.updated_at,
+        }))
+
+        setVersions(imports)
+        setSelectedVersionId(imports[0]?.id ?? null) // asumiendo orden desc
+      } catch {
         setLatest(null)
+        setVersions([])
+        setSelectedVersionId(null)
       }
-
-      // 2) Versions (NUEVO)
-      const v = await listCampaignImports(campaignId)
-      const imports: ImportVersion[] = (v?.imports ?? []).map((it: any) => ({
-        id: it.id,
-        filename: it.filename ?? it.originalFilename ?? it.original_filename,
-        status: it.status,
-        createdAt: it.createdAt ?? it.created_at,
-        updatedAt: it.updatedAt ?? it.updated_at,
-      }))
-
-      setVersions(imports)
-      setSelectedVersionId(imports[0]?.id ?? null) // asumiendo orden desc
-    } catch {
-      setLatest(null)
-      setVersions([])
-      setSelectedVersionId(null)
-    }
-  })()
-}, [isOpen, campaignId])
+    })()
+  }, [isOpen, campaignId])
 
   // Ahora sí, puedes hacer early return (después de hooks)
   if (!campaign) return null
+
+  // ============================
+  // ✅ NUEVO: cargar XLSX desde Google Sheets (via proxy)
+  // ============================
+  const handleLoadFromGoogleSheets = async () => {
+    const url = sheetUrl.trim()
+    if (!url) {
+      toast.error("Pega una URL de Google Sheets")
+      return
+    }
+
+    const parsed = parseGoogleSheetsUrl(url)
+    if (!parsed) {
+      toast.error("URL inválida. Debe ser un link de Google Sheets")
+      return
+    }
+
+    try {
+      setIsUploading(true)
+      appendLog("📎 Leyendo Google Sheets...")
+
+      const exportUrl = buildExportXlsxUrl(parsed.spreadsheetId, parsed.gid)
+
+      // Proxy server-side para evitar CORS
+      const resp = await fetch(`/api/sheets-proxy?url=${encodeURIComponent(exportUrl)}`)
+      if (!resp.ok) {
+        const errText = await resp.text()
+        throw new Error(errText || `Error descargando sheet: ${resp.status}`)
+      }
+
+      const blob = await resp.blob()
+      const filename = `${campaign.nombre.replace(/\s+/g, "_")}_from_sheets.xlsx`
+
+      const asFile = new File([blob], filename, {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      })
+
+      // deja el file listo para los flujos existentes
+      setFile(asFile)
+      setImportId(null)
+      setPreview(null)
+      setMapping({})
+      setUploadLog(`✓ Sheet convertido a XLSX: ${filename}\n`)
+
+      toast.success("Sheet cargado", { description: "Ahora puedes Subir y Analizar o Actualizar Excel (auto)" })
+    } catch (e: any) {
+      console.error(e)
+      toast.error(e?.message ?? "Error leyendo Google Sheets")
+      appendLog(`ERROR: ${e?.message ?? e}`)
+    } finally {
+      setIsUploading(false)
+    }
+  }
 
   // Descargar plantilla específica para esta campaña
   const handleDownloadTemplate = async () => {
@@ -197,15 +269,21 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
       toast.error("Falta companyId en la campaña")
       return
     }
+    if (!campaignId) {
+      toast.error("Falta campaignId")
+      return
+    }
 
     try {
       setIsUploading(true)
       appendLog("1) Creando importación...")
 
+      // ✅ IMPORTANT: asociar a campaignId (como en Create)
       const { importId: newImportId, uploadUrl } = await createImport({
         companyId,
         importType: "campaigns",
         filename: file.name,
+        campaignId,
       })
 
       setImportId(newImportId)
@@ -253,6 +331,30 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
       appendLog("Los datos se procesarán en segundo plano")
 
       toast.success("Importación iniciada", { description: "Los datos se están procesando" })
+
+      // refrescar latest/versions para que Info Adicional use la “última versión”
+      try {
+        if (campaignId) {
+          const r = await getLatestCampaignImport(campaignId)
+          if (r?.exists && r?.latest) {
+            setLatest({
+              filename: r.latest.filename,
+              status: r.latest.status,
+              createdAt: r.latest.createdAt,
+            })
+          }
+          const v = await listCampaignImports(campaignId)
+          const imports: ImportVersion[] = (v?.imports ?? []).map((it: any) => ({
+            id: it.id,
+            filename: it.filename ?? it.originalFilename ?? it.original_filename,
+            status: it.status,
+            createdAt: it.createdAt ?? it.created_at,
+            updatedAt: it.updatedAt ?? it.updated_at,
+          }))
+          setVersions(imports)
+          setSelectedVersionId(imports[0]?.id ?? null)
+        }
+      } catch {}
 
       setTimeout(() => {
         setFile(null)
@@ -314,6 +416,8 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
       toast.success("Excel actualizado", {
         description: "Se reemplazó el anterior y se re-procesó con el mismo mapping.",
       })
+
+      // refrescar versions/latest (para Info adicional)
       try {
         const v = await listCampaignImports(campaignId)
         const imports: ImportVersion[] = (v?.imports ?? []).map((it: any) => ({
@@ -326,7 +430,7 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
         setVersions(imports)
         setSelectedVersionId(imports[0]?.id ?? null)
       } catch {}
-      // refrescar “versión actual”
+
       try {
         const r = await getLatestCampaignImport(campaignId)
         if (r?.exists && r?.latest) {
@@ -435,16 +539,6 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                     </div>
                   </div>
                 </div>
-
-                {/* <div className="flex items-start gap-3">
-                  <DollarSign className="h-5 w-5 text-amber-600 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Presupuesto</p>
-                    <p className="text-xl font-bold text-amber-600">
-                      {formatCurrency(campaign.presupuesto)}
-                    </p>
-                  </div>
-                </div> */}
               </CardContent>
             </Card>
 
@@ -507,22 +601,25 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                   <span className="text-sm text-slate-600 dark:text-slate-400">ID de Campaña</span>
                   <span className="text-sm font-mono font-medium">{campaign.id}</span>
                 </div>
+
                 {campaign.bucketPath && (
                   <div className="flex justify-between items-center">
                     <span className="text-sm text-slate-600 dark:text-slate-400">Ruta Bucket</span>
                     <span className="text-sm font-mono font-medium">{campaign.bucketPath}</span>
                   </div>
                 )}
+
+                {/* ✅ CAMBIO: ambas fechas = fecha de última versión */}
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-slate-600 dark:text-slate-400">Creada el</span>
                   <span className="text-sm font-medium">
-                    {campaign.createdAt ? formatDate(campaign.createdAt) : "N/A"}
+                    {latestVersionDateStr ? formatDate(latestVersionDateStr) : "N/A"}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-slate-600 dark:text-slate-400">Última actualización</span>
                   <span className="text-sm font-medium">
-                    {campaign.updatedAt ? formatDate(campaign.updatedAt) : "N/A"}
+                    {latestVersionDateStr ? formatDate(latestVersionDateStr) : "N/A"}
                   </span>
                 </div>
               </CardContent>
@@ -532,42 +629,43 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
           {/* TAB: Datos Excel */}
           <TabsContent value="excel" className="space-y-4">
             <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Versiones</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {versions.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Aún no hay imports para esta campaña.</p>
-              ) : (
-                <div className="space-y-2">
-                  {versions.map((v) => (
-                    <button
-                      key={v.id}
-                      type="button"
-                      onClick={() => setSelectedVersionId(v.id)}
-                      className={`w-full text-left border rounded p-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-900 ${
-                        selectedVersionId === v.id
-                          ? "border-amber-600"
-                          : "border-slate-200 dark:border-slate-800"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="font-mono truncate">{v.id}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {v.createdAt ? new Date(v.createdAt).toLocaleString("es-ES") : ""}
+              <CardHeader>
+                <CardTitle className="text-lg">Versiones</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {versions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Aún no hay imports para esta campaña.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {versions.map((v) => (
+                      <button
+                        key={v.id}
+                        type="button"
+                        onClick={() => setSelectedVersionId(v.id)}
+                        className={`w-full text-left border rounded p-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-900 ${
+                          selectedVersionId === v.id
+                            ? "border-amber-600"
+                            : "border-slate-200 dark:border-slate-800"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="font-mono truncate">{v.id}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {v.createdAt ? new Date(v.createdAt).toLocaleString("es-ES") : ""}
+                          </div>
                         </div>
-                      </div>
 
-                      <div className="flex items-center justify-between gap-3 mt-1">
-                        <div className="truncate">{v.filename ?? "(sin filename)"}</div>
-                        <div className="text-xs">{v.status ?? ""}</div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                        <div className="flex items-center justify-between gap-3 mt-1">
+                          <div className="truncate">{v.filename ?? "(sin filename)"}</div>
+                          <div className="text-xs">{v.status ?? ""}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">Plantilla de Datos</CardTitle>
@@ -599,6 +697,27 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                     <span>Versión actual: (sin import)</span>
                   )}
                 </div>
+
+                {/* ✅ NUEVO: Google Sheets URL (igual Create) */}
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Importar desde Google Sheets (URL)</p>
+                  <div className="flex gap-2">
+                    <Input
+                      value={sheetUrl}
+                      onChange={(e) => setSheetUrl(e.target.value)}
+                      placeholder="Pega URL de Google Sheets (https://docs.google.com/spreadsheets/d/...)"
+                      disabled={isUploading}
+                    />
+                    <Button variant="outline" onClick={handleLoadFromGoogleSheets} disabled={isUploading}>
+                      Cargar URL
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    El Sheet debe ser accesible por enlace. Esto NO se guarda en la campaña.
+                  </p>
+                </div>
+
+                <div className="border-t pt-4" />
 
                 <input
                   ref={fileInputRef}

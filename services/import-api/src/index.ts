@@ -8,6 +8,8 @@ import { adminCompaniesRouter } from "./routes/admin-companies.js";
 import { campaignsRouter } from "./routes/campaigns.js"
 import { adminSchemasRouter } from "./routes/admin-schemas.js"
 import { companyUsersRouter } from "./routes/company-users.js"
+// import { sheetsRouter } from "./routes/sheets.js"
+import { assetsRouter } from "./routes/assets.js"
 
 const app = express()
 
@@ -18,7 +20,8 @@ app.use(cors({
 app.use(express.json({ limit: "2mb" }))
 
 app.get("/health", (_req, res) => res.json({ ok: true }))
-
+// app.use("/sheets", sheetsRouter)
+app.use("/assets", assetsRouter)
 app.use("/imports", importsRouter)
 app.use("/templates", templatesRouter)
 app.use("/admin/companies", adminCompaniesRouter);

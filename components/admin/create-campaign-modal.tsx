@@ -5,7 +5,7 @@
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
-import { useState, useRef, type ChangeEvent } from "react"
+import { useState, useRef, useEffect, type ChangeEvent } from "react"
 
 import {
   Dialog,
@@ -123,7 +123,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
   }
 
   // ============================================================
-  // ✅ NUEVO: Helpers para leer URL de Google Sheets
+  // NUEVO: Helpers para leer URL de Google Sheets
   // ============================================================
   function parseGoogleSheetsUrl(url: string): { spreadsheetId: string; gid?: string } | null {
     // Ej: https://docs.google.com/spreadsheets/d/<ID>/edit?gid=123#gid=123
@@ -143,7 +143,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
     return gid ? `${base}&gid=${gid}` : base
   }
 
-  // ✅ NUEVO: convierte URL de sheets -> File .xlsx listo para tu flujo actual
+  // NUEVO: convierte URL de sheets -> File .xlsx listo para tu flujo actual
   const handleLoadFromGoogleSheets = async () => {
     if (!sheetUrl.trim()) {
       toast.error("Pega una URL de Google Sheets")
@@ -432,7 +432,12 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
   const progress = step === "campaign" ? 50 : 100
 
   return (
-    <Dialog open={isOpen} onOpenChange={handleClose}>
+    <Dialog
+        open={isOpen}
+        onOpenChange={(v) => {
+          if (!v) handleClose()
+        }}
+      >
       <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>

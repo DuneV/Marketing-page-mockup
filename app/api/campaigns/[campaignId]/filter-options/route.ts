@@ -25,12 +25,13 @@ export async function GET(req: Request, ctx: { params: Promise<{ campaignId: str
       cache: "no-store",
     })
 
-    const text = await upstream.text()
-    return new NextResponse(text, {
+    const data = await upstream.json()
+    
+    return NextResponse.json(data, {
       status: upstream.status,
-      headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },
     })
   } catch (e: any) {
+    console.error("Error in filter-options proxy:", e)
     return NextResponse.json({ error: e?.message ?? "error" }, { status: 500 })
   }
 }

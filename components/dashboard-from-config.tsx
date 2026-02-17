@@ -1,13 +1,12 @@
 "use client"
 
-import React, { useMemo } from "react"
+import React, { useMemo, useState, useEffect } from "react"
 import type {
   ReportConfiguration,
   KPIDefinition,
   ChartDefinition,
   DashboardRow,
   KPIOperation,
-  DataSource,
   ChartMetricDefinition,
 } from "@/types/report-config"
 
@@ -32,20 +31,127 @@ import {
   ComposedChart,
 } from "recharts"
 
+import { Button } from "@/components/ui/button"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Input } from "@/components/ui/input"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Filter, X, ChevronLeft, ChevronRight, ZoomIn, ExternalLink, Image as ImageIcon, BarChart3, Plus, Calendar } from "lucide-react"
+
 // -----------------------------
 // Types
 // -----------------------------
 type RowData = Record<string, any>
+type KPIValueMap = Record<string, number>
 
-type KPIValueMap = Record<string, number> // kpiId -> value
-
-// -----------------------------
-// Helpers: stats
-// -----------------------------
-function isFiniteNumber(v: any): v is number {
-  return typeof v === "number" && Number.isFinite(v)
+type DashboardConstant = {
+  key: string
+  value: number
+  label?: string
 }
 
+type BrandingConfig = {
+  heroImageUrl?: string
+  heroTitle?: string
+  heroSubtitle?: string
+  heroTextColor?: string // NEW: color del texto en el hero
+  heroImageHeight?: number // NEW: altura de la imagen hero en px (default 160)
+  galleryPhotoFields?: string[] // NEW: campos configurados que contienen fotos
+  galleryMetadataFields?: string[] // NEW: campos a mostrar como metadata
+  galleryImageHeight?: number // NEW: altura de las imágenes en px (default 500)
+}
+
+type FilterCondition = {
+  campo: string
+  operador: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "contains" | "startsWith" | "endsWith"
+  valor: any
+  columnas?: number // NEW: tamaño del filtro (1-12)
+}
+
+type ReportFilters = {
+  campanas?: string[]
+  fechas?: {
+    inicio?: string
+    fin?: string
+  }
+  condiciones?: FilterCondition[]
+}
+
+// Extender KPIDefinition con columnas
+type ExtendedKPI = KPIDefinition & {
+  columnas?: number // NEW: tamaño del KPI (1-12)
+}
+
+// -----------------------------
+// Helpers: filtering
+// -----------------------------
+function applyFilters(rows: RowData[], filters: ReportFilters | undefined): RowData[] {
+  if (!filters) return rows
+
+  let filtered = [...rows]
+
+  // Filter by date range
+  if (filters.fechas?.inicio || filters.fechas?.fin) {
+    filtered = filtered.filter((row) => {
+      const dateField = row.date || row.fecha
+      if (!dateField) return true
+
+      const rowDate = new Date(dateField)
+      if (filters.fechas?.inicio) {
+        const startDate = new Date(filters.fechas.inicio)
+        if (rowDate < startDate) return false
+      }
+      if (filters.fechas?.fin) {
+        const endDate = new Date(filters.fechas.fin)
+        if (rowDate > endDate) return false
+      }
+      return true
+    })
+  }
+
+  // Apply custom conditions
+  if (filters.condiciones && filters.condiciones.length > 0) {
+    filtered = filtered.filter((row) => {
+      return filters.condiciones!.every((condition) => {
+        // Skip empty conditions
+        if (!condition.valor && condition.valor !== 0) return true
+
+        const rowValue = row[condition.campo]
+        const filterValue = condition.valor
+
+        switch (condition.operador) {
+          case "eq":
+            return rowValue == filterValue
+          case "ne":
+            return rowValue != filterValue
+          case "gt":
+            return rowValue > filterValue
+          case "gte":
+            return rowValue >= filterValue
+          case "lt":
+            return rowValue < filterValue
+          case "lte":
+            return rowValue <= filterValue
+          case "contains":
+            return String(rowValue).toLowerCase().includes(String(filterValue).toLowerCase())
+          case "startsWith":
+            return String(rowValue).toLowerCase().startsWith(String(filterValue).toLowerCase())
+          case "endsWith":
+            return String(rowValue).toLowerCase().endsWith(String(filterValue).toLowerCase())
+          default:
+            return true
+        }
+      })
+    })
+  }
+
+  return filtered
+}
+
+// -----------------------------
+// Helpers: numbers
+// -----------------------------
 function toNumber(v: any): number | null {
   if (v == null) return null
   if (typeof v === "number") return Number.isFinite(v) ? v : null
@@ -62,8 +168,7 @@ function median(nums: number[]): number {
 function variance(nums: number[]): number {
   if (nums.length === 0) return 0
   const m = nums.reduce((s, x) => s + x, 0) / nums.length
-  const v = nums.reduce((s, x) => s + (x - m) ** 2, 0) / nums.length
-  return v
+  return nums.reduce((s, x) => s + (x - m) ** 2, 0) / nums.length
 }
 
 function std(nums: number[]): number {
@@ -109,18 +214,14 @@ function countByField(rows: RowData[], field: string | "__rows__"): number {
 function formatKpiValue(v: number, kpi: KPIDefinition): string {
   const dec = Math.max(0, Math.min(6, Number(kpi.decimales ?? 0)))
   const unidad = (kpi.unidad ?? "").trim()
-  const fmt = kpi.formato ?? "number"
+  const fmt = (kpi.formato ?? "number") as any
 
-  // nota: puedes ajustar locale si quieres "es-CO"
   if (fmt === "percent") {
-    // asumimos que v ya viene como porcentaje (0-100) si usas op pct,
-    // si no, cámbialo aquí (v * 100)
     const s = v.toFixed(dec) + "%"
     return unidad ? `${s} ${unidad}` : s
   }
 
   if (fmt === "currency") {
-    // si unidad es "COP" / "USD" etc. intentamos usar Intl con esa moneda
     if (unidad && /^[A-Z]{3}$/.test(unidad)) {
       try {
         return new Intl.NumberFormat("es-CO", {
@@ -137,7 +238,6 @@ function formatKpiValue(v: number, kpi: KPIDefinition): string {
     return unidad ? `${s} ${unidad}` : s
   }
 
-  // number
   const s = new Intl.NumberFormat("es-CO", {
     minimumFractionDigits: dec,
     maximumFractionDigits: dec,
@@ -146,7 +246,7 @@ function formatKpiValue(v: number, kpi: KPIDefinition): string {
 }
 
 // -----------------------------
-// KPI computation (field + formula)
+// KPI computation (field + formula + const + num)
 // -----------------------------
 function computeBaseKpiValue(rows: RowData[], kpi: KPIDefinition): number {
   const op = kpi.operacion
@@ -165,30 +265,53 @@ function computeBaseKpiValue(rows: RowData[], kpi: KPIDefinition): number {
   return aggregateNumeric(nums, op)
 }
 
-function computeFormulaKpiValue(kpi: KPIDefinition, valuesById: KPIValueMap): number {
+function parseOperandRef(raw: string) {
+  const s = String(raw ?? "").trim()
+  if (!s) return { kind: "empty" as const }
+  if (s.startsWith("kpi:")) return { kind: "kpi" as const, id: s.slice(4) }
+  if (s.startsWith("const:")) return { kind: "const" as const, key: s.slice(6) }
+  if (s.startsWith("num:")) return { kind: "num" as const, value: Number(s.slice(4)) }
+  return { kind: "kpi" as const, id: s }
+}
+
+function resolveOperand(raw: string, valuesById: KPIValueMap, constMap: Record<string, number>): { ok: boolean; value: number } {
+  const r = parseOperandRef(raw)
+  if (r.kind === "num") return { ok: true, value: Number.isFinite(r.value) ? r.value : 0 }
+  if (r.kind === "const") return { ok: true, value: Number(constMap[r.key] ?? 0) }
+  if (r.kind === "kpi") {
+    const has = Object.prototype.hasOwnProperty.call(valuesById, r.id)
+    return { ok: has, value: Number(valuesById[r.id] ?? 0) }
+  }
+  return { ok: false, value: 0 }
+}
+
+function computeFormulaKpiValue(kpi: KPIDefinition, valuesById: KPIValueMap, constMap: Record<string, number>): { ok: boolean; value: number } {
   const f = kpi.formula
-  if (!f?.aKpiId || !f?.bKpiId || !f?.op) return 0
-  const A = valuesById[f.aKpiId] ?? 0
-  const B = valuesById[f.bKpiId] ?? 0
+  if (!f?.aKpiId || !f?.bKpiId || !f?.op) return { ok: false, value: 0 }
+
+  const A = resolveOperand(f.aKpiId, valuesById, constMap)
+  const B = resolveOperand(f.bKpiId, valuesById, constMap)
+
+  if (!A.ok || !B.ok) return { ok: false, value: 0 }
 
   switch (f.op) {
     case "add":
-      return A + B
+      return { ok: true, value: A.value + B.value }
     case "sub":
-      return A - B
+      return { ok: true, value: A.value - B.value }
     case "mul":
-      return A * B
+      return { ok: true, value: A.value * B.value }
     case "div":
-      return B === 0 ? 0 : A / B
+      return { ok: true, value: B.value === 0 ? 0 : A.value / B.value }
     case "pct":
-      return B === 0 ? 0 : (A / B) * 100
+      return { ok: true, value: B.value === 0 ? 0 : (A.value / B.value) * 100 }
     default:
-      return 0
+      return { ok: true, value: 0 }
   }
 }
 
 // -----------------------------
-// Chart series builder
+// Chart dataset builder (groupBy + optional seriesBy)
 // -----------------------------
 function groupRows(rows: RowData[], groupBy: string): Map<string, RowData[]> {
   const m = new Map<string, RowData[]>()
@@ -202,63 +325,732 @@ function groupRows(rows: RowData[], groupBy: string): Map<string, RowData[]> {
   return m
 }
 
-function seriesForChart(rows: RowData[], chart: ChartDefinition): any[] {
-  const groupBy = chart.groupBy as string | undefined
-  if (!groupBy) return []
+function uniqueSeriesValues(rows: RowData[], seriesBy: string): string[] {
+  const s = new Set<string>()
+  for (const r of rows) {
+    const v = r?.[seriesBy]
+    const k = v == null || String(v).trim() === "" ? "(vacío)" : String(v)
+    s.add(k)
+  }
+  return Array.from(s.values())
+}
 
-  const grouped = groupRows(rows, groupBy)
+type BuiltSeries = {
+  data: any[]
+  seriesKeys: { key: string; label: string; axis?: "left" | "right"; render?: "bar" | "line" }[]
+}
+
+function buildSeries(rows: RowData[], chart: ChartDefinition): BuiltSeries {
+  const groupBy = chart.groupBy as string | undefined
+  if (!groupBy) return { data: [], seriesKeys: [] }
 
   const mt = chart.measureType ?? "count"
-  const metrics = chart.metrics ?? []
+  const metrics = (chart.metrics ?? []) as ChartMetricDefinition[]
+  const seriesBy = chart.seriesBy as string | undefined
 
+  const grouped = groupRows(rows, groupBy)
   const out: any[] = []
-  for (const [name, bucket] of grouped.entries()) {
-    const point: any = { name }
 
-    if (mt === "count") {
-      const cf = (chart.countField ?? "__rows__") as any
-      point.value = countByField(bucket, cf)
-    } else {
-      // numeric
-      if (metrics.length > 0) {
-        for (const m of metrics) {
-          const field = m.field as string
-          const op = m.agg
+  if (!seriesBy) {
+    const keys: BuiltSeries["seriesKeys"] = []
+
+    for (const [name, bucket] of grouped.entries()) {
+      const point: any = { name }
+
+      if (mt === "count") {
+        const cf = (chart.countField ?? "__rows__") as any
+        point.value = countByField(bucket, cf)
+      } else {
+        if (metrics.length > 0) {
+          for (const m of metrics) {
+            const field = m.field as string
+            const op = m.agg
+            const nums: number[] = []
+            for (const r of bucket) {
+              const n = toNumber(r?.[field])
+              if (n != null) nums.push(n)
+            }
+            const k = `${field}__${op}`
+            point[k] = aggregateNumeric(nums, op)
+          }
+        } else if (chart.metric && chart.agg) {
+          const field = chart.metric as string
+          const op = chart.agg
           const nums: number[] = []
           for (const r of bucket) {
             const n = toNumber(r?.[field])
             if (n != null) nums.push(n)
           }
-          const key = `${field}__${op}`
-          point[key] = aggregateNumeric(nums, op)
+          point.value = aggregateNumeric(nums, op)
         }
-      } else if (chart.metric && chart.agg) {
-        // legacy
-        const field = chart.metric as string
-        const op = chart.agg
-        const nums: number[] = []
-        for (const r of bucket) {
-          const n = toNumber(r?.[field])
-          if (n != null) nums.push(n)
+      }
+
+      out.push(point)
+    }
+
+    if (mt === "count") {
+      keys.push({ key: "value", label: "count", axis: "left", render: "bar" })
+    } else if (metrics.length > 0) {
+      for (const m of metrics) keys.push({ key: `${m.field}__${m.agg}`, label: `${m.field} (${m.agg})`, axis: m.axis, render: m.render })
+    } else if (chart.metric && chart.agg) {
+      keys.push({ key: "value", label: `${chart.metric} (${chart.agg})`, axis: "left", render: "bar" })
+    }
+
+    return { data: out, seriesKeys: keys }
+  }
+
+  // con seriesBy: pivot
+  const seriesValues = uniqueSeriesValues(rows, seriesBy)
+
+  const keys: BuiltSeries["seriesKeys"] = []
+  for (const sv of seriesValues) {
+    if (mt === "count") {
+      keys.push({ key: sv, label: sv, axis: "left", render: "bar" })
+    } else if (metrics.length > 0) {
+      for (const m of metrics) {
+        keys.push({
+          key: `${sv}__${m.field}__${m.agg}`,
+          label: `${sv} · ${m.field} (${m.agg})`,
+          axis: m.axis,
+          render: m.render,
+        })
+      }
+    } else if (chart.metric && chart.agg) {
+      keys.push({ key: `${sv}__value`, label: `${sv} · ${chart.metric} (${chart.agg})`, axis: "left", render: "bar" })
+    }
+  }
+
+  for (const [name, bucket] of grouped.entries()) {
+    const point: any = { name }
+
+    for (const sv of seriesValues) {
+      const sub = bucket.filter((r) => {
+        const v = r?.[seriesBy]
+        const k = v == null || String(v).trim() === "" ? "(vacío)" : String(v)
+        return k === sv
+      })
+
+      if (mt === "count") {
+        const cf = (chart.countField ?? "__rows__") as any
+        point[sv] = countByField(sub, cf)
+      } else {
+        if (metrics.length > 0) {
+          for (const m of metrics) {
+            const nums: number[] = []
+            for (const r of sub) {
+              const n = toNumber(r?.[m.field as string])
+              if (n != null) nums.push(n)
+            }
+            point[`${sv}__${m.field}__${m.agg}`] = aggregateNumeric(nums, m.agg)
+          }
+        } else if (chart.metric && chart.agg) {
+          const nums: number[] = []
+          for (const r of sub) {
+            const n = toNumber(r?.[chart.metric as string])
+            if (n != null) nums.push(n)
+          }
+          point[`${sv}__value`] = aggregateNumeric(nums, chart.agg)
         }
-        point.value = aggregateNumeric(nums, op)
       }
     }
 
     out.push(point)
   }
 
-  return out
+  return { data: out, seriesKeys: keys }
 }
 
 // -----------------------------
-// UI pieces (minimal)
+// UI pieces
 // -----------------------------
-function Card({ title, value }: { title: string; value: string }) {
+function KpiCard({ title, value, columnas }: { title: string; value: string; columnas: number }) {
   return (
-    <div className="rounded-lg border bg-white p-4">
+    <div className="rounded-lg border bg-white p-4" style={{ gridColumn: `span ${columnas} / span ${columnas}` }}>
       <div className="text-xs text-muted-foreground">{title}</div>
       <div className="mt-1 text-2xl font-semibold">{value}</div>
+    </div>
+  )
+}
+
+// Evidence Gallery Component
+function EvidenceGallery({
+  rows,
+  photoFields,
+  metadataFields,
+  imageHeight = 500,
+}: {
+  rows: RowData[]
+  photoFields: string[]
+  metadataFields?: string[] // Campos específicos a mostrar como metadata
+  imageHeight?: number // Altura del contenedor de imagen en px
+}) {
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [selectedImage, setSelectedImage] = useState<string | null>(null)
+
+  // Extraer todas las fotos de todas las filas
+  const allPhotos = useMemo(() => {
+    const photos: Array<{ url: string; field: string; rowData: RowData; index: number }> = []
+    
+    rows.forEach((row, rowIndex) => {
+      photoFields.forEach(field => {
+        const value = row[field]
+        if (!value) return
+
+        // Extraer URLs - puede ser string directo, objeto {text, hyperlink}, o múltiples separadas por comas
+        let urls: string[] = []
+        
+        if (typeof value === 'object' && value !== null) {
+          // Si es objeto con hyperlink o text
+          const urlStr = value.hyperlink || value.text
+          if (urlStr) {
+            urls = String(urlStr).split(',').map(u => u.trim()).filter(Boolean)
+          }
+        } else {
+          // Si es string directo
+          urls = String(value).split(',').map(u => u.trim()).filter(Boolean)
+        }
+        
+        urls.forEach(url => {
+          let imageUrl = url
+          
+          // Para Google Drive, convertir al formato thumbnail y usar proxy
+          if (url.includes('drive.google.com')) {
+            // Extraer ID de diferentes formatos
+            const idMatch = url.match(/[?&]id=([^&]+)/) || url.match(/\/d\/([^/?]+)/)
+            if (idMatch) {
+              const fileId = idMatch[1]
+              const driveUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`
+              // Usar proxy para evitar CORS
+              imageUrl = `/api/proxy-image?url=${encodeURIComponent(driveUrl)}`
+            }
+          }
+          
+          photos.push({
+            url: imageUrl,
+            field,
+            rowData: row,
+            index: rowIndex,
+          })
+        })
+      })
+    })
+    
+    return photos
+  }, [rows, photoFields])
+
+  const currentPhoto = allPhotos[currentIndex]
+
+  const goNext = () => {
+    if (currentIndex < allPhotos.length - 1) {
+      setCurrentIndex(currentIndex + 1)
+    }
+  }
+
+  const goPrev = () => {
+    if (currentIndex > 0) {
+      setCurrentIndex(currentIndex - 1)
+    }
+  }
+
+  if (allPhotos.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <ImageIcon className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+          <p className="text-muted-foreground">No se encontraron fotos en los datos filtrados.</p>
+          <p className="text-sm text-muted-foreground mt-2">
+            Verifica que existan campos con URLs de imágenes.
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // Determinar qué campos mostrar en metadata
+  const displayMetadataFields = useMemo(() => {
+    if (metadataFields && metadataFields.length > 0) {
+      // Usar campos configurados manualmente
+      return metadataFields.filter(Boolean)
+    }
+    
+    // Fallback: mostrar primeros campos que no sean fotos
+    return Object.keys(currentPhoto.rowData)
+      .filter(key => !photoFields.includes(key))
+      .slice(0, 6)
+  }, [metadataFields, currentPhoto.rowData, photoFields])
+
+  return (
+    <div className="space-y-4">
+      {/* Main Image Card */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-lg">
+              {currentPhoto.field}
+            </CardTitle>
+            <div className="text-sm text-muted-foreground">
+              {currentIndex + 1} de {allPhotos.length}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div 
+            className="relative bg-muted rounded-lg overflow-hidden flex items-center justify-center" 
+            style={{ height: `${imageHeight}px` }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={currentPhoto.url}
+              alt={`Evidencia ${currentIndex + 1}`}
+              className="max-w-full max-h-full object-contain cursor-pointer"
+              onClick={() => setSelectedImage(currentPhoto.url)}
+              referrerPolicy="no-referrer"
+              crossOrigin="anonymous"
+              onError={(e) => {
+                const target = e.target as HTMLImageElement
+                target.style.display = 'none'
+                const parent = target.parentElement
+                if (parent) {
+                  parent.innerHTML = `
+                    <div class="flex items-center justify-center h-full text-muted-foreground">
+                      <div class="text-center">
+                        <svg class="h-12 w-12 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                        <p>Error al cargar imagen</p>
+                        <a href="${currentPhoto.url}" target="_blank" class="text-xs underline mt-2 inline-block">Abrir enlace original</a>
+                      </div>
+                    </div>
+                  `
+                }
+              }}
+            />
+          </div>
+
+          {/* Navigation Controls */}
+          <div className="flex items-center justify-between mt-4">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={goPrev}
+              disabled={currentIndex === 0}
+            >
+              <ChevronLeft className="h-4 w-4 mr-1" />
+              Anterior
+            </Button>
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSelectedImage(currentPhoto.url)}
+              >
+                <ZoomIn className="h-4 w-4 mr-1" />
+                Ampliar
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                asChild
+              >
+                <a href={currentPhoto.url} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-4 w-4 mr-1" />
+                  Abrir
+                </a>
+              </Button>
+            </div>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={goNext}
+              disabled={currentIndex === allPhotos.length - 1}
+            >
+              Siguiente
+              <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
+          </div>
+
+          {/* Thumbnail Strip */}
+          <div className="mt-4 overflow-x-auto">
+            <div className="flex gap-2 pb-2">
+              {allPhotos.slice(
+                Math.max(0, currentIndex - 5),
+                Math.min(allPhotos.length, currentIndex + 6)
+              ).map((photo, idx) => {
+                const actualIndex = Math.max(0, currentIndex - 5) + idx
+                return (
+                  <button
+                    key={actualIndex}
+                    onClick={() => setCurrentIndex(actualIndex)}
+                    className={`flex-shrink-0 rounded border-2 overflow-hidden transition-all ${
+                      actualIndex === currentIndex
+                        ? 'border-primary ring-2 ring-primary/20'
+                        : 'border-transparent hover:border-muted-foreground/20'
+                    }`}
+                    style={{ width: '80px', height: '80px' }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={photo.url}
+                      alt={`Miniatura ${actualIndex + 1}`}
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                      crossOrigin="anonymous"
+                    />
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Photo Metadata */}
+          <div className="mt-4 p-3 bg-muted rounded-lg text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <span className="font-medium">Campo:</span> {currentPhoto.field}
+              </div>
+              <div>
+                <span className="font-medium">Registro:</span> #{currentPhoto.index + 1}
+              </div>
+              {displayMetadataFields.map((key) => (
+                <div key={key}>
+                  <span className="font-medium">{key}:</span> {String(currentPhoto.rowData[key] || 'N/A')}
+                </div>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Image Zoom Modal */}
+      {selectedImage && (
+        <Dialog open={!!selectedImage} onOpenChange={() => setSelectedImage(null)}>
+          <DialogContent className="max-w-[90vw] max-h-[90vh]">
+            <DialogHeader>
+              <DialogTitle>Vista ampliada</DialogTitle>
+            </DialogHeader>
+            <div className="overflow-auto max-h-[80vh]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={selectedImage}
+                alt="Imagen ampliada"
+                className="w-full h-auto"
+                referrerPolicy="no-referrer"
+                crossOrigin="anonymous"
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  )
+}
+
+// Filter Panel Component - Clean design with theme colors
+function FilterPanel({
+  filters,
+  onFiltersChange,
+  availableFields,
+  campaignId,
+  rows,
+}: {
+  filters: ReportFilters
+  onFiltersChange: (filters: ReportFilters) => void
+  availableFields: string[]
+  campaignId?: string
+  rows: RowData[]
+}) {
+  const [tempFilters, setTempFilters] = useState<ReportFilters>(filters)
+  const [filterOptions, setFilterOptions] = useState<Record<string, any[]>>({})
+  const [loadingOptions, setLoadingOptions] = useState<Record<string, boolean>>({})
+
+  const loadFieldOptions = async (fieldName: string) => {
+    if (!campaignId || filterOptions[fieldName] || loadingOptions[fieldName]) return
+    
+    setLoadingOptions(prev => ({ ...prev, [fieldName]: true }))
+    try {
+      const { getFilterOptions } = await import("@/lib/api/campaignApi")
+      console.log(`[FilterPanel] Loading options for field: "${fieldName}"`)
+      const response = await getFilterOptions(campaignId, [fieldName])
+      console.log(`[FilterPanel] Response for "${fieldName}":`, response)
+      
+      // El backend puede devolver en varios formatos:
+      // 1. response.options[fieldName] = [{value, label}]
+      // 2. response[fieldName] = [{value, label}] o [string, string, ...]
+      let fieldData = response.options?.[fieldName] || response[fieldName] || []
+      
+      console.log(`[FilterPanel] Field data for "${fieldName}":`, fieldData)
+      
+      if (!Array.isArray(fieldData) || fieldData.length === 0) {
+        console.warn(`[FilterPanel] No data from backend for field "${fieldName}", extracting from local data`)
+        
+        // FALLBACK: Extraer valores únicos del dataset local
+        const uniqueValues = new Set<string>()
+        rows.forEach(row => {
+          const value = row[fieldName]
+          if (value !== null && value !== undefined && value !== '') {
+            // Manejar valores que pueden ser objetos o strings
+            const strValue = typeof value === 'object' ? JSON.stringify(value) : String(value)
+            uniqueValues.add(strValue)
+          }
+        })
+        
+        fieldData = Array.from(uniqueValues).sort()
+        console.log(`[FilterPanel] Extracted ${fieldData.length} unique values from local data for "${fieldName}":`, fieldData.slice(0, 5))
+      }
+      
+      if (!Array.isArray(fieldData) || fieldData.length === 0) {
+        console.warn(`[FilterPanel] Still no data found for field "${fieldName}" after fallback`)
+        setFilterOptions(prev => ({ ...prev, [fieldName]: [] }))
+        return
+      }
+      
+      const values = fieldData.map(item => 
+        typeof item === 'object' && item !== null ? (item.value ?? item.label ?? item) : item
+      )
+      
+      console.log(`[FilterPanel] Extracted values for "${fieldName}":`, values)
+      setFilterOptions(prev => ({ ...prev, [fieldName]: values }))
+    } catch (error) {
+      console.error(`[FilterPanel] Error loading options for "${fieldName}":`, error)
+      setFilterOptions(prev => ({ ...prev, [fieldName]: [] }))
+    } finally {
+      setLoadingOptions(prev => ({ ...prev, [fieldName]: false }))
+    }
+  }
+
+  const updateTempDateRange = (field: "inicio" | "fin", value: string) => {
+    setTempFilters({
+      ...tempFilters,
+      fechas: {
+        ...tempFilters.fechas,
+        [field]: value,
+      },
+    })
+  }
+
+  const updateTempCondition = (index: number, field: keyof FilterCondition, value: any) => {
+    const newConditions = [...(tempFilters.condiciones || [])]
+    
+    if (field === "campo" && value !== newConditions[index].campo) {
+      loadFieldOptions(value)
+      newConditions[index] = {
+        ...newConditions[index],
+        [field]: value,
+        valor: "",
+      }
+    } else {
+      newConditions[index] = {
+        ...newConditions[index],
+        [field]: value,
+      }
+    }
+    
+    setTempFilters({
+      ...tempFilters,
+      condiciones: newConditions,
+    })
+  }
+
+  const addCondition = () => {
+    setTempFilters({
+      ...tempFilters,
+      condiciones: [
+        ...(tempFilters.condiciones || []),
+        { campo: "", operador: "eq", valor: "", columnas: 4 },
+      ],
+    })
+  }
+
+  const removeCondition = (index: number) => {
+    const newConditions = [...(tempFilters.condiciones || [])]
+    newConditions.splice(index, 1)
+    setTempFilters({
+      ...tempFilters,
+      condiciones: newConditions,
+    })
+  }
+
+  const applyFilters = () => {
+    onFiltersChange(tempFilters)
+  }
+
+  const resetFilters = () => {
+    const emptyFilters = {
+      fechas: {},
+      condiciones: [],
+    }
+    setTempFilters(emptyFilters)
+    onFiltersChange(emptyFilters)
+  }
+
+  const hasActiveFilters =
+    tempFilters.fechas?.inicio ||
+    tempFilters.fechas?.fin ||
+    (tempFilters.condiciones && tempFilters.condiciones.some((c) => c.valor))
+
+  return (
+    <div className="mb-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-bold">Filtros</h2>
+        <div className="flex gap-2">
+          <Button
+            onClick={applyFilters}
+            size="sm"
+            className="bg-orange-600 hover:bg-orange-700 text-white"
+            disabled={!hasActiveFilters}
+          >
+            <Filter className="h-4 w-4 mr-2" />
+            Aplicar filtros
+          </Button>
+          {hasActiveFilters && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={resetFilters}
+            >
+              Limpiar
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Filter Cards Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Fecha Inicio */}
+        <div className="bg-card border rounded-lg p-4 shadow-sm">
+          <div className="flex items-center gap-2 mb-2">
+            <Calendar className="h-4 w-4 text-muted-foreground" />
+            <label className="text-sm font-semibold">Fecha</label>
+          </div>
+          <p className="text-xs text-muted-foreground mb-3">Operador: eq</p>
+          <Select
+            value={tempFilters.fechas?.inicio || "all"}
+            onValueChange={(value) => updateTempDateRange("inicio", value === "all" ? "" : value)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Todos" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos</SelectItem>
+              <SelectItem value="2026-01-11">2026-01-11</SelectItem>
+              <SelectItem value="2026-01-18">2026-01-18</SelectItem>
+              <SelectItem value="2026-01-22">2026-01-22</SelectItem>
+              <SelectItem value="2026-01-23">2026-01-23</SelectItem>
+              <SelectItem value="2026-01-25">2026-01-25</SelectItem>
+              <SelectItem value="2026-02-01">2026-02-01</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Fecha Fin */}
+        <div className="bg-card border rounded-lg p-4 shadow-sm">
+          <div className="flex items-center gap-2 mb-2">
+            <Calendar className="h-4 w-4 text-muted-foreground" />
+            <label className="text-sm font-semibold">Fecha</label>
+          </div>
+          <p className="text-xs text-muted-foreground mb-3">Operador: eq</p>
+          <Select
+            value={tempFilters.fechas?.fin || "all"}
+            onValueChange={(value) => updateTempDateRange("fin", value === "all" ? "" : value)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Todos" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos</SelectItem>
+              <SelectItem value="2026-01-11">2026-01-11</SelectItem>
+              <SelectItem value="2026-01-18">2026-01-18</SelectItem>
+              <SelectItem value="2026-01-22">2026-01-22</SelectItem>
+              <SelectItem value="2026-01-23">2026-01-23</SelectItem>
+              <SelectItem value="2026-01-25">2026-01-25</SelectItem>
+              <SelectItem value="2026-02-01">2026-02-01</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Dynamic Condition Filters */}
+        {tempFilters.condiciones?.map((condition, index) => {
+          const fieldOptions = filterOptions[condition.campo] || []
+          const isLoadingFieldOptions = loadingOptions[condition.campo]
+          
+          return (
+            <div key={index} className="bg-card border rounded-lg p-4 shadow-sm relative">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => removeCondition(index)}
+                className="absolute top-2 right-2 h-6 w-6 p-0"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+
+              <div className="flex items-center gap-2 mb-2">
+                <Filter className="h-4 w-4 text-muted-foreground" />
+                <label className="text-sm font-semibold">
+                  {condition.campo || "Campo"}
+                </label>
+              </div>
+              <p className="text-xs text-muted-foreground mb-3">Operador: {condition.operador}</p>
+
+              <div className="space-y-2">
+                <Select
+                  value={condition.campo}
+                  onValueChange={(value) => updateTempCondition(index, "campo", value)}
+                >
+                  <SelectTrigger className="text-xs">
+                    <SelectValue placeholder="Campo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableFields.map((field) => (
+                      <SelectItem key={field} value={field}>
+                        {field}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                {condition.campo && fieldOptions.length > 0 ? (
+                  <Select
+                    value={condition.valor || "all"}
+                    onValueChange={(value) => updateTempCondition(index, "valor", value === "all" ? "" : value)}
+                    disabled={isLoadingFieldOptions}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={isLoadingFieldOptions ? "Cargando..." : "Todos"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos</SelectItem>
+                      {fieldOptions.map((opt, i) => (
+                        <SelectItem key={i} value={String(opt)}>
+                          {String(opt)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : null}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Add Filter Button */}
+      {availableFields.length > 0 && (
+        <div className="mt-4">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={addCondition}
+            className="text-sm"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Agregar filtro
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
@@ -269,64 +1061,172 @@ function Card({ title, value }: { title: string; value: string }) {
 export function DashboardFromConfig({
   config,
   data,
+  campaignId,
 }: {
   config: ReportConfiguration
-  data: RowData[]
+  data?: unknown
+  campaignId?: string
 }) {
-  // 1) KPIs: compute in 2 passes (field first, then formulas)
-  const { kpiValues, visibleKpis } = useMemo(() => {
-    const kpis = config.kpis ?? []
-    const visible = kpis.filter((k) => k.visible !== false)
+  const branding = ((config as any)?.branding ?? {}) as BrandingConfig
+  const constants = (((config as any)?.constantes ?? []) as DashboardConstant[]) || []
+  
+  // Estado para URL pública de la imagen hero (convierte gs:// a URL firmada)
+  const [heroImagePublicUrl, setHeroImagePublicUrl] = useState<string | null>(null)
 
+  // Efecto para cargar URL pública si es gsUri
+  useEffect(() => {
+    const heroImageUrl = branding.heroImageUrl
+    if (!heroImageUrl) {
+      setHeroImagePublicUrl(null)
+      return
+    }
+
+    // Si es gsUri, convertir a URL pública firmada
+    if (heroImageUrl.startsWith("gs://")) {
+      ;(async () => {
+        try {
+          const { getAssetReadUrl } = await import("@/lib/api/campaignApi")
+          const publicUrl = await getAssetReadUrl(heroImageUrl, 120) // válida por 2 horas
+          setHeroImagePublicUrl(publicUrl)
+        } catch (error) {
+          console.error("Error loading hero image from GCS:", error)
+          setHeroImagePublicUrl(null)
+        }
+      })()
+    } else {
+      // Si es URL directa o dataURL legacy, usar directamente
+      setHeroImagePublicUrl(heroImageUrl)
+    }
+  }, [branding.heroImageUrl])
+  
+  // Extract filters from config - pero NO aplicar fechas pre-configuradas
+  const configFilters = ((config as any)?.filtros ?? {}) as ReportFilters
+  
+  // State for user-adjustable filters (inicializar sin filtros de fecha)
+  const [userFilters, setUserFilters] = useState<ReportFilters>({
+    fechas: {}, // Vacío por defecto
+    condiciones: configFilters.condiciones || [],
+  })
+
+  const rows = useMemo<RowData[]>(() => {
+    if (Array.isArray(data)) return data as RowData[]
+    if (!data) return []
+
+    const d = data as any
+
+    if (Array.isArray(d.rows)) return d.rows as RowData[]
+    if (Array.isArray(d.data)) return d.data as RowData[]
+    if (Array.isArray(d.items)) return d.items as RowData[]
+
+    console.warn("[DashboardFromConfig] data no es array:", data)
+    return []
+  }, [data])
+
+  // Apply filters to data
+  const filteredRows = useMemo(() => {
+    return applyFilters(rows, userFilters)
+  }, [rows, userFilters])
+
+  // Get available fields from data
+  const availableFields = useMemo(() => {
+    if (rows.length === 0) return []
+    return Object.keys(rows[0]).sort()
+  }, [rows])
+
+  const constMap = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const c of constants) {
+      if (!c?.key) continue
+      m[c.key] = Number(c.value ?? 0)
+    }
+    return m
+  }, [constants])
+
+  const palette = useMemo(() => {
+    const p = config.paletaColores
+    return [
+      p?.acento || "#FFB000",
+      p?.primario || "#000000",
+      "#4F46E5",
+      "#10B981",
+      "#F97316",
+      "#06B6D4",
+      "#A855F7",
+    ]
+  }, [config.paletaColores])
+
+  // KPIs computation with filtered data
+  const { kpiValues, visibleKpis } = useMemo(() => {
+    const kpis = (config.kpis ?? []) as ExtendedKPI[]
+    const visible = kpis.filter((k) => k.visible !== false)
     const byId: KPIValueMap = {}
 
-    // pass 1: base field KPIs
+    // pass 1: field
     for (const k of kpis) {
       const kind = (k.kind ?? "field") as any
       if (kind === "formula") continue
-      byId[k.id] = computeBaseKpiValue(data, k)
+      byId[k.id] = computeBaseKpiValue(filteredRows, k)
     }
 
-    // pass 2: formulas
-    for (const k of kpis) {
-      const kind = (k.kind ?? "field") as any
-      if (kind !== "formula") continue
-      byId[k.id] = computeFormulaKpiValue(k, byId)
+    // pass 2: formulas (iterativo para dependencias)
+    const formulas = kpis.filter((k) => (k.kind ?? "field") === "formula")
+    const pending = new Set(formulas.map((k) => k.id))
+
+    for (let pass = 0; pass < Math.max(2, formulas.length + 1); pass++) {
+      let progressed = 0
+
+      for (const k of formulas) {
+        if (!pending.has(k.id)) continue
+        const r = computeFormulaKpiValue(k, byId, constMap)
+        if (!r.ok) continue
+        byId[k.id] = r.value
+        pending.delete(k.id)
+        progressed++
+      }
+
+      if (progressed === 0) break
+    }
+
+    // fallback
+    for (const k of formulas) {
+      if (!pending.has(k.id)) continue
+      const f = k.formula
+      if (!f) {
+        byId[k.id] = 0
+        continue
+      }
+      const A = resolveOperand(f.aKpiId, byId, constMap).value
+      const B = resolveOperand(f.bKpiId, byId, constMap).value
+      const op = f.op
+      let v = 0
+      if (op === "add") v = A + B
+      else if (op === "sub") v = A - B
+      else if (op === "mul") v = A * B
+      else if (op === "div") v = B === 0 ? 0 : A / B
+      else if (op === "pct") v = B === 0 ? 0 : (A / B) * 100
+      byId[k.id] = v
+      pending.delete(k.id)
     }
 
     return { kpiValues: byId, visibleKpis: visible }
-  }, [config.kpis, data])
+  }, [config.kpis, filteredRows, constMap])
 
-  // 2) Render chart by type
   const renderChart = (chart: ChartDefinition) => {
     const tipo = chart.tipo
-    const s = seriesForChart(data, chart)
+    const built = buildSeries(filteredRows, chart)
+    const s = built.data
+    const seriesKeys = built.seriesKeys
 
-    // pie: usa "value" o una única métrica
     if (tipo === "torta") {
-      // Si es numeric + metrics, usamos el primer metric como value.
-      let valueKey = "value"
-      if ((chart.measureType ?? "count") === "numeric" && (chart.metrics?.length ?? 0) > 0) {
-        const m0 = chart.metrics![0]
-        valueKey = `${m0.field}__${m0.agg}`
-      }
-
-      const pieData = s.map((p) => ({
-        name: p.name,
-        value: Number(p[valueKey] ?? 0),
-      }))
+      const key = seriesKeys[0]?.key ?? "value"
+      const pieData = s.map((p) => ({ name: p.name, value: Number(p[key] ?? 0) }))
 
       return (
-        <ResponsiveContainer width="100%" height={300}>
+        <ResponsiveContainer width="100%" height={320}>
           <PieChart>
-            <Pie
-              data={pieData}
-              dataKey="value"
-              nameKey="name"
-              label
-            >
+            <Pie data={pieData} dataKey="value" nameKey="name" label>
               {pieData.map((_, idx) => (
-                <Cell key={idx} />
+                <Cell key={idx} fill={palette[idx % palette.length]} />
               ))}
             </Pie>
             <Tooltip />
@@ -337,61 +1237,80 @@ export function DashboardFromConfig({
     }
 
     if (tipo === "barras") {
-      // usamos value o primer metric
-      let valueKey = "value"
-      if ((chart.measureType ?? "count") === "numeric" && (chart.metrics?.length ?? 0) > 0) {
-        const m0 = chart.metrics![0]
-        valueKey = `${m0.field}__${m0.agg}`
-      }
+      const anyRight = seriesKeys.some((k) => (k.axis ?? "left") === "right")
+      const stackId = (chart.barMode ?? "grouped") === "stacked" ? "stack" : undefined
+
       return (
-        <ResponsiveContainer width="100%" height={300}>
+        <ResponsiveContainer width="100%" height={320}>
           <BarChart data={s}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="name" />
-            <YAxis />
+            <YAxis yAxisId="left" />
+            {anyRight && <YAxis yAxisId="right" orientation="right" />}
             <Tooltip />
             <Legend />
-            <Bar dataKey={valueKey} />
+            {(seriesKeys.length ? seriesKeys : [{ key: "value", label: "value", axis: "left" }]).map((sk, idx) => (
+              <Bar
+                key={sk.key}
+                dataKey={sk.key}
+                yAxisId={(sk.axis ?? "left") === "right" ? "right" : "left"}
+                stackId={stackId}
+                fill={palette[idx % palette.length]}
+              />
+            ))}
           </BarChart>
         </ResponsiveContainer>
       )
     }
 
     if (tipo === "spline") {
-      let valueKey = "value"
-      if ((chart.measureType ?? "count") === "numeric" && (chart.metrics?.length ?? 0) > 0) {
-        const m0 = chart.metrics![0]
-        valueKey = `${m0.field}__${m0.agg}`
-      }
+      const anyRight = seriesKeys.some((k) => (k.axis ?? "left") === "right")
       return (
-        <ResponsiveContainer width="100%" height={300}>
+        <ResponsiveContainer width="100%" height={320}>
           <LineChart data={s}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="name" />
-            <YAxis />
+            <YAxis yAxisId="left" />
+            {anyRight && <YAxis yAxisId="right" orientation="right" />}
             <Tooltip />
             <Legend />
-            <Line type="monotone" dataKey={valueKey} dot={false} />
+            {(seriesKeys.length ? seriesKeys : [{ key: "value", label: "value", axis: "left" }]).map((sk, idx) => (
+              <Line
+                key={sk.key}
+                type="monotone"
+                dataKey={sk.key}
+                yAxisId={(sk.axis ?? "left") === "right" ? "right" : "left"}
+                dot={false}
+                stroke={palette[idx % palette.length]}
+              />
+            ))}
           </LineChart>
         </ResponsiveContainer>
       )
     }
 
     if (tipo === "area") {
-      let valueKey = "value"
-      if ((chart.measureType ?? "count") === "numeric" && (chart.metrics?.length ?? 0) > 0) {
-        const m0 = chart.metrics![0]
-        valueKey = `${m0.field}__${m0.agg}`
-      }
+      const anyRight = seriesKeys.some((k) => (k.axis ?? "left") === "right")
       return (
-        <ResponsiveContainer width="100%" height={300}>
+        <ResponsiveContainer width="100%" height={320}>
           <AreaChart data={s}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="name" />
-            <YAxis />
+            <YAxis yAxisId="left" />
+            {anyRight && <YAxis yAxisId="right" orientation="right" />}
             <Tooltip />
             <Legend />
-            <Area type="monotone" dataKey={valueKey} />
+            {(seriesKeys.length ? seriesKeys : [{ key: "value", label: "value", axis: "left" }]).map((sk, idx) => (
+              <Area
+                key={sk.key}
+                type="monotone"
+                dataKey={sk.key}
+                yAxisId={(sk.axis ?? "left") === "right" ? "right" : "left"}
+                stroke={palette[idx % palette.length]}
+                fill={palette[idx % palette.length]}
+                fillOpacity={0.2}
+              />
+            ))}
           </AreaChart>
         </ResponsiveContainer>
       )
@@ -402,51 +1321,52 @@ export function DashboardFromConfig({
       const yKey = chart.metric2 as string | undefined
       if (!xKey || !yKey) return <div className="text-sm text-muted-foreground">Scatter requiere metric y metric2.</div>
 
-      const pts = data
+      const pts = filteredRows
         .map((r) => ({ x: toNumber(r?.[xKey]), y: toNumber(r?.[yKey]) }))
         .filter((p) => p.x != null && p.y != null)
         .map((p) => ({ x: p.x!, y: p.y! }))
 
       return (
-        <ResponsiveContainer width="100%" height={300}>
+        <ResponsiveContainer width="100%" height={320}>
           <ScatterChart>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="x" type="number" />
             <YAxis dataKey="y" type="number" />
             <Tooltip />
-            <Scatter data={pts} />
+            <Scatter data={pts} fill={palette[0]} />
           </ScatterChart>
         </ResponsiveContainer>
       )
     }
 
     if (tipo === "combo") {
-      const metrics = chart.metrics ?? []
-      if (metrics.length < 2) return <div className="text-sm text-muted-foreground">Combo requiere `{'>'}`= 2 métricas.</div>
+      const metrics = (chart.metrics ?? []) as ChartMetricDefinition[]
+      if (metrics.length < 2) return <div className="text-sm text-muted-foreground">Combo requiere ≥ 2 métricas.</div>
 
-      // aseguramos que cada métrica tenga key
+      const built2 = buildSeries(filteredRows, { ...chart, seriesBy: undefined })
+      const s2 = built2.data
       const metricKeys = metrics.map((m) => ({
         key: `${m.field}__${m.agg}`,
         axis: m.axis ?? "left",
-        render: m.render ?? "bar",
+        render: (m.render ?? "bar") as "bar" | "line",
+        label: `${m.field} (${m.agg})`,
       }))
 
       return (
-        <ResponsiveContainer width="100%" height={320}>
-          <ComposedChart data={s}>
+        <ResponsiveContainer width="100%" height={340}>
+          <ComposedChart data={s2}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="name" />
             <YAxis yAxisId="left" />
             <YAxis yAxisId="right" orientation="right" />
             <Tooltip />
             <Legend />
-
             {metricKeys.map((m, idx) => {
               const yAxisId = m.axis === "right" ? "right" : "left"
               if (m.render === "line") {
-                return <Line key={idx} yAxisId={yAxisId} type="monotone" dataKey={m.key} dot={false} />
+                return <Line key={m.key} yAxisId={yAxisId} type="monotone" dataKey={m.key} dot={false} stroke={palette[idx % palette.length]} />
               }
-              return <Bar key={idx} yAxisId={yAxisId} dataKey={m.key} />
+              return <Bar key={m.key} yAxisId={yAxisId} dataKey={m.key} fill={palette[idx % palette.length]} />
             })}
           </ComposedChart>
         </ResponsiveContainer>
@@ -456,11 +1376,13 @@ export function DashboardFromConfig({
     if (tipo === "tabla") {
       return (
         <div className="overflow-auto">
-          <table className="min-w-[480px] w-full text-sm">
+          <table className="min-w-[520px] w-full text-sm">
             <thead>
               <tr className="border-b">
                 {Object.keys(s?.[0] ?? {}).map((k) => (
-                  <th key={k} className="text-left p-2 font-medium">{k}</th>
+                  <th key={k} className="text-left p-2 font-medium">
+                    {k}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -468,7 +1390,9 @@ export function DashboardFromConfig({
               {s.map((row, i) => (
                 <tr key={i} className="border-b">
                   {Object.keys(row).map((k) => (
-                    <td key={k} className="p-2">{String(row[k] ?? "")}</td>
+                    <td key={k} className="p-2">
+                      {String(row[k] ?? "")}
+                    </td>
                   ))}
                 </tr>
               ))}
@@ -481,32 +1405,160 @@ export function DashboardFromConfig({
     return <div className="text-sm text-muted-foreground">Tipo "{tipo}" aún no implementado.</div>
   }
 
+  // Hero text color (default to white)
+  const heroTextColor = branding.heroTextColor || "#ffffff"
+
+  // Detectar campos que contienen fotos
+  // Prioridad 1: Usar configuración manual del builder
+  // Prioridad 2: Auto-detección por nombre de campo y contenido
+  const photoFields = useMemo(() => {
+    // Si hay configuración manual, usarla
+    if (branding.galleryPhotoFields && branding.galleryPhotoFields.length > 0) {
+      return branding.galleryPhotoFields.filter(Boolean)
+    }
+
+    // Si no, auto-detectar
+    const fields: string[] = []
+    const sampleSize = Math.min(10, rows.length)
+    
+    availableFields.forEach(field => {
+      const fieldLower = field.toLowerCase()
+      // Buscar campos que contengan palabras clave
+      if (fieldLower.includes('foto') || 
+          fieldLower.includes('image') || 
+          fieldLower.includes('evidencia') ||
+          fieldLower.includes('picture')) {
+        fields.push(field)
+        return
+      }
+
+      // Revisar muestra de datos para URLs
+      const hasUrls = rows.slice(0, sampleSize).some(row => {
+        const value = String(row[field] || '')
+        return value.includes('drive.google.com') || 
+               value.includes('http://') || 
+               value.includes('https://')
+      })
+      
+      if (hasUrls) {
+        fields.push(field)
+      }
+    })
+    
+    return fields
+  }, [rows, availableFields, branding.galleryPhotoFields])
+
+  const hasPhotos = photoFields.length > 0
+
   return (
     <div className="space-y-6">
-      {/* KPI cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Hero */}
+      {(heroImagePublicUrl || branding.heroTitle || branding.heroSubtitle) && (
+        <div 
+          className="relative overflow-hidden rounded-xl border bg-white" 
+          style={{ height: `${branding.heroImageHeight || 160}px` }}
+        >
+          {heroImagePublicUrl && (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={heroImagePublicUrl} alt="hero" className="absolute inset-0 h-full w-full object-cover" />
+              <div className="absolute inset-0 bg-black/35" />
+            </>
+          )}
+          <div className="relative p-6 flex flex-col justify-end h-full">
+            <div style={{ color: heroTextColor }}>
+              <div className="text-lg font-semibold">{branding.heroTitle ?? config.campaignNombre}</div>
+              <div className="text-sm opacity-90">{branding.heroSubtitle ?? config.empresaNombre}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Filters */}
+      <FilterPanel
+        filters={userFilters}
+        onFiltersChange={setUserFilters}
+        availableFields={availableFields}
+        campaignId={campaignId}
+        rows={filteredRows}
+      />
+
+      {/* KPI cards con grid de 12 columnas */}
+      <div className="grid grid-cols-12 gap-4">
         {visibleKpis.map((kpi) => {
           const v = kpiValues[kpi.id] ?? 0
-          return <Card key={kpi.id} title={kpi.nombre} value={formatKpiValue(v, kpi)} />
+          const columnas = (kpi as ExtendedKPI).columnas || 3
+          return <KpiCard key={kpi.id} title={kpi.nombre} value={formatKpiValue(v, kpi)} columnas={columnas} />
         })}
       </div>
 
-      {/* Rows / charts */}
-      <div className="space-y-4">
-        {(config.filas ?? []).map((row: DashboardRow) => (
-          <div key={row.id} className="grid grid-cols-12 gap-4">
-            {(row.graficos ?? []).map((chart) => (
-              <div
-                key={chart.id}
-                className="col-span-12 rounded-lg border bg-white p-4"
-                style={{ gridColumn: `span ${chart.columnas} / span ${chart.columnas}` } as any}
-              >
-                <div className="mb-2 text-sm font-medium">{chart.titulo}</div>
-                {renderChart(chart)}
+      {/* Tabs: Gráficos vs Evidencias */}
+      <Tabs defaultValue="graficos" className="w-full">
+        <TabsList className="grid w-full max-w-md grid-cols-2">
+          <TabsTrigger value="graficos">
+            <BarChart3 className="h-4 w-4 mr-2" />
+            Gráficos
+          </TabsTrigger>
+          <TabsTrigger value="evidencias" disabled={!hasPhotos}>
+            <ImageIcon className="h-4 w-4 mr-2" />
+            Evidencias {hasPhotos && `(${photoFields.length})`}
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Tab: Gráficos */}
+        <TabsContent value="graficos" className="mt-6">
+          <div className="space-y-4">
+            {(config.filas ?? []).map((row: DashboardRow) => (
+              <div key={row.id} className="grid grid-cols-12 gap-4">
+                {(row.graficos ?? []).map((chart) => (
+                  <div
+                    key={chart.id}
+                    className="col-span-12 rounded-lg border bg-white p-4"
+                    style={{ gridColumn: `span ${chart.columnas} / span ${chart.columnas}` } as any}
+                  >
+                    <div className="mb-2 text-sm font-medium">{chart.titulo}</div>
+                    {renderChart(chart)}
+                  </div>
+                ))}
               </div>
             ))}
+            
+            {/* Separator before Evidencias */}
+            {/* {hasPhotos && (
+              <div className="pt-8 border-t">
+                <p className="text-sm text-muted-foreground text-center mb-4">
+                  💡 También puedes ver las evidencias fotográficas en la pestaña "Evidencias"
+                </p>
+              </div>
+            )} */}
           </div>
-        ))}
+        </TabsContent>
+
+        {/* Tab: Evidencias fotográficas */}
+        <TabsContent value="evidencias" className="mt-6">
+          {hasPhotos ? (
+            <EvidenceGallery 
+              rows={filteredRows} 
+              photoFields={photoFields}
+              metadataFields={branding.galleryMetadataFields}
+              imageHeight={branding.galleryImageHeight}
+            />
+          ) : (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <ImageIcon className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No se detectaron campos con fotos.</p>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
+
+      {/* Stats badge at bottom */}
+      <div className="mt-8 pt-6 border-t text-center">
+        <p className="text-sm text-muted-foreground">
+          Mostrando {filteredRows.length} de {rows.length} registros
+        </p>
       </div>
     </div>
   )
