@@ -1,13 +1,9 @@
-// app\admin\settings\page.tsx
+// app/admin/settings/page.tsx
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
-"use client"
-
-import { DashboardLayout } from "@/components/dashboard-layout"
-import { AdminSettingsView } from "@/components/views/admin-settings-view"
+import { SettingsClientPage } from './settings-client'
 
 export default function AdminSettingsPage() {
-  return (
-      <AdminSettingsView />
-  )
+  return <SettingsClientPage />
 }
-

@@ -1,13 +1,9 @@
 // app/admin/page.tsx
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
-"use client"
-
-import { DashboardLayout } from "@/components/dashboard-layout"
-import { AdminDashboardView } from "@/components/views/admin-dashboard-view"
+import { AdminClientPage } from './admin-client'
 
 export default function AdminDashboardPage() {
-  return (
-      <AdminDashboardView />
-  )
+  return <AdminClientPage />
 }
-

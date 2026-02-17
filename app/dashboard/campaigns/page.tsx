@@ -1,25 +1,7 @@
-"use client"
-
-import { DashboardLayout } from "@/components/dashboard-layout"
-
+// --- FILE: app/campaigns/page.tsx ---
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+import { CampaignsPageClient } from './campaigns-client'
 export default function CampaignsPage() {
-  return (
-    <DashboardLayout userType="company" isAdmin={false}>
-      <div className="space-y-6">
-        <h1 className="text-2xl font-semibold">Campañas</h1>
-
-        <div className="rounded-xl border p-4">
-          <p className="text-sm opacity-70">
-            Aquí puedes listar tus campañas, filtrar por estado y crear nuevas.
-          </p>
-        </div>
-
-        {/* Placeholder tabla/lista */}
-        <div className="rounded-xl border p-4">
-          <p className="font-medium mb-2">Listado</p>
-          <p className="text-sm opacity-70">Pendiente: conectar con Firestore.</p>
-        </div>
-      </div>
-    </DashboardLayout>
-  )
+  return <CampaignsPageClient />
 }

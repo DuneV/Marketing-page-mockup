@@ -22,14 +22,15 @@ export const CHART_TYPE_LABELS: Record<ChartType, string> = {
   barras: "Gráfico de Barras",
   spline: "Gráfico de Línea",
   plot: "Gráfico de Puntos",
-  scatter: "Dispersión",
+  scatter: "Gráfico de Dispersión",
   area: "Gráfico de Área",
   radar: "Gráfico Radar",
-  funnel: "Embudo",
-  gauge: "Medidor",
+  funnel: "Gráfico de Embudo",
+  gauge: "Indicador",
   heatmap: "Mapa de Calor",
   treemap: "Mapa de Árbol",
-  tabla: "Tabla de Datos",
+  tabla: "Tabla",
+  combo: "Gráfico Combinado",
 }
 
 // Etiquetas amigables para operaciones de KPI

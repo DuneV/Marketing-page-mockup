@@ -20,7 +20,6 @@ yarn-error.log
 *.log
 
 # Env files (no subir secretos al build context)
-.env*
 *.yaml
 # Docs
 README.md
