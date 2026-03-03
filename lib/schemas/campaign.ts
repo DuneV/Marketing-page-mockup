@@ -16,7 +16,7 @@ export const CampaignDocSchema = z.object({
   usuarioResponsableNombre: z.string(),
   estado: z.enum(["planificacion", "activa", "completada", "cancelada"]),
   fechaInicio: z.string(),
-  fechaFin: z.string(),
+  fechaFin: z.string().optional(),
   // presupuesto: z.number(),
   descripcion: z.string(),
   objetivos: z.string().optional(),

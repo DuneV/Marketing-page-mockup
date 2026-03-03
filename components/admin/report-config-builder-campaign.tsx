@@ -66,6 +66,22 @@ import type {
 } from "@/types/report-config"
 
 // -----------------------------
+// Helper: Convert gs:// to public URL
+// -----------------------------
+function gsUriToHttpUrl(gsUri: string, previewCache?: string): string {
+  // 1. Si hay cache, usarlo (para preview en el builder)
+  if (previewCache) return previewCache
+  
+  // 2. Resto igual
+  if (!gsUri) return ""
+  if (gsUri.startsWith("http")) return gsUri
+  if (gsUri.startsWith("gs://")) {
+    return `https://storage.googleapis.com/${gsUri.replace("gs://", "")}`
+  }
+  return gsUri
+}
+
+// -----------------------------
 // Props
 // -----------------------------
 interface ReportConfigBuilderCampaignProps {
@@ -104,7 +120,7 @@ type ExtendedKPI = KPIDefinition & {
   formato?: KPIFormat
   unidad?: string
   decimales?: number
-  columnas?: number // NUEVO: tamaño del KPI (1-12)
+  columnas?: number
   formula?: {
     aKpiId: string
     op: KPIFormulaOp
@@ -122,18 +138,29 @@ type BrandingConfig = {
   heroImageUrl?: string
   heroTitle?: string
   heroSubtitle?: string
-  heroTextColor?: string // NUEVO: color del texto del hero
-  heroImageHeight?: number // NUEVO: altura de la imagen hero en px (default 160)
-  galleryPhotoFields?: string[] // NUEVO: campos que contienen fotos
-  galleryMetadataFields?: string[] // NUEVO: campos a mostrar como metadata en la galería
-  galleryImageHeight?: number // NUEVO: altura de las imágenes en px (default 500)
+  heroTextColor?: string
+  heroImageHeight?: number
+  galleryPhotoFields?: string[]
+  galleryMetadataFields?: string[]
+  galleryImageHeight?: number
+  
+  // NUEVO: Estilos de KPI
+  kpiBackgroundColor?: string
+  kpiTextColor?: string
+  kpiBorderRadius?: number
+  _previewCache?: {
+    heroImageBase64?: string
+  }
+  // NUEVO: Estilos de gráficos
+  chartBackgroundColor?: string
+  chartBorderRadius?: number
 }
 
 type FilterCondition = {
   campo: string
   operador: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "contains" | "startsWith" | "endsWith"
   valor: any
-  columnas?: number // NUEVO: tamaño del filtro (1-12)
+  columnas?: number
 }
 
 // -----------------------------
@@ -218,15 +245,6 @@ function parseOperandRef(raw: string) {
   if (s.startsWith("num:")) return { kind: "num" as const, value: Number(s.slice(4)) }
 
   return { kind: "kpi" as const, id: s }
-}
-
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result ?? ""))
-    reader.onerror = () => reject(reader.error ?? new Error("file_read_error"))
-    reader.readAsDataURL(file)
-  })
 }
 
 function clamp(n: number, a: number, b: number) {
@@ -411,37 +429,43 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
   }
 
   const handleImageFile = async (file: File) => {
-    try {
-      setImageStatus("Subiendo imagen a GCS...")
-      
-      // Necesitamos el companyId - lo obtenemos del campaign
-      const companyId = campaign.empresaId
-      const campaignId = campaign.id
-      
-      if (!companyId) {
-        setImageStatus("❌ Error: No se encontró companyId")
-        return
-      }
-
-      // Importar la función de upload dinámicamente
-      const { uploadAsset } = await import("@/lib/api/campaignApi")
-      
-      // Subir a GCS
-      const { gcsUri } = await uploadAsset({
-        companyId,
-        campaignId,
-        file,
-      })
-      
-      // Guardar el gsUri en el branding
-      setBranding({ ...branding, heroImageUrl: gcsUri })
-      setImageStatus("✅ Imagen subida a GCS.")
-      setTimeout(() => setImageStatus(""), 2000)
-    } catch (e: any) {
-      console.error("Error uploading image:", e)
-      setImageStatus(`❌ Error: ${e?.message ?? "No se pudo subir la imagen"}`)
+  try {
+    setImageStatus("Subiendo imagen a GCS...")
+    
+    // 1. Convertir a base64 PRIMERO (preview inmediato)
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result ?? ""))
+      reader.onerror = () => reject(reader.error ?? new Error("file_read_error"))
+      reader.readAsDataURL(file)
+    })
+    
+    // 2. Subir a GCS
+    const companyId = campaign.empresaId
+    const campaignId = campaign.id
+    
+    if (!companyId) {
+      setImageStatus("❌ Error: No se encontró companyId")
+      return
     }
+
+    const { uploadAsset } = await import("@/lib/api/campaignApi")
+    const { gcsUri } = await uploadAsset({ companyId, campaignId, file })
+    
+    // 3. Guardar AMBOS
+    setBranding({ 
+      ...branding, 
+      heroImageUrl: gcsUri,
+      _previewCache: { heroImageBase64: base64 }
+    })
+    
+    setImageStatus("✅ Imagen subida a GCS.")
+    setTimeout(() => setImageStatus(""), 2000)
+  } catch (e: any) {
+    console.error("Error uploading image:", e)
+    setImageStatus(`❌ Error: ${e?.message ?? "No se pudo subir la imagen"}`)
   }
+}
 
   // -----------------------------
   // KPI CRUD
@@ -465,7 +489,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
       formato: firstField?.type === "number" ? "number" : "number",
       decimales: 0,
       unidad: "",
-      columnas: 3, // NUEVO: default 3 columnas (4 KPIs por fila)
+      columnas: 3,
     }
 
     setConfig({ ...config, kpis: [...config.kpis, newKPI as any] })
@@ -657,11 +681,15 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
       }
 
       const fullToSave: any = {
-        ...config,
-        id: crypto.randomUUID(),
-        fechaCreacion: new Date().toISOString(),
-        fechaActualizacion: new Date().toISOString(),
-      }
+      ...config,
+      id: crypto.randomUUID(),
+      fechaCreacion: new Date().toISOString(),
+      fechaActualizacion: new Date().toISOString(),
+    }
+    if ((fullToSave as any).branding?._previewCache) {
+      const { _previewCache, ...cleanBranding } = (fullToSave as any).branding
+      fullToSave.branding = cleanBranding
+    }
 
       const configForValidation: ReportConfiguration = {
         id: fullToSave.id,
@@ -787,7 +815,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                 </Alert>
               )}
 
-              {/* Branding / Imagen */}
+              {/* Branding / Decoración */}
               <Card>
                 <CardHeader>
                   <CardTitle className="text-sm flex items-center gap-2">
@@ -795,108 +823,281 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                     Decoración del Dashboard
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-                    <div className="lg:col-span-5 space-y-2">
-                      <Label className="text-xs">Título (opcional)</Label>
-                      <Input
-                        className="h-8"
-                        value={branding.heroTitle ?? ""}
-                        onChange={(e) => setBranding({ ...branding, heroTitle: e.target.value })}
-                        placeholder="Ej: Reporte Ejecutivo"
-                      />
-                      
-                      <Label className="text-xs">Subtítulo (opcional)</Label>
-                      <Input
-                        className="h-8"
-                        value={branding.heroSubtitle ?? ""}
-                        onChange={(e) => setBranding({ ...branding, heroSubtitle: e.target.value })}
-                        placeholder="Ej: Club Colombia · Febrero"
-                      />
-
-                      {/* NUEVO: Color de texto */}
-                      <Label className="text-xs">Color de texto</Label>
-                      <div className="flex items-center gap-2">
-                        <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
-                          <input
-                            type="color"
-                            value={branding.heroTextColor ?? "#ffffff"}
-                            onChange={(e) => setBranding({ ...branding, heroTextColor: e.target.value })}
-                            className="h-full w-full p-0 border-0 cursor-pointer"
+                <CardContent className="space-y-4">
+                  {/* Hero Image Section */}
+                  <div className="border-b pb-4">
+                    <Label className="text-sm font-medium mb-3 block">Hero / Imagen Principal</Label>
+                    
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+                      <div className="lg:col-span-5 space-y-3">
+                        <div>
+                          <Label className="text-xs">Título (opcional)</Label>
+                          <Input
+                            className="h-8"
+                            value={branding.heroTitle ?? ""}
+                            onChange={(e) => setBranding({ ...branding, heroTitle: e.target.value })}
+                            placeholder="Ej: Reporte Ejecutivo"
                           />
                         </div>
-                        <Input
-                          value={branding.heroTextColor ?? "#ffffff"}
-                          onChange={(e) => setBranding({ ...branding, heroTextColor: e.target.value })}
-                          className="h-8 font-mono text-xs"
-                          placeholder="#ffffff"
-                        />
+                        
+                        <div>
+                          <Label className="text-xs">Subtítulo (opcional)</Label>
+                          <Input
+                            className="h-8"
+                            value={branding.heroSubtitle ?? ""}
+                            onChange={(e) => setBranding({ ...branding, heroSubtitle: e.target.value })}
+                            placeholder="Ej: Club Colombia · Febrero"
+                          />
+                        </div>
+
+                        <div>
+                          <Label className="text-xs">Color de texto</Label>
+                          <div className="flex items-center gap-2">
+                            <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                              <input
+                                type="color"
+                                value={branding.heroTextColor ?? "#ffffff"}
+                                onChange={(e) => setBranding({ ...branding, heroTextColor: e.target.value })}
+                                className="h-full w-full p-0 border-0 cursor-pointer"
+                              />
+                            </div>
+                            <Input
+                              value={branding.heroTextColor ?? "#ffffff"}
+                              onChange={(e) => setBranding({ ...branding, heroTextColor: e.target.value })}
+                              className="h-8 font-mono text-xs"
+                              placeholder="#ffffff"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <Label className="text-xs">Altura de imagen (px)</Label>
+                          <Input
+                            type="number"
+                            min={100}
+                            max={400}
+                            step={20}
+                            className="h-8"
+                            value={branding.heroImageHeight ?? 160}
+                            onChange={(e) => setBranding({ ...branding, heroImageHeight: parseInt(e.target.value) || 160 })}
+                            placeholder="160"
+                          />
+                          <p className="text-[11px] text-muted-foreground mt-1">
+                            Altura del hero decorativo (100-400px)
+                          </p>
+                        </div>
+                        
+                        <div>
+                          <Label className="text-xs">Imagen por URL (opcional)</Label>
+                          <Input
+                            className="h-8"
+                            value={branding.heroImageUrl ?? ""}
+                            onChange={(e) => setBranding({ ...branding, heroImageUrl: e.target.value })}
+                            placeholder="https://... o gs://..."
+                          />
+                        </div>
+                        
+                        <div>
+                          <Label className="text-xs">O subir archivo</Label>
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            className="h-9 cursor-pointer"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0]
+                              if (f) handleImageFile(f)
+                            }}
+                          />
+                          {imageStatus && <p className="text-xs text-muted-foreground mt-1">{imageStatus}</p>}
+                          <p className="text-[11px] text-muted-foreground mt-1">
+                            Se guardará como gs:// URL
+                          </p>
+                        </div>
                       </div>
 
-                      <Label className="text-xs">Altura de imagen (px)</Label>
-                      <Input
-                        type="number"
-                        min={100}
-                        max={400}
-                        step={20}
-                        className="h-8"
-                        value={branding.heroImageHeight ?? 160}
-                        onChange={(e) => setBranding({ ...branding, heroImageHeight: parseInt(e.target.value) || 160 })}
-                        placeholder="160"
-                      />
-                      <p className="text-[11px] text-muted-foreground -mt-1">
-                        Altura del hero decorativo (recomendado: 120-240px)
-                      </p>
-                      
-                      <Label className="text-xs">Imagen por URL (opcional)</Label>
-                      <Input
-                        className="h-8"
-                        value={branding.heroImageUrl ?? ""}
-                        onChange={(e) => setBranding({ ...branding, heroImageUrl: e.target.value })}
-                        placeholder="https://..."
-                      />
-                      
-                      <div className="flex items-center gap-2 pt-1">
-                        <Input
-                          type="file"
-                          accept="image/*"
-                          onChange={(e) => {
-                            const f = e.target.files?.[0]
-                            if (f) handleImageFile(f)
-                          }}
-                        />
-                      </div>
-                      {imageStatus && <p className="text-xs text-muted-foreground">{imageStatus}</p>}
-                      <p className="text-[11px] text-muted-foreground">
-                        Nota: al subir un archivo se guarda como <span className="font-mono">dataURL</span> dentro del JSON.
-                      </p>
-                    </div>
-
-                    <div className="lg:col-span-7">
-                      <Label className="text-xs">Preview</Label>
-                      <div 
-                        className="mt-2 rounded-lg border overflow-hidden relative bg-muted"
-                        style={{ height: `${branding.heroImageHeight || 160}px` }}
-                      >
-                        {branding.heroImageUrl ? (
-                          <>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={branding.heroImageUrl} alt="hero" className="absolute inset-0 h-full w-full object-cover" />
-                            <div className="absolute inset-0 bg-black/35" />
-                          </>
-                        ) : (
-                          <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">Sin imagen</div>
-                        )}
-                        <div className="relative p-4 flex flex-col justify-end h-full" style={{ color: branding.heroTextColor || "#ffffff" }}>
-                          <div className="text-sm font-semibold">{branding.heroTitle || "Título del Dashboard"}</div>
-                          <div className="text-xs opacity-90">{branding.heroSubtitle || "Subtítulo / contexto"}</div>
+                      <div className="lg:col-span-7">
+                        <Label className="text-xs">Preview</Label>
+                        <div 
+                          className="mt-2 rounded-lg border overflow-hidden relative bg-muted"
+                          style={{ height: `${branding.heroImageHeight || 160}px` }}
+                        >
+                          {branding.heroImageUrl ? (
+                            <>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img 
+                                  src={gsUriToHttpUrl(
+                                    branding.heroImageUrl || "", 
+                                    branding._previewCache?.heroImageBase64  // ← Pasar cache
+                                  )} 
+                                  alt="hero" 
+                                  className="absolute inset-0 h-full w-full object-cover"
+                                  onError={(e) => {
+                                    console.error("Error loading image:", branding.heroImageUrl)
+                                    e.currentTarget.style.display = "none"
+                                  }}
+                                />
+                              <div className="absolute inset-0 bg-black/35" />
+                            </>
+                          ) : (
+                            <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+                              Sin imagen
+                            </div>
+                          )}
+                          <div 
+                            className="relative p-4 flex flex-col justify-end h-full" 
+                            style={{ color: branding.heroTextColor || "#ffffff" }}
+                          >
+                            <div className="text-sm font-semibold">{branding.heroTitle || "Título del Dashboard"}</div>
+                            <div className="text-xs opacity-90">{branding.heroSubtitle || "Subtítulo / contexto"}</div>
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* NUEVO: Configuración de Galería de Evidencias */}
-                  <div className="border-t pt-4 mt-4">
+                  {/* NUEVO: Estilos de KPI */}
+                  <div className="border-b pb-4">
+                    <Label className="text-sm font-medium mb-3 block">Estilos de KPIs</Label>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div>
+                        <Label className="text-xs">Color de fondo</Label>
+                        <div className="flex items-center gap-2">
+                          <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                            <input
+                              type="color"
+                              value={branding.kpiBackgroundColor ?? "#ffffff"}
+                              onChange={(e) => setBranding({ ...branding, kpiBackgroundColor: e.target.value })}
+                              className="h-full w-full p-0 border-0 cursor-pointer"
+                            />
+                          </div>
+                          <Input
+                            value={branding.kpiBackgroundColor ?? "#ffffff"}
+                            onChange={(e) => setBranding({ ...branding, kpiBackgroundColor: e.target.value })}
+                            className="h-8 font-mono text-xs"
+                            placeholder="#ffffff"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <Label className="text-xs">Color de texto</Label>
+                        <div className="flex items-center gap-2">
+                          <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                            <input
+                              type="color"
+                              value={branding.kpiTextColor ?? "#000000"}
+                              onChange={(e) => setBranding({ ...branding, kpiTextColor: e.target.value })}
+                              className="h-full w-full p-0 border-0 cursor-pointer"
+                            />
+                          </div>
+                          <Input
+                            value={branding.kpiTextColor ?? "#000000"}
+                            onChange={(e) => setBranding({ ...branding, kpiTextColor: e.target.value })}
+                            className="h-8 font-mono text-xs"
+                            placeholder="#000000"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <Label className="text-xs">Redondeo (Border Radius)</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={24}
+                          step={2}
+                          className="h-8"
+                          value={branding.kpiBorderRadius ?? 8}
+                          onChange={(e) => setBranding({ ...branding, kpiBorderRadius: parseInt(e.target.value) || 8 })}
+                          placeholder="8"
+                        />
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          0 = cuadrado, 8 = redondeado, 24 = muy redondo
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Preview KPI */}
+                    <div className="mt-3">
+                      <Label className="text-xs mb-2 block">Preview KPI</Label>
+                      <div 
+                        className="p-4 border"
+                        style={{
+                          backgroundColor: branding.kpiBackgroundColor || "#ffffff",
+                          color: branding.kpiTextColor || "#000000",
+                          borderRadius: `${branding.kpiBorderRadius ?? 8}px`,
+                        }}
+                      >
+                        <div className="text-xs opacity-70">Total Ventas</div>
+                        <div className="text-2xl font-bold">$1,234,567</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* NUEVO: Estilos de Gráficos */}
+                  <div className="border-b pb-4">
+                    <Label className="text-sm font-medium mb-3 block">Estilos de Gráficos</Label>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <Label className="text-xs">Color de fondo</Label>
+                        <div className="flex items-center gap-2">
+                          <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                            <input
+                              type="color"
+                              value={branding.chartBackgroundColor ?? "#ffffff"}
+                              onChange={(e) => setBranding({ ...branding, chartBackgroundColor: e.target.value })}
+                              className="h-full w-full p-0 border-0 cursor-pointer"
+                            />
+                          </div>
+                          <Input
+                            value={branding.chartBackgroundColor ?? "#ffffff"}
+                            onChange={(e) => setBranding({ ...branding, chartBackgroundColor: e.target.value })}
+                            className="h-8 font-mono text-xs"
+                            placeholder="#ffffff"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <Label className="text-xs">Redondeo (Border Radius)</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={24}
+                          step={2}
+                          className="h-8"
+                          value={branding.chartBorderRadius ?? 8}
+                          onChange={(e) => setBranding({ ...branding, chartBorderRadius: parseInt(e.target.value) || 8 })}
+                          placeholder="8"
+                        />
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          0 = cuadrado, 8 = redondeado
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Preview Chart */}
+                    <div className="mt-3">
+                      <Label className="text-xs mb-2 block">Preview Gráfico</Label>
+                      <div 
+                        className="p-4 border"
+                        style={{
+                          backgroundColor: branding.chartBackgroundColor || "#ffffff",
+                          borderRadius: `${branding.chartBorderRadius ?? 8}px`,
+                        }}
+                      >
+                        <div className="text-sm font-medium mb-2">Ventas por Mes</div>
+                        <div className="h-32 bg-muted/30 rounded flex items-center justify-center text-xs text-muted-foreground">
+                          [Gráfico aquí]
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Galería de Evidencias */}
+                  <div>
                     <Label className="text-sm font-medium mb-3 block">Galería de Evidencias Fotográficas</Label>
                     
                     <div className="space-y-3">
@@ -1153,7 +1354,6 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                   </Select>
                 </CardContent>
               </Card>
-
               {/* Filtros */}
               <Card>
                 <CardHeader>

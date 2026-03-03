@@ -52,14 +52,14 @@ const campaignSchema = z.object({
   empresaId: z.string().min(1, "Empresa requerida"),
   estado: z.enum(["planificacion", "activa", "completada", "cancelada"]),
   fechaInicio: z.string().min(1, "Fecha de inicio requerida"),
-  fechaFin: z.string().min(1, "Fecha fin requerida"),
-  // presupuesto: z.coerce.number().nonnegative("El presupuesto no puede ser negativo"),
+  fechaFin: z.string().optional(), // opcional
   descripcion: z.string().min(1, "Descripción requerida"),
   objetivos: z.string().optional(),
   productosAsociados: z.string().optional(),
   bucketPath: z.string().optional(),
 }).refine((data) => {
-  if (data.fechaInicio && data.fechaFin) {
+  // Solo valida si ambas fechas existen
+  if (data.fechaInicio && data.fechaFin && data.fechaFin.trim() !== "") {
     return new Date(data.fechaFin) >= new Date(data.fechaInicio)
   }
   return true
@@ -565,7 +565,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
                   name="fechaFin"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Fecha Fin *</FormLabel>
+                      <FormLabel>Fecha Fin (opcional)</FormLabel> {/* ← Indicar que es opcional */}
                       <FormControl>
                         <Input type="date" {...field} />
                       </FormControl>

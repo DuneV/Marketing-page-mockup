@@ -1034,34 +1034,75 @@ campaignsRouter.delete("/:campaignId/report-config", async (req, res) => {
 
 campaignsRouter.get("/:campaignId/dataset", async (req, res) => {
   try {
-    await requireAdmin(req)
+    const auth = await requireAuth(req)
     const { campaignId } = req.params
 
+    // VALIDACIÓN EXPLÍCITA: Solo admin y company
+    if (auth.role !== "admin" && auth.role !== "company") {
+      return res.status(403).json({ 
+        error: "FORBIDDEN",
+        message: "No tienes permisos para acceder a este recurso"
+      })
+    }
 
-    // 1) último import DONE para esa campaña (igual que available-fields / run-report)
-    const lastImport = await queryOne<{ id: string }>(
-      `SELECT id
-       FROM imports.imports
-       WHERE campaign_id = $1
-         AND import_type = 'campaigns'
-         AND status = 'DONE'
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [campaignId]
-    )
+    // 1) Buscar último import DONE
+    let lastImport
+
+    if (auth.role === "company") {
+      if (!auth.companyId) {
+        return res.status(400).json({ error: "MISSING_COMPANY_ID" })
+      }
+
+      // Company: solo imports de SU empresa
+      lastImport = await queryOne<{ id: string }>(
+        `SELECT id
+         FROM imports.imports
+         WHERE campaign_id = $1
+           AND company_id = $2
+           AND import_type = 'campaigns'
+           AND status = 'DONE'
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [campaignId, auth.companyId]
+      )
+
+      if (!lastImport) {
+        return res.status(403).json({ 
+          error: "FORBIDDEN",
+          message: "No tienes acceso a esta campaña o no tiene datos importados"
+        })
+      }
+    } else if (auth.role === "admin") {
+      // Admin: cualquier import
+      lastImport = await queryOne<{ id: string }>(
+        `SELECT id
+         FROM imports.imports
+         WHERE campaign_id = $1
+           AND import_type = 'campaigns'
+           AND status = 'DONE'
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [campaignId]
+      )
+    }
+
     if (!lastImport) {
       return res.json({ rows: [] })
     }
-    // 2) data real desde staging
+
+    // 2) Obtener datos desde staging
     const rows = await query<{ data: any }>(
       `SELECT data
        FROM staging.staging_rows
        WHERE import_id = $1
          AND is_valid = true
        ORDER BY row_number ASC
-       LIMIT 5000`,
+       LIMIT 50000`,
       [lastImport.id]
     )
+
+    console.log(`Dataset loaded: ${rows.length} rows for campaign ${campaignId} (role: ${auth.role})`)
+
     return res.json({ rows: rows.map(r => r.data) })
   } catch (e: any) {
     console.error("dataset error:", e)

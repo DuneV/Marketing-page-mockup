@@ -60,6 +60,11 @@ type BrandingConfig = {
   galleryPhotoFields?: string[] // NEW: campos configurados que contienen fotos
   galleryMetadataFields?: string[] // NEW: campos a mostrar como metadata
   galleryImageHeight?: number // NEW: altura de las imágenes en px (default 500)
+  kpiBackgroundColor?: string
+  kpiTextColor?: string
+  kpiBorderRadius?: number
+  chartBackgroundColor?: string
+  chartBorderRadius?: number
 }
 
 type FilterCondition = {
@@ -463,10 +468,28 @@ function buildSeries(rows: RowData[], chart: ChartDefinition): BuiltSeries {
 // -----------------------------
 // UI pieces
 // -----------------------------
-function KpiCard({ title, value, columnas }: { title: string; value: string; columnas: number }) {
+function KpiCard({ 
+  title, 
+  value, 
+  columnas, 
+  branding 
+}: { 
+  title: string
+  value: string
+  columnas: number
+  branding?: BrandingConfig
+}) {
   return (
-    <div className="rounded-lg border bg-white p-4" style={{ gridColumn: `span ${columnas} / span ${columnas}` }}>
-      <div className="text-xs text-muted-foreground">{title}</div>
+    <div 
+      className="border p-4" 
+      style={{ 
+        gridColumn: `span ${columnas} / span ${columnas}`,
+        backgroundColor: branding?.kpiBackgroundColor || "#ffffff",
+        color: branding?.kpiTextColor || "#000000",
+        borderRadius: `${branding?.kpiBorderRadius ?? 8}px`,
+      }}
+    >
+      <div className="text-xs opacity-70">{title}</div>
       <div className="mt-1 text-2xl font-semibold">{value}</div>
     </div>
   )
@@ -1449,6 +1472,51 @@ export function DashboardFromConfig({
   }, [rows, availableFields, branding.galleryPhotoFields])
 
   const hasPhotos = photoFields.length > 0
+  const allPhotos = useMemo(() => {
+      if (!hasPhotos) return []
+      
+      const photos: Array<{ url: string; field: string; rowData: RowData; index: number }> = []
+      
+      filteredRows.forEach((row, rowIndex) => {
+        photoFields.forEach(field => {
+          const value = row[field]
+          if (!value) return
+
+          let urls: string[] = []
+          
+          if (typeof value === 'object' && value !== null) {
+            const urlStr = value.hyperlink || value.text
+            if (urlStr) {
+              urls = String(urlStr).split(',').map(u => u.trim()).filter(Boolean)
+            }
+          } else {
+            urls = String(value).split(',').map(u => u.trim()).filter(Boolean)
+          }
+          
+          urls.forEach(url => {
+            let imageUrl = url
+            
+            if (url.includes('drive.google.com')) {
+              const idMatch = url.match(/[?&]id=([^&]+)/) || url.match(/\/d\/([^/?]+)/)
+              if (idMatch) {
+                const fileId = idMatch[1]
+                const driveUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`
+                imageUrl = `/api/proxy-image?url=${encodeURIComponent(driveUrl)}`
+              }
+            }
+            
+            photos.push({
+              url: imageUrl,
+              field,
+              rowData: row,
+              index: rowIndex,
+            })
+          })
+        })
+      })
+      
+      return photos
+    }, [filteredRows, photoFields, hasPhotos])
 
   return (
     <div className="space-y-6">
@@ -1485,10 +1553,18 @@ export function DashboardFromConfig({
 
       {/* KPI cards con grid de 12 columnas */}
       <div className="grid grid-cols-12 gap-4">
-        {visibleKpis.map((kpi) => {
+                {visibleKpis.map((kpi) => {
           const v = kpiValues[kpi.id] ?? 0
           const columnas = (kpi as ExtendedKPI).columnas || 3
-          return <KpiCard key={kpi.id} title={kpi.nombre} value={formatKpiValue(v, kpi)} columnas={columnas} />
+          return (
+            <KpiCard 
+              key={kpi.id} 
+              title={kpi.nombre} 
+              value={formatKpiValue(v, kpi)} 
+              columnas={columnas}
+              branding={branding}  // ← AGREGAR
+            />
+          )
         })}
       </div>
 
@@ -1501,7 +1577,7 @@ export function DashboardFromConfig({
           </TabsTrigger>
           <TabsTrigger value="evidencias" disabled={!hasPhotos}>
             <ImageIcon className="h-4 w-4 mr-2" />
-            Evidencias {hasPhotos && `(${photoFields.length})`}
+            Evidencias {hasPhotos && allPhotos.length > 0 && `(${allPhotos.length})`} 
           </TabsTrigger>
         </TabsList>
 
@@ -1512,10 +1588,14 @@ export function DashboardFromConfig({
               <div key={row.id} className="grid grid-cols-12 gap-4">
                 {(row.graficos ?? []).map((chart) => (
                   <div
-                    key={chart.id}
-                    className="col-span-12 rounded-lg border bg-white p-4"
-                    style={{ gridColumn: `span ${chart.columnas} / span ${chart.columnas}` } as any}
-                  >
+                      key={chart.id}
+                      className="col-span-12 border p-4"
+                      style={{ 
+                        gridColumn: `span ${chart.columnas} / span ${chart.columnas}`,
+                        backgroundColor: branding?.chartBackgroundColor || "#ffffff",
+                        borderRadius: `${branding?.chartBorderRadius ?? 8}px`,
+                      } as any}
+                    >
                     <div className="mb-2 text-sm font-medium">{chart.titulo}</div>
                     {renderChart(chart)}
                   </div>
