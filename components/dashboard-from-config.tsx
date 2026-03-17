@@ -37,8 +37,7 @@ import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Filter, X, ChevronLeft, ChevronRight, ZoomIn, ExternalLink, Image as ImageIcon, BarChart3, Plus, Calendar } from "lucide-react"
-
+import { Filter, X, ChevronLeft, ChevronRight, ZoomIn, ExternalLink, Image as ImageIcon, BarChart3, Plus, Calendar, MousePointerClick } from "lucide-react"
 // -----------------------------
 // Types
 // -----------------------------
@@ -49,13 +48,20 @@ type DashboardConstant = {
   key: string
   value: number
   label?: string
+  kind?: "static" | "filtered_agg"
+  field?: string
+  agg?: KPIOperation
+  filterField?: string
+  filterValue?: string
 }
+
 
 type BrandingConfig = {
   heroImageUrl?: string
   heroTitle?: string
   heroSubtitle?: string
   heroTextColor?: string // NEW: color del texto en el hero
+  heroOverlayOpacity?: number
   heroImageHeight?: number // NEW: altura de la imagen hero en px (default 160)
   galleryPhotoFields?: string[] // NEW: campos configurados que contienen fotos
   galleryMetadataFields?: string[] // NEW: campos a mostrar como metadata
@@ -65,6 +71,12 @@ type BrandingConfig = {
   kpiBorderRadius?: number
   chartBackgroundColor?: string
   chartBorderRadius?: number
+  galleryBackgroundColor?: string
+  filterBackgroundColor?: string
+  filterBorderRadius?: number
+  filterTextColor?: string
+  filterIconColor?: string
+  kpiLabelColor?: string
 }
 
 type FilterCondition = {
@@ -489,7 +501,7 @@ function KpiCard({
         borderRadius: `${branding?.kpiBorderRadius ?? 8}px`,
       }}
     >
-      <div className="text-xs opacity-70">{title}</div>
+      <div className="text-xs" style={{ color: branding?.kpiLabelColor ?? "#6b7280" }}>{title}</div>
       <div className="mt-1 text-2xl font-semibold">{value}</div>
     </div>
   )
@@ -501,11 +513,19 @@ function EvidenceGallery({
   photoFields,
   metadataFields,
   imageHeight = 500,
+  backgroundColor = "#f8fafc",
+  imageBackground = "#000000",
+  metadataBackground = "#f1f5f9",
+  metadataCols = 2,
 }: {
   rows: RowData[]
   photoFields: string[]
   metadataFields?: string[] // Campos específicos a mostrar como metadata
   imageHeight?: number // Altura del contenedor de imagen en px
+  backgroundColor?: string
+  imageBackground?: string
+  metadataBackground?: string
+  metadataCols?: number
 }) {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
@@ -577,7 +597,7 @@ function EvidenceGallery({
 
   if (allPhotos.length === 0) {
     return (
-      <Card>
+      <Card style={{ backgroundColor }}>
         <CardContent className="py-12 text-center">
           <ImageIcon className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
           <p className="text-muted-foreground">No se encontraron fotos en los datos filtrados.</p>
@@ -605,7 +625,7 @@ function EvidenceGallery({
   return (
     <div className="space-y-4">
       {/* Main Image Card */}
-      <Card>
+      <Card style={{ backgroundColor }}>
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="text-lg">
@@ -618,8 +638,8 @@ function EvidenceGallery({
         </CardHeader>
         <CardContent>
           <div 
-            className="relative bg-muted rounded-lg overflow-hidden flex items-center justify-center" 
-            style={{ height: `${imageHeight}px` }}
+            className="relative rounded-lg overflow-hidden flex items-center justify-center" 
+            style={{ height: `${imageHeight}px`, backgroundColor: imageBackground }}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -728,8 +748,8 @@ function EvidenceGallery({
           </div>
 
           {/* Photo Metadata */}
-          <div className="mt-4 p-3 bg-muted rounded-lg text-sm">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="mt-4 p-3 rounded-lg text-sm border" style={{ backgroundColor: metadataBackground }}>
+            <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${metadataCols}, minmax(0, 1fr))` }}>
               <div>
                 <span className="font-medium">Campo:</span> {currentPhoto.field}
               </div>
@@ -777,12 +797,20 @@ function FilterPanel({
   availableFields,
   campaignId,
   rows,
+  cardBackground,
+  cardBorderRadius,
+  textColor,
+  iconColor,
 }: {
   filters: ReportFilters
   onFiltersChange: (filters: ReportFilters) => void
   availableFields: string[]
   campaignId?: string
   rows: RowData[]
+  cardBackground?: string
+  cardBorderRadius?: number
+  textColor?: string
+  iconColor?: string
 }) {
   const [tempFilters, setTempFilters] = useState<ReportFilters>(filters)
   const [filterOptions, setFilterOptions] = useState<Record<string, any[]>>({})
@@ -943,12 +971,12 @@ function FilterPanel({
       {/* Filter Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Fecha Inicio */}
-        <div className="bg-card border rounded-lg p-4 shadow-sm">
+        <div className="border p-4 shadow-sm" style={{ backgroundColor: cardBackground || "var(--card)", borderRadius: `${cardBorderRadius ?? 8}px`, color: textColor || "inherit" }}>
           <div className="flex items-center gap-2 mb-2">
-            <Calendar className="h-4 w-4 text-muted-foreground" />
+            <Calendar className="h-4 w-4" style={{ color: iconColor || undefined }} />
             <label className="text-sm font-semibold">Fecha</label>
           </div>
-          <p className="text-xs text-muted-foreground mb-3">Operador: eq</p>
+          <p className="text-xs mb-3" style={{ opacity: 0.6 }}>Operador: eq</p>
           <Select
             value={tempFilters.fechas?.inicio || "all"}
             onValueChange={(value) => updateTempDateRange("inicio", value === "all" ? "" : value)}
@@ -969,12 +997,12 @@ function FilterPanel({
         </div>
 
         {/* Fecha Fin */}
-        <div className="bg-card border rounded-lg p-4 shadow-sm">
+        <div className="border p-4 shadow-sm" style={{ backgroundColor: cardBackground || "var(--card)", borderRadius: `${cardBorderRadius ?? 8}px`, color: textColor || "inherit" }}>
           <div className="flex items-center gap-2 mb-2">
-            <Calendar className="h-4 w-4 text-muted-foreground" />
+            <Calendar className="h-4 w-4" style={{ color: iconColor || undefined }} />
             <label className="text-sm font-semibold">Fecha</label>
           </div>
-          <p className="text-xs text-muted-foreground mb-3">Operador: eq</p>
+          <p className="text-xs mb-3" style={{ opacity: 0.6 }}>Operador: eq</p>
           <Select
             value={tempFilters.fechas?.fin || "all"}
             onValueChange={(value) => updateTempDateRange("fin", value === "all" ? "" : value)}
@@ -1000,7 +1028,7 @@ function FilterPanel({
           const isLoadingFieldOptions = loadingOptions[condition.campo]
           
           return (
-            <div key={index} className="bg-card border rounded-lg p-4 shadow-sm relative">
+            <div key={index} className="border p-4 shadow-sm relative" style={{ backgroundColor: cardBackground || "var(--card)", borderRadius: `${cardBorderRadius ?? 8}px`, color: textColor || "inherit" }}>
               <Button
                 variant="ghost"
                 size="sm"
@@ -1011,12 +1039,12 @@ function FilterPanel({
               </Button>
 
               <div className="flex items-center gap-2 mb-2">
-                <Filter className="h-4 w-4 text-muted-foreground" />
+                <Filter className="h-4 w-4" style={{ color: iconColor || undefined }} />
                 <label className="text-sm font-semibold">
                   {condition.campo || "Campo"}
                 </label>
               </div>
-              <p className="text-xs text-muted-foreground mb-3">Operador: {condition.operador}</p>
+              <p className="text-xs mb-3" style={{ opacity: 0.6 }}>Operador: {condition.operador}</p>
 
               <div className="space-y-2">
                 <Select
@@ -1077,6 +1105,88 @@ function FilterPanel({
     </div>
   )
 }
+// -----------------------------
+// Sortable Table Component
+// -----------------------------
+function SortableTable({ data }: { data: any[] }) {
+  const [sortKey, setSortKey] = useState<string | null>(null)
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
+
+  const columns = Object.keys(data?.[0] ?? {})
+
+  const sorted = useMemo(() => {
+    if (!sortKey) return data
+    return [...data].sort((a, b) => {
+      const av = a[sortKey]
+      const bv = b[sortKey]
+      const an = Number(av)
+      const bn = Number(bv)
+      const isNum = !isNaN(an) && !isNaN(bn)
+      let cmp = 0
+      if (isNum) {
+        cmp = an - bn
+      } else {
+        cmp = String(av ?? "").localeCompare(String(bv ?? ""), "es", { sensitivity: "base" })
+      }
+      return sortDir === "asc" ? cmp : -cmp
+    })
+  }, [data, sortKey, sortDir])
+
+  const handleSort = (key: string) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"))
+    } else {
+      setSortKey(key)
+      setSortDir("asc")
+    }
+  }
+
+  if (data.length === 0) return <p className="text-sm text-muted-foreground">Sin datos.</p>
+
+  return (
+    <div className="overflow-auto">
+      <table className="min-w-[520px] w-full text-sm">
+        <thead>
+          <tr className="border-b">
+            {columns.map((k) => {
+              const isActive = sortKey === k
+              const isNum = !isNaN(Number(data[0]?.[k]))
+              return (
+                <th
+                  key={k}
+                  className="text-left p-2 font-medium cursor-pointer select-none hover:bg-muted/50 transition-colors"
+                  onClick={() => handleSort(k)}
+                >
+                  <div className="flex items-center gap-1">
+                    <span>{k}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {isActive
+                        ? sortDir === "asc"
+                          ? isNum ? "↑" : "A→Z"
+                          : isNum ? "↓" : "Z→A"
+                        : "↕"}
+                    </span>
+                  </div>
+                </th>
+              )
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((row, i) => (
+            <tr key={i} className="border-b hover:bg-muted/30 transition-colors">
+              {columns.map((k) => (
+                <td key={k} className="p-2">
+                  {String(row[k] ?? "")}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
 
 // -----------------------------
 // Main component
@@ -1095,7 +1205,7 @@ export function DashboardFromConfig({
   
   // Estado para URL pública de la imagen hero (convierte gs:// a URL firmada)
   const [heroImagePublicUrl, setHeroImagePublicUrl] = useState<string | null>(null)
-
+  const [chartFilter, setChartFilter] = useState<{ field: string; value: string } | null>(null)
   // Efecto para cargar URL pública si es gsUri
   useEffect(() => {
     const heroImageUrl = branding.heroImageUrl
@@ -1147,8 +1257,12 @@ export function DashboardFromConfig({
 
   // Apply filters to data
   const filteredRows = useMemo(() => {
-    return applyFilters(rows, userFilters)
-  }, [rows, userFilters])
+    let result = applyFilters(rows, userFilters)
+    if (chartFilter) {
+      result = result.filter((r) => String(r?.[chartFilter.field] ?? "") === chartFilter.value)
+    }
+    return result
+  }, [rows, userFilters, chartFilter])
 
   // Get available fields from data
   const availableFields = useMemo(() => {
@@ -1160,10 +1274,20 @@ export function DashboardFromConfig({
     const m: Record<string, number> = {}
     for (const c of constants) {
       if (!c?.key) continue
-      m[c.key] = Number(c.value ?? 0)
+      const kind = c.kind ?? "static"
+      if (kind === "static") {
+        m[c.key] = Number(c.value ?? 0)
+      } else if (kind === "filtered_agg" && c.field) {
+        // Aplicar filtro de fila si existe
+        const subset = c.filterField && c.filterValue
+          ? filteredRows.filter((r) => String(r?.[c.filterField!] ?? "") === c.filterValue)
+          : filteredRows
+        const nums = subset.map((r) => toNumber(r?.[c.field!])).filter((n): n is number => n !== null)
+        m[c.key] = aggregateNumeric(nums, c.agg ?? "sum")
+      }
     }
     return m
-  }, [constants])
+  }, [constants, filteredRows])
 
   const palette = useMemo(() => {
     const p = config.paletaColores
@@ -1234,7 +1358,7 @@ export function DashboardFromConfig({
     return { kpiValues: byId, visibleKpis: visible }
   }, [config.kpis, filteredRows, constMap])
 
-  const renderChart = (chart: ChartDefinition) => {
+  const renderChart = (chart: ChartDefinition, onSegmentClick?: (field: string, value: string) => void) => {
     const tipo = chart.tipo
     const built = buildSeries(filteredRows, chart)
     const s = built.data
@@ -1242,47 +1366,117 @@ export function DashboardFromConfig({
 
     if (tipo === "torta") {
       const key = seriesKeys[0]?.key ?? "value"
+      const groupByField = chart.groupBy as string
       const pieData = s.map((p) => ({ name: p.name, value: Number(p[key] ?? 0) }))
+      const isFiltered = chartFilter?.field === groupByField
 
       return (
-        <ResponsiveContainer width="100%" height={320}>
-          <PieChart>
-            <Pie data={pieData} dataKey="value" nameKey="name" label>
-              {pieData.map((_, idx) => (
-                <Cell key={idx} fill={palette[idx % palette.length]} />
-              ))}
-            </Pie>
-            <Tooltip />
-            <Legend />
-          </PieChart>
-        </ResponsiveContainer>
+        <div className="relative">
+          {isFiltered && (
+            <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground">
+              <span>Filtrado por: <strong>{chartFilter!.value}</strong></span>
+              <button
+                onClick={() => setChartFilter(null)}
+                className="text-red-500 hover:text-red-700 font-medium"
+              >
+                ✕ Quitar filtro
+              </button>
+            </div>
+          )}
+          <ResponsiveContainer width="100%" height={320}>
+            <PieChart>
+              <Pie
+                data={pieData}
+                dataKey="value"
+                nameKey="name"
+                label
+                cursor={onSegmentClick ? "pointer" : undefined}
+                onClick={(entry: any) => {
+                  if (!onSegmentClick || !groupByField) return
+                  const val = String(entry?.name ?? "")
+                  if (chartFilter?.field === groupByField && chartFilter?.value === val) {
+                    setChartFilter(null)
+                  } else {
+                    onSegmentClick(groupByField, val)
+                  }
+                }}
+              >
+                {pieData.map((entry, idx) => (
+                  <Cell
+                    key={idx}
+                    fill={palette[idx % palette.length]}
+                    opacity={isFiltered && chartFilter?.value !== entry.name ? 0.35 : 1}
+                  />
+                ))}
+              </Pie>
+              <Tooltip />
+              <Legend />
+            </PieChart>
+          </ResponsiveContainer>
+          {onSegmentClick && !isFiltered && (
+            <p className="text-center text-xs text-muted-foreground mt-1 flex items-center justify-center gap-1">
+              <MousePointerClick className="h-3 w-3" /> Haz click en un sector para filtrar
+            </p>
+          )}
+        </div>
       )
     }
-
     if (tipo === "barras") {
       const anyRight = seriesKeys.some((k) => (k.axis ?? "left") === "right")
       const stackId = (chart.barMode ?? "grouped") === "stacked" ? "stack" : undefined
+      const groupByField = chart.groupBy as string
+      const isFiltered = chartFilter?.field === groupByField
 
       return (
-        <ResponsiveContainer width="100%" height={320}>
-          <BarChart data={s}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="name" />
-            <YAxis yAxisId="left" />
-            {anyRight && <YAxis yAxisId="right" orientation="right" />}
-            <Tooltip />
-            <Legend />
-            {(seriesKeys.length ? seriesKeys : [{ key: "value", label: "value", axis: "left" }]).map((sk, idx) => (
-              <Bar
-                key={sk.key}
-                dataKey={sk.key}
-                yAxisId={(sk.axis ?? "left") === "right" ? "right" : "left"}
-                stackId={stackId}
-                fill={palette[idx % palette.length]}
-              />
-            ))}
-          </BarChart>
-        </ResponsiveContainer>
+        <div className="relative">
+          {isFiltered && (
+            <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground">
+              <span>Filtrado por: <strong>{chartFilter!.value}</strong></span>
+              <button
+                onClick={() => setChartFilter(null)}
+                className="text-red-500 hover:text-red-700 font-medium"
+              >
+                ✕ Quitar filtro
+              </button>
+            </div>
+          )}
+          <ResponsiveContainer width="100%" height={320}>
+            <BarChart
+              data={s}
+              onClick={(data: any) => {
+                if (!onSegmentClick || !groupByField || !data?.activeLabel) return
+                const val = String(data.activeLabel)
+                if (chartFilter?.field === groupByField && chartFilter?.value === val) {
+                  setChartFilter(null)
+                } else {
+                  onSegmentClick(groupByField, val)
+                }
+              }}
+              style={{ cursor: onSegmentClick ? "pointer" : undefined }}
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" label={(chart as any).labelX ? { value: (chart as any).labelX, position: "insideBottom", offset: -5 } : undefined} />
+              <YAxis yAxisId="left" label={(chart as any).labelY ? { value: (chart as any).labelY, angle: -90, position: "insideLeft" } : undefined} />
+              {anyRight && <YAxis yAxisId="right" orientation="right" />}
+              <Tooltip />
+              <Legend />
+              {(seriesKeys.length ? seriesKeys : [{ key: "value", label: "value", axis: "left" }]).map((sk, idx) => (
+                <Bar
+                  key={sk.key}
+                  dataKey={sk.key}
+                  yAxisId={(sk.axis ?? "left") === "right" ? "right" : "left"}
+                  stackId={stackId}
+                  fill={palette[idx % palette.length]}
+                />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
+          {onSegmentClick && !isFiltered && (
+            <p className="text-center text-xs text-muted-foreground mt-1 flex items-center justify-center gap-1">
+              <MousePointerClick className="h-3 w-3" /> Haz click en una barra para filtrar
+            </p>
+          )}
+        </div>
       )
     }
 
@@ -1292,8 +1486,8 @@ export function DashboardFromConfig({
         <ResponsiveContainer width="100%" height={320}>
           <LineChart data={s}>
             <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="name" />
-            <YAxis yAxisId="left" />
+            <XAxis dataKey="name" label={(chart as any).labelX ? { value: (chart as any).labelX, position: "insideBottom", offset: -5 } : undefined} />
+            <YAxis yAxisId="left" label={(chart as any).labelY ? { value: (chart as any).labelY, angle: -90, position: "insideLeft" } : undefined} />
             {anyRight && <YAxis yAxisId="right" orientation="right" />}
             <Tooltip />
             <Legend />
@@ -1318,8 +1512,8 @@ export function DashboardFromConfig({
         <ResponsiveContainer width="100%" height={320}>
           <AreaChart data={s}>
             <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="name" />
-            <YAxis yAxisId="left" />
+            <XAxis dataKey="name" label={(chart as any).labelX ? { value: (chart as any).labelX, position: "insideBottom", offset: -5 } : undefined} />
+              <YAxis yAxisId="left" label={(chart as any).labelY ? { value: (chart as any).labelY, angle: -90, position: "insideLeft" } : undefined} />
             {anyRight && <YAxis yAxisId="right" orientation="right" />}
             <Tooltip />
             <Legend />
@@ -1368,9 +1562,10 @@ export function DashboardFromConfig({
 
       const built2 = buildSeries(filteredRows, { ...chart, seriesBy: undefined })
       const s2 = built2.data
-      const metricKeys = metrics.map((m) => ({
-        key: `${m.field}__${m.agg}`,
-        axis: m.axis ?? "left",
+      const metricKeys: { key: string; dataKey: string; axis: "left" | "right"; render: "bar" | "line"; label: string }[] = metrics.map((m, idx) => ({
+        key: `${m.field}__${m.agg}__${idx}`,
+        dataKey: `${m.field}__${m.agg}`,
+        axis: (m.axis ?? "left") as "left" | "right",
         render: (m.render ?? "bar") as "bar" | "line",
         label: `${m.field} (${m.agg})`,
       }))
@@ -1387,9 +1582,9 @@ export function DashboardFromConfig({
             {metricKeys.map((m, idx) => {
               const yAxisId = m.axis === "right" ? "right" : "left"
               if (m.render === "line") {
-                return <Line key={m.key} yAxisId={yAxisId} type="monotone" dataKey={m.key} dot={false} stroke={palette[idx % palette.length]} />
+                return <Line key={m.key} yAxisId={yAxisId} type="monotone" dataKey={m.dataKey} dot={false} stroke={palette[idx % palette.length]} />
               }
-              return <Bar key={m.key} yAxisId={yAxisId} dataKey={m.key} fill={palette[idx % palette.length]} />
+              return <Bar key={m.key} yAxisId={yAxisId} dataKey={m.dataKey} fill={palette[idx % palette.length]} />
             })}
           </ComposedChart>
         </ResponsiveContainer>
@@ -1397,32 +1592,7 @@ export function DashboardFromConfig({
     }
 
     if (tipo === "tabla") {
-      return (
-        <div className="overflow-auto">
-          <table className="min-w-[520px] w-full text-sm">
-            <thead>
-              <tr className="border-b">
-                {Object.keys(s?.[0] ?? {}).map((k) => (
-                  <th key={k} className="text-left p-2 font-medium">
-                    {k}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {s.map((row, i) => (
-                <tr key={i} className="border-b">
-                  {Object.keys(row).map((k) => (
-                    <td key={k} className="p-2">
-                      {String(row[k] ?? "")}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )
+      return <SortableTable data={s} />
     }
 
     return <div className="text-sm text-muted-foreground">Tipo "{tipo}" aún no implementado.</div>
@@ -1530,7 +1700,7 @@ export function DashboardFromConfig({
             <>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={heroImagePublicUrl} alt="hero" className="absolute inset-0 h-full w-full object-cover" />
-              <div className="absolute inset-0 bg-black/35" />
+             <div className="absolute inset-0 bg-black" style={{ opacity: branding.heroOverlayOpacity ?? 0.35 }} />
             </>
           )}
           <div className="relative p-6 flex flex-col justify-end h-full">
@@ -1542,6 +1712,22 @@ export function DashboardFromConfig({
         </div>
       )}
 
+      {/* Chart filter indicator */}
+      {chartFilter && (
+        <div className="flex items-center gap-3 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg text-sm">
+          <MousePointerClick className="h-4 w-4 text-amber-600 shrink-0" />
+          <span className="text-amber-800 dark:text-amber-200">
+            Filtro activo desde gráfica: <strong>{chartFilter.field}</strong> = <strong>{chartFilter.value}</strong>
+          </span>
+          <button
+            onClick={() => setChartFilter(null)}
+            className="ml-auto text-amber-600 hover:text-amber-800 font-medium"
+          >
+            ✕ Quitar
+          </button>
+        </div>
+      )}
+
       {/* Filters */}
       <FilterPanel
         filters={userFilters}
@@ -1549,6 +1735,10 @@ export function DashboardFromConfig({
         availableFields={availableFields}
         campaignId={campaignId}
         rows={filteredRows}
+        cardBackground={branding.filterBackgroundColor}
+        cardBorderRadius={branding.filterBorderRadius}
+        textColor={branding.filterTextColor}
+        iconColor={branding.filterIconColor}
       />
 
       {/* KPI cards con grid de 12 columnas */}
@@ -1597,7 +1787,7 @@ export function DashboardFromConfig({
                       } as any}
                     >
                     <div className="mb-2 text-sm font-medium">{chart.titulo}</div>
-                    {renderChart(chart)}
+                    {renderChart(chart, (["barras", "torta"].includes(chart.tipo as string)) ? (field, value) => setChartFilter({ field, value }) : undefined)}
                   </div>
                 ))}
               </div>
@@ -1622,6 +1812,10 @@ export function DashboardFromConfig({
               photoFields={photoFields}
               metadataFields={branding.galleryMetadataFields}
               imageHeight={branding.galleryImageHeight}
+              backgroundColor={branding.galleryBackgroundColor ?? "#f8fafc"}
+              imageBackground={(branding as any).galleryImageBackground ?? "#000000"}
+              metadataBackground={(branding as any).galleryMetadataBackground ?? "#f1f5f9"}
+              metadataCols={(branding as any).galleryMetadataCols ?? 2}
             />
           ) : (
             <Card>

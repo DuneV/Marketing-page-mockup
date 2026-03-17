@@ -8,7 +8,7 @@ import {
   type AvailableField,
   type AvailableFilter,
 } from "@/lib/api/campaignApi"
-
+import { getAssetReadUrl } from "@/lib/api/campaignApi"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -132,6 +132,11 @@ type DashboardConstant = {
   key: string
   value: number
   label?: string
+  kind?: "static" | "filtered_agg"
+  field?: string
+  agg?: KPIOperation
+  filterField?: string
+  filterValue?: string
 }
 
 type BrandingConfig = {
@@ -140,6 +145,7 @@ type BrandingConfig = {
   heroSubtitle?: string
   heroTextColor?: string
   heroImageHeight?: number
+  heroOverlayOpacity?: number
   galleryPhotoFields?: string[]
   galleryMetadataFields?: string[]
   galleryImageHeight?: number
@@ -153,7 +159,16 @@ type BrandingConfig = {
   }
   // NUEVO: Estilos de gráficos
   chartBackgroundColor?: string
+  galleryBackgroundColor?: string
+  galleryMetadataBackground?: string
+  galleryImageBackground?: string
+  galleryMetadataCols?: number
   chartBorderRadius?: number
+  filterBackgroundColor?: string
+  filterBorderRadius?: number
+  filterTextColor?: string
+  filterIconColor?: string
+  kpiLabelColor?: string
 }
 
 type FilterCondition = {
@@ -260,7 +275,9 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
   const [templates, setTemplates] = useState<ReportTemplate[]>([])
   const [validationErrors, setValidationErrors] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(false)
-
+  const [heroImagePublicUrl, setHeroImagePublicUrl] = useState<string | null>(null)
+  const [heroImageLoading, setHeroImageLoading] = useState(false)
+  const [heroImageError, setHeroImageError] = useState<string | null>(null)
   const [availableFields, setAvailableFields] = useState<AvailableField[]>([])
   const [availableFilters, setAvailableFilters] = useState<AvailableFilter[]>([])
   const [isLoadingFields, setIsLoadingFields] = useState(false)
@@ -369,6 +386,49 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, campaign.id])
+  
+  useEffect(() => {
+    const heroImageUrl = branding.heroImageUrl
+    
+    // Reset
+    setHeroImagePublicUrl(null)
+    setHeroImageError(null)
+    
+    if (!heroImageUrl) {
+      return
+    }
+
+    // Si es base64 (del cache temporal), usar directamente
+    if (heroImageUrl.startsWith("data:")) {
+      setHeroImagePublicUrl(heroImageUrl)
+      return
+    }
+
+    // Si es URL http/https normal, usar directamente
+    if (heroImageUrl.startsWith("http://") || heroImageUrl.startsWith("https://")) {
+      setHeroImagePublicUrl(heroImageUrl)
+      return
+    }
+
+    // Si es gs:// URI, convertir a URL firmada
+    if (heroImageUrl.startsWith("gs://")) {
+      setHeroImageLoading(true)
+      
+      ;(async () => {
+        try {
+          console.log("[Builder] Loading signed URL for:", heroImageUrl)
+          const signedUrl = await getAssetReadUrl(heroImageUrl, 120) // 2 horas
+          console.log("[Builder] Signed URL loaded successfully")
+          setHeroImagePublicUrl(signedUrl)
+        } catch (error: any) {
+          console.error("[Builder] Error loading signed URL:", error)
+          setHeroImageError(error?.message ?? "Error cargando imagen")
+        } finally {
+          setHeroImageLoading(false)
+        }
+      })()
+    }
+  }, [branding.heroImageUrl])
 
   const loadTemplate = (templateId: string) => {
     const template = templates.find((t) => t.id === templateId)
@@ -869,7 +929,22 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                             />
                           </div>
                         </div>
-
+                        <div>
+                          <Label className="text-xs">Opacidad del overlay oscuro (0-100)</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={5}
+                            className="h-8"
+                            value={Math.round((branding.heroOverlayOpacity ?? 0.35) * 100)}
+                            onChange={(e) => setBranding({ ...branding, heroOverlayOpacity: Math.max(0, Math.min(100, parseInt(e.target.value) || 0)) / 100 })}
+                            placeholder="35"
+                          />
+                          <p className="text-[11px] text-muted-foreground mt-1">
+                            0 = sin overlay, 35 = default, 100 = negro total
+                          </p>
+                        </div>
                         <div>
                           <Label className="text-xs">Altura de imagen (px)</Label>
                           <Input
@@ -898,21 +973,21 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                         </div>
                         
                         <div>
-                          <Label className="text-xs">O subir archivo</Label>
-                          <Input
-                            type="file"
-                            accept="image/*"
-                            className="h-9 cursor-pointer"
-                            onChange={(e) => {
-                              const f = e.target.files?.[0]
-                              if (f) handleImageFile(f)
-                            }}
-                          />
-                          {imageStatus && <p className="text-xs text-muted-foreground mt-1">{imageStatus}</p>}
-                          <p className="text-[11px] text-muted-foreground mt-1">
-                            Se guardará como gs:// URL
-                          </p>
-                        </div>
+                        <Label className="text-xs">O subir archivo</Label>
+                        <Input
+                          type="file"
+                          accept="image/*"
+                          className="h-9 cursor-pointer"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0]
+                            if (f) handleImageFile(f)
+                          }}
+                        />
+                        {imageStatus && <p className="text-xs text-muted-foreground mt-1">{imageStatus}</p>}
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          Se guardará como gs:// URL
+                        </p>
+                      </div>
                       </div>
 
                       <div className="lg:col-span-7">
@@ -921,35 +996,81 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                           className="mt-2 rounded-lg border overflow-hidden relative bg-muted"
                           style={{ height: `${branding.heroImageHeight || 160}px` }}
                         >
-                          {branding.heroImageUrl ? (
+                          {/* CASO 1: Cache base64 (upload reciente) */}
+                          {branding._previewCache?.heroImageBase64 ? (
                             <>
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img 
-                                  src={gsUriToHttpUrl(
-                                    branding.heroImageUrl || "", 
-                                    branding._previewCache?.heroImageBase64  // ← Pasar cache
-                                  )} 
-                                  alt="hero" 
-                                  className="absolute inset-0 h-full w-full object-cover"
-                                  onError={(e) => {
-                                    console.error("Error loading image:", branding.heroImageUrl)
-                                    e.currentTarget.style.display = "none"
-                                  }}
-                                />
-                              <div className="absolute inset-0 bg-black/35" />
+                                src={branding._previewCache.heroImageBase64}
+                                alt="hero" 
+                                className="absolute inset-0 h-full w-full object-cover"
+                              />
+                              <div className="absolute inset-0 bg-black" style={{ opacity: branding.heroOverlayOpacity ?? 0.35 }} />
                             </>
-                          ) : (
+                          ) 
+
+                          : (branding.heroImageUrl?.startsWith('http://') || branding.heroImageUrl?.startsWith('https://')) ? (
+                            <>
+                              <img 
+                                src={branding.heroImageUrl}
+                                alt="hero" 
+                                className="absolute inset-0 h-full w-full object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none'
+                                  const parent = e.currentTarget.parentElement
+                                  if (parent) {
+                                    parent.innerHTML = `
+                                      <div class="absolute inset-0 flex items-center justify-center bg-red-50 dark:bg-red-950/20">
+                                        <div class="text-center p-4">
+                                          <p class="text-xs text-red-600 dark:text-red-400">Error al cargar imagen</p>
+                                          <p class="text-[11px] text-muted-foreground">Verifica que la URL sea válida</p>
+                                        </div>
+                                      </div>
+                                    `
+                                  }
+                                }}
+                              />
+                              <div className="absolute inset-0 bg-black" style={{ opacity: branding.heroOverlayOpacity ?? 0.35 }} />
+                            </>
+                          ) 
+                          
+                          : branding.heroImageUrl?.startsWith('gs://') ? (
+                            <div className="absolute inset-0 flex items-center justify-center bg-muted">
+                              <div className="text-center p-4 max-w-md">
+                                <p className="text-xs text-muted-foreground mb-2">
+                                  Imagen guardada en GCS
+                                </p>
+                                <p className="text-[11px] text-muted-foreground font-mono break-all px-4 bg-background/50 rounded p-2">
+                                  {branding.heroImageUrl}
+                                </p>
+                                <p className="text-xs text-muted-foreground mt-3">
+                                  Sube una nueva o pega URL https:// para preview
+                                </p>
+                              </div>
+                            </div>
+                          ) 
+                          
+                          :(
                             <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
                               Sin imagen
                             </div>
                           )}
-                          <div 
-                            className="relative p-4 flex flex-col justify-end h-full" 
-                            style={{ color: branding.heroTextColor || "#ffffff" }}
-                          >
-                            <div className="text-sm font-semibold">{branding.heroTitle || "Título del Dashboard"}</div>
-                            <div className="text-xs opacity-90">{branding.heroSubtitle || "Subtítulo / contexto"}</div>
-                          </div>
+                          
+                          {/* Overlay de texto (SOLO UNA VEZ, solo si hay imagen visible) */}
+                          {(branding._previewCache?.heroImageBase64 || 
+                            branding.heroImageUrl?.startsWith('http://') || 
+                            branding.heroImageUrl?.startsWith('https://')) && (
+                            <div 
+                              className="absolute inset-0 p-4 flex flex-col justify-end pointer-events-none" 
+                              style={{ color: branding.heroTextColor || "#ffffff" }}
+                            >
+                              <div className="text-sm font-semibold">
+                                {branding.heroTitle || "Título del Dashboard"}
+                              </div>
+                              <div className="text-xs opacity-90">
+                                {branding.heroSubtitle || "Subtítulo / contexto"}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1008,14 +1129,72 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                           max={24}
                           step={2}
                           className="h-8"
-                          value={branding.kpiBorderRadius ?? 8}
-                          onChange={(e) => setBranding({ ...branding, kpiBorderRadius: parseInt(e.target.value) || 8 })}
+                          value={branding.filterBorderRadius ?? 8}
+                          onChange={(e) => setBranding({ ...branding, filterBorderRadius: parseInt(e.target.value) || 8 })}
                           placeholder="8"
                         />
-                        <p className="text-[11px] text-muted-foreground mt-1">
-                          0 = cuadrado, 8 = redondeado, 24 = muy redondo
-                        </p>
+                        <p className="text-[11px] text-muted-foreground mt-1">0 = cuadrado, 8 = redondeado</p>
                       </div>
+
+                      <div>
+                        <Label className="text-xs">Color de texto</Label>
+                        <div className="flex items-center gap-2">
+                          <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                            <input
+                              type="color"
+                              value={branding.filterTextColor ?? "#000000"}
+                              onChange={(e) => setBranding({ ...branding, filterTextColor: e.target.value })}
+                              className="h-full w-full p-0 border-0 cursor-pointer"
+                            />
+                          </div>
+                          <Input
+                            value={branding.filterTextColor ?? "#000000"}
+                            onChange={(e) => setBranding({ ...branding, filterTextColor: e.target.value })}
+                            className="h-8 font-mono text-xs"
+                            placeholder="#000000"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <Label className="text-xs">Color de iconos</Label>
+                        <div className="flex items-center gap-2">
+                          <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                            <input
+                              type="color"
+                              value={branding.filterIconColor ?? "#6b7280"}
+                              onChange={(e) => setBranding({ ...branding, filterIconColor: e.target.value })}
+                              className="h-full w-full p-0 border-0 cursor-pointer"
+                            />
+                          </div>
+                          <Input
+                            value={branding.filterIconColor ?? "#6b7280"}
+                            onChange={(e) => setBranding({ ...branding, filterIconColor: e.target.value })}
+                            className="h-8 font-mono text-xs"
+                            placeholder="#6b7280"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <Label className="text-xs">Color del label (título del KPI)</Label>
+                      <div className="flex items-center gap-2 max-w-xs">
+                        <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                          <input
+                            type="color"
+                            value={branding.kpiLabelColor ?? "#6b7280"}
+                            onChange={(e) => setBranding({ ...branding, kpiLabelColor: e.target.value })}
+                            className="h-full w-full p-0 border-0 cursor-pointer"
+                          />
+                        </div>
+                        <Input
+                          value={branding.kpiLabelColor ?? "#6b7280"}
+                          onChange={(e) => setBranding({ ...branding, kpiLabelColor: e.target.value })}
+                          className="h-8 font-mono text-xs"
+                          placeholder="#6b7280"
+                        />
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1">Color del texto pequeño encima del valor</p>
                     </div>
 
                     {/* Preview KPI */}
@@ -1029,7 +1208,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                           borderRadius: `${branding.kpiBorderRadius ?? 8}px`,
                         }}
                       >
-                        <div className="text-xs opacity-70">Total Ventas</div>
+                        <div className="text-xs" style={{ color: branding.kpiLabelColor ?? "#6b7280" }}>Total Ventas</div>
                         <div className="text-2xl font-bold">$1,234,567</div>
                       </div>
                     </div>
@@ -1096,10 +1275,118 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                     </div>
                   </div>
 
+                   {/* Estilos de Filtros */}
+                  <div className="border-b pb-4">
+                    <Label className="text-sm font-medium mb-3 block">Estilos de Filtros</Label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <Label className="text-xs">Color de fondo</Label>
+                        <div className="flex items-center gap-2">
+                          <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                            <input
+                              type="color"
+                              value={branding.filterBackgroundColor ?? "#ffffff"}
+                              onChange={(e) => setBranding({ ...branding, filterBackgroundColor: e.target.value })}
+                              className="h-full w-full p-0 border-0 cursor-pointer"
+                            />
+                          </div>
+                          <Input
+                            value={branding.filterBackgroundColor ?? "#ffffff"}
+                            onChange={(e) => setBranding({ ...branding, filterBackgroundColor: e.target.value })}
+                            className="h-8 font-mono text-xs"
+                            placeholder="#ffffff"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <Label className="text-xs">Redondeo (Border Radius)</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={24}
+                          step={2}
+                          className="h-8"
+                          value={branding.filterBorderRadius ?? 8}
+                          onChange={(e) => setBranding({ ...branding, filterBorderRadius: parseInt(e.target.value) || 8 })}
+                          placeholder="8"
+                        />
+                        <p className="text-[11px] text-muted-foreground mt-1">0 = cuadrado, 8 = redondeado</p>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Galería de Evidencias */}
                   <div>
                     <Label className="text-sm font-medium mb-3 block">Galería de Evidencias Fotográficas</Label>
                     
+                    {/* Color de fondo de galería */}
+                    <div className="mb-4 pb-4 border-b">
+                      <Label className="text-xs font-medium mb-2 block">Colores de galería</Label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <Label className="text-xs text-muted-foreground mb-1 block">Fondo de la card</Label>
+                          <div className="flex items-center gap-2">
+                            <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                              <input
+                                type="color"
+                                value={branding.galleryBackgroundColor ?? "#f8fafc"}
+                                onChange={(e) => setBranding({ ...branding, galleryBackgroundColor: e.target.value })}
+                                className="h-full w-full p-0 border-0 cursor-pointer"
+                              />
+                            </div>
+                            <Input
+                              value={branding.galleryBackgroundColor ?? "#f8fafc"}
+                              onChange={(e) => setBranding({ ...branding, galleryBackgroundColor: e.target.value })}
+                              className="h-8 font-mono text-xs"
+                              placeholder="#f8fafc"
+                            />
+                          </div>
+                          <p className="text-[11px] text-muted-foreground mt-1">Card y controles de navegación</p>
+                        </div>
+
+                        <div>
+                          <Label className="text-xs text-muted-foreground mb-1 block">Fondo lateral de imagen</Label>
+                          <div className="flex items-center gap-2">
+                            <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                              <input
+                                type="color"
+                                value={(branding as any).galleryImageBackground ?? "#000000"}
+                                onChange={(e) => setBranding({ ...branding, galleryImageBackground: e.target.value } as any)}
+                                className="h-full w-full p-0 border-0 cursor-pointer"
+                              />
+                            </div>
+                            <Input
+                              value={(branding as any).galleryImageBackground ?? "#000000"}
+                              onChange={(e) => setBranding({ ...branding, galleryImageBackground: e.target.value } as any)}
+                              className="h-8 font-mono text-xs"
+                              placeholder="#000000"
+                            />
+                          </div>
+                           <p className="text-[11px] text-muted-foreground mt-1">Área a los lados cuando la imagen no llena el espacio</p>
+                        </div>
+
+                        <div>
+                          <Label className="text-xs text-muted-foreground mb-1 block">Fondo de metadata</Label>
+                          <div className="flex items-center gap-2">
+                            <div className="h-8 w-8 rounded border overflow-hidden shrink-0">
+                              <input
+                                type="color"
+                                value={branding.galleryMetadataBackground ?? "#f1f5f9"}
+                                onChange={(e) => setBranding({ ...branding, galleryMetadataBackground: e.target.value })}
+                                className="h-full w-full p-0 border-0 cursor-pointer"
+                              />
+                            </div>
+                            <Input
+                              value={branding.galleryMetadataBackground ?? "#f1f5f9"}
+                              onChange={(e) => setBranding({ ...branding, galleryMetadataBackground: e.target.value })}
+                              className="h-8 font-mono text-xs"
+                              placeholder="#f1f5f9"
+                            />
+                          </div>
+                          <p className="text-[11px] text-muted-foreground mt-1">Sección de datos debajo de la imagen</p>
+                        </div>
+                      </div>
+                    </div>
                     <div className="space-y-3">
                       {/* Campos con fotos */}
                       <div>
@@ -1211,6 +1498,23 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                         <p className="text-[11px] text-muted-foreground mt-1">
                           Información que se mostrará junto a cada foto (ej: ciudad, fecha, vendedor)
                         </p>
+                      
+                      {/* Columnas del grid de metadata */}
+                      <div className="mt-3">
+                        <Label className="text-xs">Columnas en metadata (1-4)</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={4}
+                          className="h-8 max-w-[120px] mt-1"
+                          value={(branding as any).galleryMetadataCols ?? 2}
+                          onChange={(e) => setBranding({ ...branding, galleryMetadataCols: parseInt(e.target.value) || 2 } as any)}
+                          placeholder="2"
+                        />
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          Cuántas columnas usar para mostrar los campos de metadata
+                        </p>
+                      </div>
                       </div>
                     </div>
                   </div>
@@ -1235,43 +1539,134 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                   {constants.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No hay constantes. Úsalas para fórmulas tipo KPI / Const o KPI * Const.</p>
                   ) : (
-                    constants.map((c) => (
-                      <div key={c.key} className="grid grid-cols-1 md:grid-cols-12 gap-2 border rounded p-2">
-                        <div className="md:col-span-4">
-                          <Label className="text-xs">Key</Label>
-                          <Input
-                            className="h-8 font-mono"
-                            value={c.key}
-                            onChange={(e) => {
-                              const nextKey = e.target.value.trim()
-                              if (!nextKey) return
-                              if (constants.some((x) => x.key === nextKey && x.key !== c.key)) return
-                              setConstants(
-                                constants.map((x) => (x.key === c.key ? { ...x, key: nextKey } : x))
-                              )
-                            }}
-                          />
+                    constants.map((c) => {
+                      const kind = c.kind ?? "static"
+                      return (
+                        <div key={c.key} className="border rounded p-3 space-y-2">
+                          {/* Fila 1: key, label, tipo, eliminar */}
+                          <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+                            <div className="md:col-span-3">
+                              <Label className="text-xs">Key</Label>
+                              <Input
+                                className="h-8 font-mono"
+                                value={c.key}
+                                onChange={(e) => {
+                                  const nextKey = e.target.value.trim()
+                                  if (!nextKey) return
+                                  if (constants.some((x) => x.key === nextKey && x.key !== c.key)) return
+                                  setConstants(constants.map((x) => (x.key === c.key ? { ...x, key: nextKey } : x)))
+                                }}
+                              />
+                            </div>
+                            <div className="md:col-span-4">
+                              <Label className="text-xs">Label (opcional)</Label>
+                              <Input className="h-8" value={c.label ?? ""} onChange={(e) => updateConstant(c.key, { label: e.target.value })} />
+                            </div>
+                            <div className="md:col-span-3">
+                              <Label className="text-xs">Tipo</Label>
+                              <Select
+                                value={kind}
+                                onValueChange={(v) => updateConstant(c.key, { kind: v as any, value: 0 })}
+                              >
+                                <SelectTrigger className="h-8">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="static">Valor fijo</SelectItem>
+                                  <SelectItem value="filtered_agg">Agregado con filtro</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="md:col-span-2 flex items-end justify-end">
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => deleteConstant(c.key)}>
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </div>
+
+                          {/* Fila 2: según tipo */}
+                          {kind === "static" ? (
+                            <div className="md:col-span-3">
+                              <Label className="text-xs">Valor</Label>
+                              <Input
+                                type="number"
+                                className="h-8 max-w-[160px]"
+                                value={Number.isFinite(c.value) ? c.value : 0}
+                                onChange={(e) => updateConstant(c.key, { value: Number(e.target.value) })}
+                              />
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end bg-muted/30 rounded p-2">
+                              <div className="md:col-span-4">
+                                <Label className="text-xs">Campo a agregar</Label>
+                                <Select
+                                  value={c.field ?? ""}
+                                  onValueChange={(v) => updateConstant(c.key, { field: v })}
+                                >
+                                  <SelectTrigger className="h-8">
+                                    <SelectValue placeholder="Seleccionar..." />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {numericFields.map((f) => (
+                                      <SelectItem key={f.name} value={f.name}>{f.name}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="md:col-span-2">
+                                <Label className="text-xs">Operación</Label>
+                                <Select
+                                  value={c.agg ?? "sum"}
+                                  onValueChange={(v) => updateConstant(c.key, { agg: v as KPIOperation })}
+                                >
+                                  <SelectTrigger className="h-8">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {(["sum","mean","min","max","count","median"] as KPIOperation[]).map((op) => (
+                                      <SelectItem key={op} value={op}>{KPI_OPERATION_LABELS[op] ?? op}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="md:col-span-3">
+                                <Label className="text-xs">Filtrar por campo</Label>
+                                <Select
+                                  value={c.filterField ?? "__none__"}
+                                  onValueChange={(v) => updateConstant(c.key, { filterField: v === "__none__" ? undefined : v })}
+                                >
+                                  <SelectTrigger className="h-8">
+                                    <SelectValue placeholder="Sin filtro" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">Sin filtro</SelectItem>
+                                    {availableFields.map((f) => (
+                                      <SelectItem key={f.name} value={f.name}>{f.name}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="md:col-span-3">
+                                <Label className="text-xs">Valor del filtro</Label>
+                                <Input
+                                  className="h-8"
+                                  value={c.filterValue ?? ""}
+                                  placeholder={c.filterField ? `Ej: "Colombia"` : "—"}
+                                  disabled={!c.filterField}
+                                  onChange={(e) => updateConstant(c.key, { filterValue: e.target.value })}
+                                />
+                              </div>
+                              <div className="md:col-span-12">
+                                <p className="text-[11px] text-muted-foreground">
+                                  Resultado en tiempo real: se calcula sobre los datos filtrados del dashboard.
+                                  {c.field && <span className="font-mono ml-1">{c.agg ?? "sum"}({c.field}){c.filterField ? ` donde ${c.filterField} = "${c.filterValue}"` : ""}</span>}
+                                </p>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                        <div className="md:col-span-4">
-                          <Label className="text-xs">Label (opcional)</Label>
-                          <Input className="h-8" value={c.label ?? ""} onChange={(e) => updateConstant(c.key, { label: e.target.value })} />
-                        </div>
-                        <div className="md:col-span-3">
-                          <Label className="text-xs">Value</Label>
-                          <Input
-                            type="number"
-                            className="h-8"
-                            value={Number.isFinite(c.value) ? c.value : 0}
-                            onChange={(e) => updateConstant(c.key, { value: Number(e.target.value) })}
-                          />
-                        </div>
-                        <div className="md:col-span-1 flex items-end justify-end">
-                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => deleteConstant(c.key)}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))
+                      )
+                    })
                   )}
                 </CardContent>
               </Card>
@@ -1960,6 +2355,26 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                   </div>
 
                                   <div className="col-span-1 sm:col-span-3 lg:col-span-3">
+                                    <Label className="text-xs">Label eje X (opcional)</Label>
+                                    <Input
+                                      value={(chart as any).labelX ?? ""}
+                                      onChange={(e) => updateChart(row.id, chart.id, { labelX: e.target.value } as any)}
+                                      className="h-8"
+                                      placeholder="Ej: Mes, Ciudad..."
+                                    />
+                                  </div>
+
+                                  <div className="col-span-1 sm:col-span-3 lg:col-span-3">
+                                    <Label className="text-xs">Label eje Y (opcional)</Label>
+                                    <Input
+                                      value={(chart as any).labelY ?? ""}
+                                      onChange={(e) => updateChart(row.id, chart.id, { labelY: e.target.value } as any)}
+                                      className="h-8"
+                                      placeholder="Ej: Ventas, Unidades..."
+                                    />
+                                  </div>
+
+                                  <div className="col-span-1 sm:col-span-3 lg:col-span-3">
                                     <Label className="text-xs">Tipo de Gráfico</Label>
                                     <Select
                                       value={chart.tipo as any}
@@ -2121,8 +2536,8 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                     </div>
                                   ) : (
                                     <div className="lg:col-span-5">
-                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                        <div>
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <div className="min-w-0">
                                           <Label className="text-xs">Operación (legacy)</Label>
                                           <Select value={String(chart.agg ?? "sum")} onValueChange={(value) => updateChart(row.id, chart.id, { agg: value as any, measureType: "numeric" })}>
                                             <SelectTrigger className="h-8">
@@ -2138,7 +2553,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                           </Select>
                                         </div>
 
-                                        <div>
+                                        <div className="min-w-0">
                                           <Label className="text-xs">Campo numérico (legacy)</Label>
                                           <Select value={String(chart.metric ?? "")} onValueChange={(value) => updateChart(row.id, chart.id, { metric: value as any, measureType: "numeric" })}>
                                             <SelectTrigger className="h-8">
