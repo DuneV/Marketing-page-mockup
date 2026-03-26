@@ -8,6 +8,7 @@ export async function createImport(params: {
   importType: string
   filename: string
   campaignId?: string
+  sourceLabel?: string
 }) {
   const headers = await authHeaders()
   const res = await fetch(`/api/imports`, {
@@ -117,15 +118,30 @@ export async function getLatestCampaignImport(campaignId: string) {
   }>
 }
 
-export async function replaceCampaignExcel(args: { campaignId: string; companyId: string; filename: string }) {
+export async function replaceCampaignExcel(args: {
+  campaignId: string
+  companyId: string
+  filename: string
+  sourceLabel?: string
+}) {
   const headers = await authHeaders()
   const res = await fetch(`/api/campaigns/${args.campaignId}/imports/replace`, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
-    body: JSON.stringify({ companyId: args.companyId, filename: args.filename }),
+    body: JSON.stringify({
+      companyId: args.companyId,
+      filename: args.filename,
+      sourceLabel: args.sourceLabel ?? "primary",
+    }),
   })
   if (!res.ok) throw new Error(await res.text())
-  return res.json() as Promise<{ ok: true; importId: string; uploadUrl: string; deletedPreviousImports: number }>
+  return res.json() as Promise<{
+    ok: true
+    importId: string
+    uploadUrl: string
+    sourceLabel: string
+    deletedPreviousImports: number
+  }>
 }
 
 export async function commitImportFromPrevious(importId: string) {
@@ -176,4 +192,20 @@ export async function downloadGoogleSheetAsXlsxBlob(sheetUrl: string) {
   }
 
   return await res.blob()
+}
+
+export async function deleteCampaignSlot(campaignId: string, sourceLabel: string): Promise<{
+  ok: true
+  sourceLabel: string
+  deletedImports: number
+  deletedStagingRows: number
+  deletedMappings: number
+}> {
+  const headers = await authHeaders()
+  const res = await fetch(
+    `/api/campaigns/${campaignId}/imports/slot/${encodeURIComponent(sourceLabel)}`,
+    { method: "DELETE", headers }
+  )
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
 }

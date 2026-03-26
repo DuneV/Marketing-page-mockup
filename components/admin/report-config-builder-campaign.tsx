@@ -101,7 +101,7 @@ const DEFAULT_LIMITS = {
 // -----------------------------
 // Extensiones internas
 // -----------------------------
-type KPIKind = "field" | "formula"
+type KPIKind = "field" | "formula" | "expression"
 type AnyChart = ChartDefinition & {
   fuente?: string
   metric?: string
@@ -112,9 +112,17 @@ type AnyChart = ChartDefinition & {
   metrics?: ChartMetricDefinition[]
   barOrientation?: "vertical" | "horizontal"
   barMode?: "grouped" | "stacked"
+  barSizeMin?: number
+  barSizeMax?: number
+  referenceKpiId?: string
+  sourceLabel?: string
+  tableRowHeight?: number
+  kpiIds?: string[]
+  columnWidths?: Record<string, number>
+  extraColors?: string[]
 }
 
-type ExtendedKPI = KPIDefinition & {
+type ExtendedKPI = Omit<KPIDefinition, "kind"> & {
   kind?: KPIKind
   visible?: boolean
   formato?: KPIFormat
@@ -126,6 +134,10 @@ type ExtendedKPI = KPIDefinition & {
     op: KPIFormulaOp
     bKpiId: string
   }
+  expression?: string
+  categoriaField?: string
+  categoriaValue?: string
+  escala?: number
 }
 
 type DashboardConstant = {
@@ -163,6 +175,7 @@ type BrandingConfig = {
   galleryMetadataBackground?: string
   galleryImageBackground?: string
   galleryMetadataCols?: number
+  galleryMetadataFieldLabels?: Record<string, string>
   chartBorderRadius?: number
   filterBackgroundColor?: string
   filterBorderRadius?: number
@@ -282,6 +295,66 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
   const [availableFilters, setAvailableFilters] = useState<AvailableFilter[]>([])
   const [isLoadingFields, setIsLoadingFields] = useState(false)
   const [lastImportId, setLastImportId] = useState<string | null>(null)
+  const [kpiFieldOptions, setKpiFieldOptions] = useState<Record<string, string[]>>({})
+  const [kpiFieldOptionsLoading, setKpiFieldOptionsLoading] = useState<Record<string, boolean>>({})
+
+  const loadKpiFieldOptions = async (fieldName: string) => {
+    if (!fieldName || kpiFieldOptionsLoading[fieldName]) return
+    if (kpiFieldOptions[fieldName] && kpiFieldOptions[fieldName].length > 0) return
+
+    setKpiFieldOptionsLoading((prev) => ({ ...prev, [fieldName]: true }))
+    try {
+      const { getFilterOptions, getCampaignDataset } = await import("@/lib/api/campaignApi")
+
+      // Paso 1: intentar el mismo endpoint que usa FilterPanel
+      const response = await getFilterOptions(campaign.id, [fieldName])
+      let fieldData: any[] =
+        response?.options?.[fieldName] ||
+        response?.filters?.[fieldName] ||
+        response?.[fieldName] ||
+        []
+
+      let values: string[] = []
+
+      if (Array.isArray(fieldData) && fieldData.length > 0) {
+        values = fieldData
+          .map((item: any) =>
+            typeof item === "object" && item !== null
+              ? String(item.value ?? item.label ?? Object.values(item)[0] ?? "")
+              : String(item)
+          )
+          .filter(Boolean)
+      }
+
+      // Paso 2 (mismo fallback que FilterPanel): extraer valores únicos de los datos reales
+      if (values.length === 0) {
+        try {
+          const rawData = await getCampaignDataset(campaign.id)
+          const rows: Record<string, any>[] = Array.isArray(rawData) ? rawData : []
+
+          const uniqueValues = new Set<string>()
+          rows.forEach((row) => {
+            const value = row[fieldName]
+            if (value !== null && value !== undefined && value !== "") {
+              const strValue =
+                typeof value === "object" ? String(value?.text ?? value?.value ?? JSON.stringify(value)) : String(value)
+              if (strValue.trim()) uniqueValues.add(strValue.trim())
+            }
+          })
+          values = Array.from(uniqueValues).sort()
+        } catch (fallbackErr) {
+          console.warn("[Builder] Fallback getCampaignData falló:", fallbackErr)
+        }
+      }
+
+      setKpiFieldOptions((prev) => ({ ...prev, [fieldName]: values }))
+    } catch (e) {
+      console.error("[Builder] Error cargando opciones de campo:", e)
+      setKpiFieldOptions((prev) => ({ ...prev, [fieldName]: [] }))
+    } finally {
+      setKpiFieldOptionsLoading((prev) => ({ ...prev, [fieldName]: false }))
+    }
+  }
 
   const constants = useMemo<DashboardConstant[]>(() => (((config as any)?.constantes ?? []) as DashboardConstant[]) || [], [config])
   const branding = useMemo<BrandingConfig>(() => (((config as any)?.branding ?? {}) as BrandingConfig) || {}, [config])
@@ -323,7 +396,15 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
     try {
       const { fields, filters, importId } = await getAvailableFields(campaign.id)
       if (signal?.aborted) return
-      setAvailableFields(fields ?? [])
+      // Deduplicar por name+sourceLabel para evitar keys duplicadas en el render
+      const seen = new Set<string>()
+      const dedupedFields = (fields ?? []).filter((f) => {
+        const key = `${f.name}__${(f as any).sourceLabel ?? "primary"}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      setAvailableFields(dedupedFields)
       setAvailableFilters(filters ?? [])
       setLastImportId(importId ?? null)
     } catch (error) {
@@ -337,12 +418,28 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
     }
   }
 
-  const textFields = useMemo(
-    () => availableFields.filter((f) => f.type === "text" || f.type === "date" || f.type === "boolean" || f.type === "unknown"),
-    [availableFields]
-  )
-  const numericFields = useMemo(() => availableFields.filter((f) => f.type === "number"), [availableFields])
-  const allFieldNames = useMemo(() => availableFields.map((f) => f.name), [availableFields])
+  const textFields = useMemo(() => {
+    const seen = new Set<string>()
+    return availableFields
+      .filter((f) => f.type === "text" || f.type === "date" || f.type === "boolean" || f.type === "unknown")
+      .filter((f) => { if (seen.has(f.name)) return false; seen.add(f.name); return true })
+  }, [availableFields])
+  const numericFields = useMemo(() => {
+    const seen = new Set<string>()
+    return availableFields
+      .filter((f) => f.type === "number")
+      .filter((f) => { if (seen.has(f.name)) return false; seen.add(f.name); return true })
+  }, [availableFields])
+  const allFieldNames = useMemo(() => Array.from(new Set(availableFields.map((f) => f.name))), [availableFields])
+  // Campos únicos por nombre para dropdowns globales (sin contexto de slot)
+  const uniqueFields = useMemo(() => {
+    const seen = new Set<string>()
+    return availableFields.filter((f) => {
+      if (seen.has(f.name)) return false
+      seen.add(f.name)
+      return true
+    })
+  }, [availableFields])
 
   const getValidOperationsForType = (type: AvailableField["type"]): KPIOperation[] => {
     if (type === "number") return ["sum", "mean", "min", "max", "count", "median", "std", "variance"]
@@ -581,11 +678,12 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
       return
     }
 
-    const newRow: DashboardRow = {
+    const newRow = {
       id: crypto.randomUUID(),
       orden: config.filas.length + 1,
       graficos: [],
-    }
+      altura: 320,
+    } as DashboardRow & { altura: number }
 
     setConfig({ ...config, filas: [...config.filas, newRow] })
   }
@@ -715,6 +813,12 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
 
       for (const k of kpis) {
         const kind: KPIKind = (k.kind ?? "field") as KPIKind
+        if (kind === "expression") {
+          if (!k.expression?.trim()) {
+            localErrors.push(`KPI "${k.nombre}": la expresión no puede estar vacía.`)
+          }
+          continue
+        }
         if (kind === "formula") {
           const a = k.formula?.aKpiId
           const b = k.formula?.bKpiId
@@ -807,7 +911,9 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
     const opts: { value: string; label: string }[] = []
 
     for (const k of kpisTyped) {
-      opts.push({ value: `kpi:${k.id}`, label: `KPI · ${k.nombre}` })
+      const fmt = k.formato ?? "number"
+      const fmtTag = fmt === "percent" ? " [%→÷100?]" : fmt === "currency" ? " [$]" : ""
+      opts.push({ value: `kpi:${k.id}`, label: `KPI · ${k.nombre}${fmtTag}` })
     }
 
     for (const c of constants) {
@@ -1406,7 +1512,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                   <SelectValue placeholder="Seleccionar campo..." />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {availableFields.map((f) => (
+                                  {uniqueFields.map((f) => (
                                     <SelectItem key={f.name} value={f.name}>
                                       {f.name}
                                     </SelectItem>
@@ -1449,7 +1555,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                         <Label className="text-xs">Campos a mostrar como información (metadata)</Label>
                         <div className="space-y-2 mt-1">
                           {(branding.galleryMetadataFields ?? []).map((field, idx) => (
-                            <div key={idx} className="flex gap-2 items-center">
+                            <div key={idx} className="flex gap-2 items-center flex-wrap">
                               <Select
                                 value={field}
                                 onValueChange={(value) => {
@@ -1458,17 +1564,31 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                   setBranding({ ...branding, galleryMetadataFields: next })
                                 }}
                               >
-                                <SelectTrigger className="h-8">
+                                <SelectTrigger className="h-8 min-w-[160px]">
                                   <SelectValue placeholder="Seleccionar campo..." />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {availableFields.map((f) => (
+                                  {uniqueFields.map((f) => (
                                     <SelectItem key={f.name} value={f.name}>
                                       {f.name}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
+                              <Input
+                                className="h-8 max-w-[160px] text-xs"
+                                placeholder="Etiqueta (opcional)"
+                                value={(branding.galleryMetadataFieldLabels ?? {})[field] ?? ""}
+                                onChange={(e) => {
+                                  const labels = { ...(branding.galleryMetadataFieldLabels ?? {}) }
+                                  if (e.target.value) {
+                                    labels[field] = e.target.value
+                                  } else {
+                                    delete labels[field]
+                                  }
+                                  setBranding({ ...branding, galleryMetadataFieldLabels: labels })
+                                }}
+                              />
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1640,7 +1760,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                   </SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="__none__">Sin filtro</SelectItem>
-                                    {availableFields.map((f) => (
+                                    {uniqueFields.map((f) => (
                                       <SelectItem key={f.name} value={f.name}>{f.name}</SelectItem>
                                     ))}
                                   </SelectContent>
@@ -1966,6 +2086,18 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                       unidad: kpi.unidad ?? "",
                                       columnas: kpi.columnas ?? 3,
                                     })
+                                  } else if (nextKind === "expression") {
+                                    updateKPI(kpi.id, {
+                                      kind: "expression",
+                                      operacion: "count" as any,
+                                      formula: undefined,
+                                      expression: "",
+                                      visible: kpi.visible ?? true,
+                                      formato: kpi.formato ?? "number",
+                                      decimales: kpi.decimales ?? 2,
+                                      unidad: kpi.unidad ?? "",
+                                      columnas: kpi.columnas ?? 3,
+                                    })
                                   } else {
                                     const firstField = availableFields[0]
                                     updateKPI(kpi.id, {
@@ -1974,6 +2106,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                       operacion: firstField?.type === "number" ? ("sum" as any) : ("count" as any),
                                       countField: "__rows__",
                                       formula: undefined,
+                                      expression: undefined,
                                       visible: kpi.visible ?? true,
                                       formato: kpi.formato ?? (firstField?.type === "number" ? "number" : "number"),
                                       decimales: kpi.decimales ?? 0,
@@ -1989,12 +2122,13 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                 <SelectContent>
                                   <SelectItem value="field">Campo</SelectItem>
                                   <SelectItem value="formula">Fórmula (A op B)</SelectItem>
+                                  <SelectItem value="expression">Expresión libre [col1]+[col2]…</SelectItem>
                                 </SelectContent>
                               </Select>
                             </div>
 
                             <div className="md:col-span-2">
-                              <Label className="text-xs">Mostrar</Label>
+                              <Label className="text-xs">Vis.</Label>
                               <div className="h-8 flex items-center justify-between border rounded px-3 bg-background">
                                 <span className="text-xs text-muted-foreground">Visible</span>
                                 <Switch checked={kpi.visible !== false} onCheckedChange={(checked) => updateKPI(kpi.id, { visible: checked })} />
@@ -2002,8 +2136,8 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                             </div>
 
                             {/* NUEVO: Campo de columnas */}
-                            <div className="md:col-span-3">
-                              <Label className="text-xs">Tamaño (Cols 1-12)</Label>
+                            <div className="md:col-span-2">
+                              <Label className="text-xs">Cols</Label>
                               <Input
                                 type="number"
                                 min={1}
@@ -2017,7 +2151,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                               />
                             </div>
 
-                            <div className="md:col-span-2 flex justify-end">
+                            <div className="md:col-span-1 flex justify-end">
                               <Button variant="ghost" size="sm" onClick={() => deleteKPI(kpi.id)} className="h-8 w-8 p-0">
                                 <Trash2 className="h-4 w-4 text-destructive" />
                               </Button>
@@ -2057,7 +2191,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                     <SelectValue />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    {availableFields.map((field) => (
+                                    {uniqueFields.map((field) => (
                                       <SelectItem key={field.name} value={field.name}>
                                         <div className="flex items-center gap-2">
                                           <span>{safeLabel(field.name)}</span>
@@ -2110,7 +2244,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                         </SelectTrigger>
                                         <SelectContent>
                                           <SelectItem value="__rows__">Filas (COUNT rows)</SelectItem>
-                                          {availableFields.map((field) => (
+                                          {uniqueFields.map((field) => (
                                             <SelectItem key={field.name} value={field.name}>
                                               {safeLabel(field.name)}
                                             </SelectItem>
@@ -2121,6 +2255,93 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                         Filas = total registros. Campo = cuenta registros donde ese campo no está vacío.
                                       </p>
                                     </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ) : kind === "expression" ? (
+                            <div className="border rounded-lg p-3 bg-background space-y-3">
+                              <Label className="text-xs">Expresión libre</Label>
+                              <div className="space-y-1">
+                                <Input
+                                  className="h-8 font-mono text-xs"
+                                  value={kpi.expression ?? ""}
+                                  onChange={(e) => updateKPI(kpi.id, { expression: e.target.value })}
+                                  placeholder="[Campo1] + {const_1} * 0.5"
+                                />
+                                <p className="text-[11px] text-muted-foreground">
+                                  <code className="bg-muted px-1 rounded">[Campo]</code> → sum del campo.{" "}
+                                  <code className="bg-muted px-1 rounded">{"{const_key}"}</code> → valor de la constante.
+                                  Operadores: +, -, *, /, paréntesis y números fijos.
+                                </p>
+                              </div>
+                              {numericFields.length > 0 && (
+                                <div>
+                                  <Label className="text-xs text-muted-foreground mb-1 block">Campos numéricos (click para insertar)</Label>
+                                  <div className="flex flex-wrap gap-1">
+                                    {numericFields.map((f, _fi) => (
+                                      <button
+                                        key={`${f.name}__${_fi}`}
+                                        type="button"
+                                        className="text-xs bg-muted hover:bg-amber-100 dark:hover:bg-amber-900/30 px-2 py-0.5 rounded font-mono border transition-colors"
+                                        onClick={() => updateKPI(kpi.id, { expression: (kpi.expression ?? "") + `[${f.name}]` })}
+                                      >
+                                        [{f.name}]
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {constants.length > 0 && (
+                                <div>
+                                  <Label className="text-xs text-muted-foreground mb-1 block">Constantes (click para insertar)</Label>
+                                  <div className="flex flex-wrap gap-1">
+                                    {constants.map((c) => (
+                                      <button
+                                        key={c.key}
+                                        type="button"
+                                        className="text-xs bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-900/50 px-2 py-0.5 rounded font-mono border border-amber-200 dark:border-amber-800 transition-colors"
+                                        title={`Valor actual: ${Number.isFinite(c.value) ? c.value.toLocaleString("es-CO") : "calculado en runtime"}`}
+                                        onClick={() => updateKPI(kpi.id, { expression: (kpi.expression ?? "") + `{${c.key}}` })}
+                                      >
+                                        {"{"}
+                                        {c.key}
+                                        {"}"}{" "}
+                                        <span className="opacity-60 text-[10px] font-sans not-italic">
+                                          {c.label ? `(${c.label})` : ""}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Otros KPIs como operandos */}
+                              {kpisTyped.filter((x) => x.id !== kpi.id).length > 0 && (
+                                <div>
+                                  <Label className="text-xs text-muted-foreground mb-1 block">Otros KPIs (click para insertar)</Label>
+                                  <p className="text-[11px] text-muted-foreground mb-1">
+                                    Se inserta el valor del KPI. Si tiene escala ÷100 configurada, se aplica automáticamente.
+                                  </p>
+                                  <div className="flex flex-wrap gap-1">
+                                    {kpisTyped.filter((x) => x.id !== kpi.id).map((k) => {
+                                      const fmt = k.formato ?? "number"
+                                      const escalaTag = (k as any).escala === 0.01 ? " ÷100" : (k as any).escala && (k as any).escala !== 1 ? ` ×${(k as any).escala}` : ""
+                                      return (
+                                        <button
+                                          key={k.id}
+                                          type="button"
+                                          className="text-xs bg-blue-50 dark:bg-blue-950/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 px-2 py-0.5 rounded font-mono border border-blue-200 dark:border-blue-800 transition-colors"
+                                          title={`KPI: ${k.nombre} (${fmt}${escalaTag})`}
+                                          onClick={() => updateKPI(kpi.id, { expression: (kpi.expression ?? "") + `{kpi:${k.id}}` })}
+                                        >
+                                          {k.nombre}
+                                          {escalaTag && (
+                                            <span className="opacity-60 text-[10px] font-sans ml-1">{escalaTag}</span>
+                                          )}
+                                        </button>
+                                      )
+                                    })}
                                   </div>
                                 </div>
                               )}
@@ -2241,7 +2462,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
 
                           {/* Formato */}
                           <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
-                            <div className="md:col-span-4">
+                            <div className="md:col-span-3">
                               <Label className="text-xs">Formato</Label>
                               <Select value={String(formato)} onValueChange={(v) => updateKPI(kpi.id, { formato: v as KPIFormat })}>
                                 <SelectTrigger className="h-8">
@@ -2260,7 +2481,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                               <Input className="h-8" value={unidad} onChange={(e) => updateKPI(kpi.id, { unidad: e.target.value })} placeholder='Ej: "COP", "USD", "visitas"' />
                             </div>
 
-                            <div className="md:col-span-4">
+                            <div className="md:col-span-3">
                               <Label className="text-xs">Decimales</Label>
                               <Input
                                 type="number"
@@ -2271,6 +2492,144 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                 onChange={(e) => updateKPI(kpi.id, { decimales: clamp(parseInt(e.target.value || "0"), 0, 6) })}
                               />
                             </div>
+                            <div className="md:col-span-3">
+                              <Label className="text-xs">Escala al usar en fórmulas</Label>
+                              <Select
+                                value={String(kpi.escala ?? 1)}
+                                onValueChange={(v) => updateKPI(kpi.id, { escala: Number(v) })}
+                              >
+                                <SelectTrigger className="h-8">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="1">× 1 (sin cambio)</SelectItem>
+                                  <SelectItem value="0.01">÷ 100 (% → decimal)</SelectItem>
+                                  <SelectItem value="0.001">÷ 1000</SelectItem>
+                                  <SelectItem value="1000">× 1.000</SelectItem>
+                                  <SelectItem value="1000000">× 1.000.000</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <p className="text-[11px] text-muted-foreground mt-1">
+                                {kpi.escala === 0.01
+                                  ? "75% se usará como 0.75 en fórmulas"
+                                  : kpi.escala && kpi.escala !== 1
+                                  ? `El valor se multiplica por ${kpi.escala} al ser operando`
+                                  : "El valor se usa tal cual"}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Categoría: filtro previo del KPI */}
+                          <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end border-t pt-2 mt-1">
+                            <div className="md:col-span-5">
+                              <Label className="text-xs">Filtrar por campo (categoría)</Label>
+                              <Select
+                                value={kpi.categoriaField ?? "__none__"}
+                                onValueChange={(v) => updateKPI(kpi.id, {
+                                  categoriaField: v === "__none__" ? undefined : v,
+                                  categoriaValue: undefined,
+                                })}
+                              >
+                                <SelectTrigger className="h-8">
+                                  <SelectValue placeholder="Sin filtro" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">Sin filtro de categoría</SelectItem>
+                                  {uniqueFields.map((f) => (
+                                    <SelectItem key={f.name} value={f.name}>{f.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="md:col-span-5">
+                              <Label className="text-xs">Valor de categoría</Label>
+                              {(() => {
+                                if (!kpi.categoriaField) return <Input className="h-8" disabled placeholder="—" />
+                                const opts = kpiFieldOptions[kpi.categoriaField]
+                                const isLoading = kpiFieldOptionsLoading[kpi.categoriaField]
+                                const hasOpts = Array.isArray(opts) && opts.length > 0
+                                const wasAttempted = Array.isArray(opts) // undefined = no intentado aún, [] = intentado vacío
+
+                                // Si tiene opciones: Select
+                                if (hasOpts) {
+                                  return (
+                                    <Select
+                                      value={kpi.categoriaValue ?? "__all__"}
+                                      onValueChange={(v) =>
+                                        updateKPI(kpi.id, { categoriaValue: v === "__all__" ? undefined : v })
+                                      }
+                                    >
+                                      <SelectTrigger className="h-8">
+                                        <SelectValue placeholder="Seleccionar valor…" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__all__">— Sin filtro —</SelectItem>
+                                        {opts.map((v) => (
+                                          <SelectItem key={v} value={v}>{v}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  )
+                                }
+
+                                // Si está cargando: input deshabilitado
+                                if (isLoading) {
+                                  return <Input className="h-8" disabled placeholder="Cargando opciones…" />
+                                }
+
+                                // Si no se ha intentado cargar aún: botón + input
+                                if (!wasAttempted) {
+                                  return (
+                                    <div className="flex gap-1">
+                                      <Input
+                                        className="h-8 flex-1"
+                                        value={kpi.categoriaValue ?? ""}
+                                        onChange={(e) => updateKPI(kpi.id, { categoriaValue: e.target.value || undefined })}
+                                        placeholder="Escribe o carga opciones…"
+                                      />
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-8 px-2 text-xs shrink-0"
+                                        onClick={() => loadKpiFieldOptions(kpi.categoriaField!)}
+                                      >
+                                        Cargar
+                                      </Button>
+                                    </div>
+                                  )
+                                }
+
+                                // Si se intentó pero vino vacío: input de texto libre
+                                return (
+                                  <div className="space-y-1">
+                                    <Input
+                                      className="h-8"
+                                      value={kpi.categoriaValue ?? ""}
+                                      onChange={(e) => updateKPI(kpi.id, { categoriaValue: e.target.value || undefined })}
+                                      placeholder="Escribe el valor exacto…"
+                                    />
+                                    <p className="text-[11px] text-muted-foreground">
+                                      No se encontraron opciones vía API — escribe el valor manualmente.
+                                    </p>
+                                  </div>
+                                )
+                              })()}
+                            </div>
+                            <div className="md:col-span-2 flex items-end pb-1">
+                              {kpi.categoriaField && kpi.categoriaValue && (
+                                <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">✓ Activo</span>
+                              )}
+                            </div>
+                            {kpi.categoriaField && (
+                              <div className="md:col-span-12">
+                                <p className="text-[11px] text-muted-foreground">
+                                  Solo cuenta filas donde{" "}
+                                  <code className="bg-muted px-1 rounded">{kpi.categoriaField}</code>
+                                  {" "}={" "}
+                                  <code className="bg-muted px-1 rounded">"{kpi.categoriaValue || "…"}"</code>
+                                </p>
+                              </div>
+                            )}
                           </div>
                         </div>
                       )
@@ -2304,12 +2663,32 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                     config.filas.map((row) => (
                       <div key={row.id} className="border rounded-lg p-4 space-y-3">
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
+                         <div className="flex items-center gap-2 flex-wrap">
                             <GripVertical className="h-4 w-4 text-muted-foreground" />
                             <span className="font-medium text-sm">Fila {row.orden}</span>
                             <Badge variant="outline" className="text-xs">
                               {row.graficos.length}/{DEFAULT_LIMITS.maxGraficosPorFila} gráficos
                             </Badge>
+                            <div className="flex items-center gap-1">
+                              <Label className="text-xs whitespace-nowrap text-muted-foreground">Alto px</Label>
+                              <Input
+                                type="number"
+                                min={200}
+                                max={800}
+                                step={40}
+                                className="h-7 w-20 text-xs"
+                                value={(row as any).altura ?? 320}
+                                onChange={(e) => {
+                                  const val = Math.max(200, Math.min(800, parseInt(e.target.value) || 320))
+                                  setConfig({
+                                    ...config!,
+                                    filas: config!.filas.map((r) =>
+                                      r.id === row.id ? ({ ...r, altura: val } as any) : r
+                                    ),
+                                  })
+                                }}
+                              />
+                            </div>
                           </div>
                           <div className="flex gap-2">
                             <Button size="sm" onClick={() => addChartToRow(row.id)}>
@@ -2329,8 +2708,19 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                             const err = validateChart(chart)
                             const mt: MeasureType = chart.measureType ?? "count"
 
-                            const groupableFields = textFields.length ? textFields : availableFields
-                            const canToggleNumeric = numericFields.length > 0
+                            // Campos filtrados al slot de este gráfico
+                            const chartSlot = chart.sourceLabel ?? "primary"
+                            const chartAvailableFields = availableFields.filter(
+                              f => !(f as any).sourceLabel || (f as any).sourceLabel === chartSlot
+                            )
+                            const chartTextFields = chartAvailableFields.filter(
+                              f => f.type === "text" || f.type === "date" || f.type === "boolean" || f.type === "unknown"
+                            )
+                            const chartNumericFields = chartAvailableFields.filter(f => f.type === "number")
+                            const chartAllFieldNames = chartAvailableFields.map(f => f.name)
+
+                            const groupableFields = chartTextFields.length ? chartTextFields : chartAvailableFields
+                            const canToggleNumeric = chartNumericFields.length > 0
 
                             const showMultiMetrics =
                               mt === "numeric" &&
@@ -2375,9 +2765,34 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                   </div>
 
                                   <div className="col-span-1 sm:col-span-3 lg:col-span-3">
+                                    <Label className="text-xs">Slot de datos</Label>
+                                    <Select
+                                      value={chart.sourceLabel ?? "primary"}
+                                      onValueChange={(v) => updateChart(row.id, chart.id, { sourceLabel: v } as any)}
+                                    >
+                                      <SelectTrigger className="h-8">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {/* Slots disponibles según availableFields */}
+                                        {Array.from(
+                                          new Set(
+                                            ["primary", ...availableFields
+                                              .map(f => (f as any).sourceLabel)
+                                              .filter(Boolean)]
+                                          )
+                                        ).map(slot => (
+                                          <SelectItem key={slot} value={slot}>{slot}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div className="col-span-1 sm:col-span-3 lg:col-span-3">
                                     <Label className="text-xs">Tipo de Gráfico</Label>
                                     <Select
                                       value={chart.tipo as any}
+
                                       onValueChange={(value) => {
                                         const nextType = value as ChartType
                                         const nextUpdates: Partial<AnyChart> = { tipo: nextType }
@@ -2428,8 +2843,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                       </SelectTrigger>
                                       <SelectContent>
                                         {availableFields.map((field) => (
-                                          <SelectItem key={field.name} value={field.name}>
-                                            <div className="flex items-center gap-2">
+                                          <SelectItem key={`${field.name}__${(field as any).sourceLabel ?? "primary"}`} value={field.name}>                                            <div className="flex items-center gap-2">
                                               <span>{safeLabel(field.name)}</span>
                                               <Badge variant="outline" className="text-xs">
                                                 {field.type}
@@ -2473,7 +2887,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                       </SelectTrigger>
                                       <SelectContent>
                                         {groupableFields.map((f) => (
-                                          <SelectItem key={f.name} value={f.name}>
+                                          <SelectItem key={`${f.name}__${(f as any).sourceLabel ?? "primary"}`} value={f.name}>
                                             <div className="flex items-center gap-2">
                                               <span>{safeLabel(f.name)}</span>
                                               <Badge variant="outline" className="text-xs">
@@ -2561,7 +2975,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                             </SelectTrigger>
                                             <SelectContent>
                                               {numericFields.map((f) => (
-                                                <SelectItem key={f.name} value={f.name}>
+                                                <SelectItem key={`${f.name}__${(f as any).sourceLabel ?? "primary"}`} value={f.name}>
                                                   <div className="flex items-center gap-2">
                                                     <span>{safeLabel(f.name)}</span>
                                                     <Badge variant="outline" className="text-xs">
@@ -2584,7 +2998,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                             </SelectTrigger>
                                             <SelectContent>
                                               {numericFields.map((f) => (
-                                                <SelectItem key={f.name} value={f.name}>
+                                                <SelectItem key={`${f.name}__${(f as any).sourceLabel ?? "primary"}`} value={f.name}>
                                                   {safeLabel(f.name)}
                                                 </SelectItem>
                                               ))}
@@ -2626,7 +3040,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                                 </SelectTrigger>
                                                 <SelectContent>
                                                   {numericFields.map((f) => (
-                                                    <SelectItem key={f.name} value={f.name}>
+                                                    <SelectItem key={`${f.name}__${(f as any).sourceLabel ?? "primary"}`} value={f.name}>
                                                       <div className="flex items-center gap-2">
                                                         <span>{safeLabel(f.name)}</span>
                                                         <Badge variant="outline" className="text-xs">
@@ -2710,7 +3124,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                       <SelectContent>
                                         <SelectItem value="__none__">Sin series</SelectItem>
                                         {textFields.map((f) => (
-                                          <SelectItem key={f.name} value={f.name}>
+                                          <SelectItem key={`${f.name}__${(f as any).sourceLabel ?? "primary"}`} value={f.name}>
                                             {safeLabel(f.name)}
                                           </SelectItem>
                                         ))}
@@ -2744,6 +3158,235 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                     </Select>
                                   </div>
                                 </div>
+
+                                {/* Bar size + reference KPI */}
+                                <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 mt-2">
+                                  <div className="lg:col-span-3">
+                                    <Label className="text-xs">Grosor mín. barras (px)</Label>
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      max={200}
+                                      className="h-8"
+                                      value={(chart as AnyChart).barSizeMin ?? ""}
+                                      placeholder="Auto"
+                                      onChange={(e) => {
+                                        const v = e.target.value === "" ? undefined : parseInt(e.target.value) || undefined
+                                        updateChart(row.id, chart.id, { barSizeMin: v } as any)
+                                      }}
+                                    />
+                                    <p className="text-[11px] text-muted-foreground mt-1">Vacío = responsive</p>
+                                  </div>
+                                  <div className="lg:col-span-3">
+                                    <Label className="text-xs">Grosor máx. barras (px)</Label>
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      max={200}
+                                      className="h-8"
+                                      value={(chart as AnyChart).barSizeMax ?? ""}
+                                      placeholder="Auto"
+                                      onChange={(e) => {
+                                        const v = e.target.value === "" ? undefined : parseInt(e.target.value) || undefined
+                                        updateChart(row.id, chart.id, { barSizeMax: v } as any)
+                                      }}
+                                    />
+                                    <p className="text-[11px] text-muted-foreground mt-1">Vacío = responsive</p>
+                                  </div>
+                                  <div className="lg:col-span-6">
+                                    <Label className="text-xs">Línea de referencia KPI (opcional)</Label>
+                                    <Select
+                                      value={(chart as AnyChart).referenceKpiId ?? "__none__"}
+                                      onValueChange={(v) => updateChart(row.id, chart.id, { referenceKpiId: v === "__none__" ? undefined : v } as any)}
+                                    >
+                                      <SelectTrigger className="h-8">
+                                        <SelectValue placeholder="Sin referencia" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__none__">Sin referencia</SelectItem>
+                                        {kpisTyped.map((k) => (
+                                          <SelectItem key={k.id} value={k.id}>
+                                            {k.nombre}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                    <p className="text-[11px] text-muted-foreground mt-1">Dibuja una línea al valor del KPI</p>
+                                  </div>
+                                </div>
+
+                                {/* Espesor de filas y anchos de columna (solo para tabla) */}
+                                {(chart.tipo as string) === "tabla" && (
+                                  <div className="space-y-2 mt-2">
+                                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-2">
+                                      <div className="lg:col-span-4">
+                                        <Label className="text-xs">Espesor de filas (padding px)</Label>
+                                        <Input
+                                          type="number"
+                                          min={2}
+                                          max={24}
+                                          step={1}
+                                          className="h-8"
+                                          value={(chart as AnyChart).tableRowHeight ?? 8}
+                                          onChange={(e) =>
+                                            updateChart(row.id, chart.id, { tableRowHeight: parseInt(e.target.value) || 8 } as any)
+                                          }
+                                          placeholder="8"
+                                        />
+                                        <p className="text-[11px] text-muted-foreground mt-1">2 = compacto · 8 = normal · 16 = espacioso</p>
+                                      </div>
+                                    </div>
+
+                                    {/* Anchos de columna */}
+                                    <div className="border rounded p-2 bg-background space-y-2">
+                                      <Label className="text-xs font-medium">Ancho de columnas (px, opcional)</Label>
+                                      <p className="text-[11px] text-muted-foreground">
+                                        Clave: <code className="bg-muted px-1 rounded">name</code> para la columna de grupo,{" "}
+                                        <code className="bg-muted px-1 rounded">value</code> para la métrica.
+                                        Para multi-métrica: <code className="bg-muted px-1 rounded">campo__agg</code>.
+                                      </p>
+                                      {Object.entries((chart as AnyChart).columnWidths ?? {}).map(([col, width]) => (
+                                        <div key={col} className="flex gap-2 items-center">
+                                          <Input
+                                            className="h-7 flex-1 font-mono text-xs"
+                                            value={col}
+                                            onChange={(e) => {
+                                              const oldWidths = { ...((chart as AnyChart).columnWidths ?? {}) }
+                                              const val = oldWidths[col]
+                                              delete oldWidths[col]
+                                              if (e.target.value) oldWidths[e.target.value] = val
+                                              updateChart(row.id, chart.id, { columnWidths: oldWidths } as any)
+                                            }}
+                                            placeholder="nombre columna"
+                                          />
+                                          <Input
+                                            type="number"
+                                            min={40}
+                                            max={800}
+                                            className="h-7 w-24"
+                                            value={width}
+                                            onChange={(e) => {
+                                              const next = { ...((chart as AnyChart).columnWidths ?? {}), [col]: parseInt(e.target.value) || 100 }
+                                              updateChart(row.id, chart.id, { columnWidths: next } as any)
+                                            }}
+                                          />
+                                          <span className="text-xs text-muted-foreground">px</span>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-7 w-7 p-0"
+                                            onClick={() => {
+                                              const next = { ...((chart as AnyChart).columnWidths ?? {}) }
+                                              delete next[col]
+                                              updateChart(row.id, chart.id, { columnWidths: next } as any)
+                                            }}
+                                          >
+                                            <Trash2 className="h-3 w-3 text-destructive" />
+                                          </Button>
+                                        </div>
+                                      ))}
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-7 text-xs"
+                                        onClick={() => {
+                                          const next = { ...((chart as AnyChart).columnWidths ?? {}), name: 200 }
+                                          updateChart(row.id, chart.id, { columnWidths: next } as any)
+                                        }}
+                                      >
+                                        <Plus className="h-3 w-3 mr-1" />
+                                        Agregar columna
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* KPIs como fuente de datos */}
+                                {/* Colores extra por gráfico */}
+                                <div className="mt-2 border-t pt-2">
+                                  <Label className="text-xs font-medium">Colores adicionales</Label>
+                                  <p className="text-[11px] text-muted-foreground mb-2">
+                                    Se añaden al final de la paleta global para este gráfico (útil en stacked con muchas categorías).
+                                  </p>
+                                  <div className="flex flex-wrap gap-2 items-center">
+                                    {((chart as AnyChart).extraColors ?? []).map((color, cidx) => (
+                                      <div key={cidx} className="flex items-center gap-1 border rounded px-1 py-0.5">
+                                        <div className="h-5 w-5 rounded border overflow-hidden shrink-0">
+                                          <input
+                                            type="color"
+                                            value={color}
+                                            onChange={(e) => {
+                                              const next = [...((chart as AnyChart).extraColors ?? [])]
+                                              next[cidx] = e.target.value
+                                              updateChart(row.id, chart.id, { extraColors: next } as any)
+                                            }}
+                                            className="h-full w-full p-0 border-0 cursor-pointer"
+                                          />
+                                        </div>
+                                        <span className="text-xs font-mono">{color}</span>
+                                        <button
+                                          type="button"
+                                          className="text-red-400 hover:text-red-600 text-xs"
+                                          onClick={() => {
+                                            const next = ((chart as AnyChart).extraColors ?? []).filter((_, i) => i !== cidx)
+                                            updateChart(row.id, chart.id, { extraColors: next } as any)
+                                          }}
+                                        >✕</button>
+                                      </div>
+                                    ))}
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 text-xs"
+                                      onClick={() => {
+                                        const next = [...((chart as AnyChart).extraColors ?? []), "#6366f1"]
+                                        updateChart(row.id, chart.id, { extraColors: next } as any)
+                                      }}
+                                    >
+                                      <Plus className="h-3 w-3 mr-1" />
+                                      Color
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                {/* KPIs como fuente de datos */}
+                                {kpisTyped.length > 0 && (
+                                  <div className="mt-2 border-t pt-2">
+                                    <Label className="text-xs font-medium">Graficar KPIs directamente</Label>
+                                    <p className="text-[11px] text-muted-foreground mb-2">
+                                      Activa los KPIs que quieres mostrar en este gráfico (ignora el agrupado de filas).
+                                    </p>
+                                    <div className="flex flex-wrap gap-2">
+                                      {kpisTyped.map((k) => {
+                                        const selected = ((chart as AnyChart).kpiIds ?? []).includes(k.id)
+                                        return (
+                                          <label
+                                            key={k.id}
+                                            className={`flex items-center gap-1.5 cursor-pointer border rounded px-2 py-1 text-xs transition-colors ${
+                                              selected
+                                                ? "bg-amber-100 dark:bg-amber-900/40 border-amber-400 text-amber-800 dark:text-amber-200"
+                                                : "hover:bg-muted/50"
+                                            }`}
+                                          >
+                                            <input
+                                              type="checkbox"
+                                              checked={selected}
+                                              onChange={(e) => {
+                                                const current = (chart as AnyChart).kpiIds ?? []
+                                                const next = e.target.checked
+                                                  ? [...current, k.id]
+                                                  : current.filter((id) => id !== k.id)
+                                                updateChart(row.id, chart.id, { kpiIds: next } as any)
+                                              }}
+                                              className="h-3.5 w-3.5"
+                                            />
+                                            {k.nombre}
+                                          </label>
+                                        )
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             )
                           })}

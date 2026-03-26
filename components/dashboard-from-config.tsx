@@ -9,7 +9,6 @@ import type {
   KPIOperation,
   ChartMetricDefinition,
 } from "@/types/report-config"
-
 import {
   ResponsiveContainer,
   PieChart,
@@ -29,6 +28,10 @@ import {
   YAxis,
   CartesianGrid,
   ComposedChart,
+  ReferenceLine,
+  FunnelChart,
+  Funnel as RechartsFunnel,
+  LabelList,
 } from "recharts"
 
 import { Button } from "@/components/ui/button"
@@ -77,6 +80,7 @@ type BrandingConfig = {
   filterTextColor?: string
   filterIconColor?: string
   kpiLabelColor?: string
+  galleryMetadataFieldLabels?: Record<string, string>
 }
 
 type FilterCondition = {
@@ -97,9 +101,10 @@ type ReportFilters = {
 
 // Extender KPIDefinition con columnas
 type ExtendedKPI = KPIDefinition & {
-  columnas?: number // NEW: tamaño del KPI (1-12)
+  columnas?: number
+  kind?: "field" | "formula" | "expression"
+  expression?: string
 }
-
 // -----------------------------
 // Helpers: filtering
 // -----------------------------
@@ -291,23 +296,33 @@ function parseOperandRef(raw: string) {
   return { kind: "kpi" as const, id: s }
 }
 
-function resolveOperand(raw: string, valuesById: KPIValueMap, constMap: Record<string, number>): { ok: boolean; value: number } {
+function resolveOperand(
+  raw: string,
+  valuesById: KPIValueMap,
+  constMap: Record<string, number>,
+  kpiDefs?: KPIDefinition[]
+): { ok: boolean; value: number } {
   const r = parseOperandRef(raw)
   if (r.kind === "num") return { ok: true, value: Number.isFinite(r.value) ? r.value : 0 }
   if (r.kind === "const") return { ok: true, value: Number(constMap[r.key] ?? 0) }
   if (r.kind === "kpi") {
     const has = Object.prototype.hasOwnProperty.call(valuesById, r.id)
-    return { ok: has, value: Number(valuesById[r.id] ?? 0) }
+    const rawVal = Number(valuesById[r.id] ?? 0)
+    const escala = Number((kpiDefs?.find((k) => k.id === r.id) as any)?.escala ?? 1)
+    const value = Number.isFinite(escala) && escala !== 0 && escala !== 1
+      ? rawVal * escala
+      : rawVal
+    return { ok: has, value }
   }
   return { ok: false, value: 0 }
 }
 
-function computeFormulaKpiValue(kpi: KPIDefinition, valuesById: KPIValueMap, constMap: Record<string, number>): { ok: boolean; value: number } {
+function computeFormulaKpiValue(kpi: KPIDefinition, valuesById: KPIValueMap, constMap: Record<string, number>, kpiDefs?: KPIDefinition[]): { ok: boolean; value: number } {
   const f = kpi.formula
   if (!f?.aKpiId || !f?.bKpiId || !f?.op) return { ok: false, value: 0 }
 
-  const A = resolveOperand(f.aKpiId, valuesById, constMap)
-  const B = resolveOperand(f.bKpiId, valuesById, constMap)
+  const A = resolveOperand(f.aKpiId, valuesById, constMap, kpiDefs)
+  const B = resolveOperand(f.bKpiId, valuesById, constMap, kpiDefs)
 
   if (!A.ok || !B.ok) return { ok: false, value: 0 }
 
@@ -478,11 +493,77 @@ function buildSeries(rows: RowData[], chart: ChartDefinition): BuiltSeries {
 }
 
 // -----------------------------
+// Expression KPI evaluator
+// -----------------------------
+function evaluateExpressionKpi(
+  expr: string,
+  rows: RowData[],
+  constMap: Record<string, number> = {},
+  kpiValuesMap: Record<string, number> = {},
+  kpiDefs: KPIDefinition[] = []
+): number {
+  if (!expr || !expr.trim()) return 0
+
+  // Reemplazar {kpi:id} con el valor del KPI (aplicando escala si existe)
+  let math = expr.replace(/\{kpi:([^}]+)\}/g, (_, id) => {
+    const rawVal = kpiValuesMap[id.trim()] ?? 0
+    const escala = Number((kpiDefs.find((k) => k.id === id.trim()) as any)?.escala ?? 1)
+    const val = Number.isFinite(escala) && escala !== 0 && escala !== 1 ? rawVal * escala : rawVal
+    return String(val)
+  })
+
+  // Reemplazar {const_key} con valores de constantes
+  math = math.replace(/\{([^}]+)\}/g, (_, key) => {
+    return String(constMap[key.trim()] ?? 0)
+  })
+  // Replace [FieldName] tokens with sum aggregate
+  math = math.replace(/\[([^\]]+)\]/g, (_, field) => {
+    const nums = rows
+      .map((r) => toNumber(r?.[field.trim()]))
+      .filter((n): n is number => n !== null)
+    return String(aggregateNumeric(nums, "sum"))
+  })
+  math = math.trim()
+  // Only allow safe math characters
+  if (!/^[\d\s+\-*/().]+$/.test(math)) return 0
+  try {
+    // eslint-disable-next-line no-new-func
+    return Number(new Function(`"use strict"; return (${math})`)())
+  } catch {
+    return 0
+  }
+}
+
+// -----------------------------
+// Metadata value formatter
+// -----------------------------
+function formatMetadataValue(value: any): string {
+  if (value == null || value === "") return "N/A"
+  const str = String(value)
+  // ISO date: YYYY-MM-DD or YYYY-MM-DDTHH:mm...
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    const d = new Date(str)
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleDateString("es-CO", { year: "numeric", month: "long", day: "numeric" })
+    }
+  }
+  // DD/MM/YYYY
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
+    const [day, month, year] = str.split("/")
+    const d = new Date(Number(year), Number(month) - 1, Number(day))
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleDateString("es-CO", { year: "numeric", month: "long", day: "numeric" })
+    }
+  }
+  return str
+}
+
+// -----------------------------
 // UI pieces
 // -----------------------------
 function KpiCard({ 
   title, 
-  value, 
+  value,
   columnas, 
   branding 
 }: { 
@@ -512,6 +593,7 @@ function EvidenceGallery({
   rows,
   photoFields,
   metadataFields,
+  metadataFieldLabels,
   imageHeight = 500,
   backgroundColor = "#f8fafc",
   imageBackground = "#000000",
@@ -520,8 +602,9 @@ function EvidenceGallery({
 }: {
   rows: RowData[]
   photoFields: string[]
-  metadataFields?: string[] // Campos específicos a mostrar como metadata
-  imageHeight?: number // Altura del contenedor de imagen en px
+  metadataFields?: string[]
+  metadataFieldLabels?: Record<string, string>
+  imageHeight?: number
   backgroundColor?: string
   imageBackground?: string
   metadataBackground?: string
@@ -758,7 +841,10 @@ function EvidenceGallery({
               </div>
               {displayMetadataFields.map((key) => (
                 <div key={key}>
-                  <span className="font-medium">{key}:</span> {String(currentPhoto.rowData[key] || 'N/A')}
+                  <span className="font-medium">
+                    {metadataFieldLabels?.[key] || key}:
+                  </span>{" "}
+                  {formatMetadataValue(currentPhoto.rowData[key])}
                 </div>
               ))}
             </div>
@@ -790,6 +876,88 @@ function EvidenceGallery({
   )
 }
 
+function FilterCombobox({
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  options: string[]
+  value: string
+  onChange: (v: string) => void
+  disabled?: boolean
+}) {
+  const [query, setQuery] = useState("")
+  const [open, setOpen] = useState(false)
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return options
+    try {
+      const re = new RegExp(query.trim(), "i")
+      return options.filter((o) => re.test(o))
+    } catch {
+      return options.filter((o) =>
+        o.toLowerCase().includes(query.toLowerCase())
+      )
+    }
+  }, [options, query])
+
+  return (
+    <div className="relative">
+      <div
+        className="flex items-center border rounded px-2 gap-1 bg-background cursor-text"
+        onClick={() => { if (!disabled) setOpen(true) }}
+      >
+        <input
+          className="flex-1 py-1.5 text-sm bg-transparent outline-none placeholder:text-muted-foreground"
+          placeholder={value || "Buscar…"}
+          value={open ? query : value}
+          disabled={disabled}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setOpen(true)
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+        />
+        {value && (
+          <button
+            type="button"
+            className="text-muted-foreground hover:text-foreground text-xs shrink-0"
+            onMouseDown={(e) => { e.preventDefault(); onChange(""); setQuery("") }}
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
+      {open && filtered.length > 0 && (
+        <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto border rounded bg-popover shadow-md text-sm">
+          <div
+            className="px-3 py-1.5 cursor-pointer hover:bg-muted text-muted-foreground"
+            onMouseDown={() => { onChange(""); setQuery(""); setOpen(false) }}
+          >
+            Todos
+          </div>
+          {filtered.slice(0, 100).map((opt) => (
+            <div
+              key={opt}
+              className={`px-3 py-1.5 cursor-pointer hover:bg-muted ${opt === value ? "bg-muted font-medium" : ""}`}
+              onMouseDown={() => { onChange(opt); setQuery(""); setOpen(false) }}
+            >
+              {opt}
+            </div>
+          ))}
+          {filtered.length > 100 && (
+            <div className="px-3 py-1.5 text-xs text-muted-foreground border-t">
+              {filtered.length - 100} más — refina la búsqueda
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 // Filter Panel Component - Clean design with theme colors
 function FilterPanel({
   filters,
@@ -917,10 +1085,9 @@ function FilterPanel({
   const removeCondition = (index: number) => {
     const newConditions = [...(tempFilters.condiciones || [])]
     newConditions.splice(index, 1)
-    setTempFilters({
-      ...tempFilters,
-      condiciones: newConditions,
-    })
+    const next = { ...tempFilters, condiciones: newConditions }
+    setTempFilters(next)
+    onFiltersChange(next)  // aplica inmediatamente
   }
 
   const applyFilters = () => {
@@ -951,7 +1118,7 @@ function FilterPanel({
             onClick={applyFilters}
             size="sm"
             className="bg-orange-600 hover:bg-orange-700 text-white"
-            disabled={!hasActiveFilters}
+            disabled={false}
           >
             <Filter className="h-4 w-4 mr-2" />
             Aplicar filtros
@@ -1064,23 +1231,32 @@ function FilterPanel({
                 </Select>
 
                 {condition.campo && fieldOptions.length > 0 ? (
-                  <Select
-                    value={condition.valor || "all"}
-                    onValueChange={(value) => updateTempCondition(index, "valor", value === "all" ? "" : value)}
-                    disabled={isLoadingFieldOptions}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={isLoadingFieldOptions ? "Cargando..." : "Todos"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos</SelectItem>
-                      {fieldOptions.map((opt, i) => (
-                        <SelectItem key={i} value={String(opt)}>
-                          {String(opt)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  fieldOptions.length > 10 ? (
+                    <FilterCombobox
+                      options={fieldOptions.map(String)}
+                      value={condition.valor || ""}
+                      onChange={(value) => updateTempCondition(index, "valor", value)}
+                      disabled={isLoadingFieldOptions}
+                    />
+                  ) : (
+                    <Select
+                      value={condition.valor || "all"}
+                      onValueChange={(value) => updateTempCondition(index, "valor", value === "all" ? "" : value)}
+                      disabled={isLoadingFieldOptions}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={isLoadingFieldOptions ? "Cargando..." : "Todos"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos</SelectItem>
+                        {fieldOptions.map((opt, i) => (
+                          <SelectItem key={i} value={String(opt)}>
+                            {String(opt)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )
                 ) : null}
               </div>
             </div>
@@ -1108,7 +1284,17 @@ function FilterPanel({
 // -----------------------------
 // Sortable Table Component
 // -----------------------------
-function SortableTable({ data }: { data: any[] }) {
+function SortableTable({
+  data,
+  rowHeight,
+  columnLabels,
+  columnWidths,
+}: {
+  data: any[]
+  rowHeight?: number
+  columnLabels?: Record<string, string>
+  columnWidths?: Record<string, number>
+}) {
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
 
@@ -1154,11 +1340,17 @@ function SortableTable({ data }: { data: any[] }) {
               return (
                 <th
                   key={k}
-                  className="text-left p-2 font-medium cursor-pointer select-none hover:bg-muted/50 transition-colors"
+                  className="text-left px-2 font-medium cursor-pointer select-none hover:bg-muted/50 transition-colors"
+                  style={{
+                    paddingTop: rowHeight ?? 8,
+                    paddingBottom: rowHeight ?? 8,
+                    width: columnWidths?.[k] ? `${columnWidths[k]}px` : undefined,
+                    minWidth: columnWidths?.[k] ? `${columnWidths[k]}px` : undefined,
+                  }}
                   onClick={() => handleSort(k)}
                 >
                   <div className="flex items-center gap-1">
-                    <span>{k}</span>
+                    <span>{columnLabels?.[k] ?? k}</span>
                     <span className="text-xs text-muted-foreground">
                       {isActive
                         ? sortDir === "asc"
@@ -1176,7 +1368,7 @@ function SortableTable({ data }: { data: any[] }) {
           {sorted.map((row, i) => (
             <tr key={i} className="border-b hover:bg-muted/30 transition-colors">
               {columns.map((k) => (
-                <td key={k} className="p-2">
+                <td key={k} className="px-2" style={{ paddingTop: rowHeight ?? 8, paddingBottom: rowHeight ?? 8, width: columnWidths?.[k] ? `${columnWidths[k]}px` : undefined }}>
                   {String(row[k] ?? "")}
                 </td>
               ))}
@@ -1241,18 +1433,27 @@ export function DashboardFromConfig({
     condiciones: configFilters.condiciones || [],
   })
 
-  const rows = useMemo<RowData[]>(() => {
-    if (Array.isArray(data)) return data as RowData[]
-    if (!data) return []
+  const { rows, dataBySlot } = useMemo<{ rows: RowData[]; dataBySlot: Record<string, RowData[]> }>(() => {
+    if (Array.isArray(data)) {
+      return { rows: data as RowData[], dataBySlot: { primary: data as RowData[] } }
+    }
+    if (!data) return { rows: [], dataBySlot: {} }
 
     const d = data as any
 
-    if (Array.isArray(d.rows)) return d.rows as RowData[]
-    if (Array.isArray(d.data)) return d.data as RowData[]
-    if (Array.isArray(d.items)) return d.items as RowData[]
+    // Nuevo formato multi-slot
+    if (d.dataBySlot && typeof d.dataBySlot === "object") {
+      const bySlot = d.dataBySlot as Record<string, RowData[]>
+      const primaryRows = bySlot["primary"] ?? Object.values(bySlot)[0] ?? []
+      return { rows: primaryRows, dataBySlot: bySlot }
+    }
+
+    if (Array.isArray(d.rows)) return { rows: d.rows as RowData[], dataBySlot: { primary: d.rows } }
+    if (Array.isArray(d.data)) return { rows: d.data as RowData[], dataBySlot: { primary: d.data } }
+    if (Array.isArray(d.items)) return { rows: d.items as RowData[], dataBySlot: { primary: d.items } }
 
     console.warn("[DashboardFromConfig] data no es array:", data)
-    return []
+    return { rows: [], dataBySlot: {} }
   }, [data])
 
   // Apply filters to data
@@ -1269,6 +1470,15 @@ export function DashboardFromConfig({
     if (rows.length === 0) return []
     return Object.keys(rows[0]).sort()
   }, [rows])
+  // Datos de todos los slots CON filtros de usuario (para constantes filtered_agg)
+  const allSlotsRows = useMemo(() => {
+    const combined = Object.values(dataBySlot).flat()
+    let result = applyFilters(combined, userFilters)
+    if (chartFilter) {
+      result = result.filter((r) => String(r?.[chartFilter.field] ?? "") === chartFilter.value)
+    }
+    return result
+  }, [dataBySlot, userFilters, chartFilter])
 
   const constMap = useMemo(() => {
     const m: Record<string, number> = {}
@@ -1278,16 +1488,16 @@ export function DashboardFromConfig({
       if (kind === "static") {
         m[c.key] = Number(c.value ?? 0)
       } else if (kind === "filtered_agg" && c.field) {
-        // Aplicar filtro de fila si existe
         const subset = c.filterField && c.filterValue
-          ? filteredRows.filter((r) => String(r?.[c.filterField!] ?? "") === c.filterValue)
-          : filteredRows
+          ? allSlotsRows.filter((r) => String(r?.[c.filterField!] ?? "") === c.filterValue)
+          : allSlotsRows
+
         const nums = subset.map((r) => toNumber(r?.[c.field!])).filter((n): n is number => n !== null)
         m[c.key] = aggregateNumeric(nums, c.agg ?? "sum")
       }
     }
     return m
-  }, [constants, filteredRows])
+  }, [constants, allSlotsRows])
 
   const palette = useMemo(() => {
     const p = config.paletaColores
@@ -1302,17 +1512,28 @@ export function DashboardFromConfig({
     ]
   }, [config.paletaColores])
 
-  // KPIs computation with filtered data
+  // KPIs computation — usan todos los slots combinados
   const { kpiValues, visibleKpis } = useMemo(() => {
     const kpis = (config.kpis ?? []) as ExtendedKPI[]
     const visible = kpis.filter((k) => k.visible !== false)
     const byId: KPIValueMap = {}
 
-    // pass 1: field
-    for (const k of kpis) {
+    // pass 1: field + expression — sobre datos de TODOS los slots
+        for (const k of kpis) {
       const kind = (k.kind ?? "field") as any
       if (kind === "formula") continue
-      byId[k.id] = computeBaseKpiValue(filteredRows, k)
+      // Aplicar filtro de categoría si está configurado
+      const catField = (k as any).categoriaField as string | undefined
+      const catValue = (k as any).categoriaValue as string | undefined
+      const kpiRows: RowData[] =
+        catField && catValue
+          ? allSlotsRows.filter((r) => String(r?.[catField] ?? "") === catValue)
+          : allSlotsRows
+      if (kind === "expression") {
+        byId[k.id] = evaluateExpressionKpi((k as any).expression ?? "", kpiRows, constMap, byId, kpis as KPIDefinition[])
+      } else {
+        byId[k.id] = computeBaseKpiValue(kpiRows, k)
+      }
     }
 
     // pass 2: formulas (iterativo para dependencias)
@@ -1324,7 +1545,7 @@ export function DashboardFromConfig({
 
       for (const k of formulas) {
         if (!pending.has(k.id)) continue
-        const r = computeFormulaKpiValue(k, byId, constMap)
+        const r = computeFormulaKpiValue(k, byId, constMap, kpis as KPIDefinition[])
         if (!r.ok) continue
         byId[k.id] = r.value
         pending.delete(k.id)
@@ -1358,9 +1579,59 @@ export function DashboardFromConfig({
     return { kpiValues: byId, visibleKpis: visible }
   }, [config.kpis, filteredRows, constMap])
 
-  const renderChart = (chart: ChartDefinition, onSegmentClick?: (field: string, value: string) => void) => {
+    const renderChart = (chart: ChartDefinition, rowHeight: number = 320, onSegmentClick?: (field: string, value: string) => void) => {
     const tipo = chart.tipo
-    const built = buildSeries(filteredRows, chart)
+
+    // ── KPIs como fuente de datos ──────────────────────────────────────────
+    // Paleta extendida por gráfico
+    const extraColors = (chart as any).extraColors as string[] | undefined
+    const chartPalette = extraColors?.length ? [...palette, ...extraColors] : palette
+    const kpiIds = (chart as any).kpiIds as string[] | undefined
+    if (kpiIds && kpiIds.length > 0) {
+      const kpiData = kpiIds.map((kpiId) => {
+        const kpi = (config.kpis as ExtendedKPI[]).find((k) => k.id === kpiId)
+        return { name: kpi?.nombre ?? kpiId, value: kpiValues[kpiId] ?? 0 }
+      })
+      if (tipo === "tabla") {
+        return (
+          <div style={{ maxHeight: `${rowHeight}px`, overflowY: "auto" }}>
+            <SortableTable
+              data={kpiData}
+              rowHeight={(chart as any).tableRowHeight}
+              columnLabels={{ name: "KPI", value: "Valor" }}
+              columnWidths={(chart as any).columnWidths}
+            />
+          </div>
+        )
+      }
+      // Para cualquier otro tipo: barras de KPIs
+      return (
+        <ResponsiveContainer width="100%" height={rowHeight}>
+          <BarChart data={kpiData}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="name" />
+            <YAxis />
+            <Tooltip />
+            <Bar dataKey="value">
+              {kpiData.map((_, idx) => (
+                <Cell key={idx} fill={palette[idx % palette.length]} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      )
+    }
+    // ──────────────────────────────────────────────────────────────────────
+    // Cada chart usa su slot declarado
+    const chartSourceLabel = (chart as any).sourceLabel as string | undefined
+    const chartRows = chartSourceLabel && dataBySlot[chartSourceLabel]
+      ? (() => {
+          let r = applyFilters(dataBySlot[chartSourceLabel], userFilters)
+          if (chartFilter) r = r.filter(row => String(row?.[chartFilter.field] ?? "") === chartFilter.value)
+          return r
+        })()
+      : filteredRows
+    const built = buildSeries(chartRows, chart)
     const s = built.data
     const seriesKeys = built.seriesKeys
 
@@ -1383,7 +1654,7 @@ export function DashboardFromConfig({
               </button>
             </div>
           )}
-          <ResponsiveContainer width="100%" height={320}>
+          <ResponsiveContainer width="100%" height={rowHeight}>
             <PieChart>
               <Pie
                 data={pieData}
@@ -1458,8 +1729,9 @@ export function DashboardFromConfig({
               <XAxis dataKey="name" label={(chart as any).labelX ? { value: (chart as any).labelX, position: "insideBottom", offset: -5 } : undefined} />
               <YAxis yAxisId="left" label={(chart as any).labelY ? { value: (chart as any).labelY, angle: -90, position: "insideLeft" } : undefined} />
               {anyRight && <YAxis yAxisId="right" orientation="right" />}
+              
               <Tooltip />
-              <Legend />
+              {seriesKeys.length > 1 && <Legend />}
               {(seriesKeys.length ? seriesKeys : [{ key: "value", label: "value", axis: "left" }]).map((sk, idx) => (
                 <Bar
                   key={sk.key}
@@ -1467,9 +1739,27 @@ export function DashboardFromConfig({
                   yAxisId={(sk.axis ?? "left") === "right" ? "right" : "left"}
                   stackId={stackId}
                   fill={palette[idx % palette.length]}
+                  barSize={(chart as any).barSizeMin}
+                  maxBarSize={(chart as any).barSizeMax}
                 />
               ))}
+              {(chart as any).referenceKpiId && kpiValues[(chart as any).referenceKpiId] != null && (
+                <ReferenceLine
+                  yAxisId="left"
+                  y={kpiValues[(chart as any).referenceKpiId]}
+                  stroke="#ef4444"
+                  strokeDasharray="5 3"
+                  strokeWidth={2}
+                  label={{
+                    value: `▶ ${kpiValues[(chart as any).referenceKpiId]?.toFixed(1)}`,
+                    position: "insideTopRight",
+                    fontSize: 11,
+                    fill: "#ef4444",
+                  }}
+                />
+              )}
             </BarChart>
+
           </ResponsiveContainer>
           {onSegmentClick && !isFiltered && (
             <p className="text-center text-xs text-muted-foreground mt-1 flex items-center justify-center gap-1">
@@ -1490,7 +1780,7 @@ export function DashboardFromConfig({
             <YAxis yAxisId="left" label={(chart as any).labelY ? { value: (chart as any).labelY, angle: -90, position: "insideLeft" } : undefined} />
             {anyRight && <YAxis yAxisId="right" orientation="right" />}
             <Tooltip />
-            <Legend />
+            {seriesKeys.length > 1 && <Legend />}
             {(seriesKeys.length ? seriesKeys : [{ key: "value", label: "value", axis: "left" }]).map((sk, idx) => (
               <Line
                 key={sk.key}
@@ -1516,7 +1806,7 @@ export function DashboardFromConfig({
               <YAxis yAxisId="left" label={(chart as any).labelY ? { value: (chart as any).labelY, angle: -90, position: "insideLeft" } : undefined} />
             {anyRight && <YAxis yAxisId="right" orientation="right" />}
             <Tooltip />
-            <Legend />
+            {seriesKeys.length > 1 && <Legend />}
             {(seriesKeys.length ? seriesKeys : [{ key: "value", label: "value", axis: "left" }]).map((sk, idx) => (
               <Area
                 key={sk.key}
@@ -1538,7 +1828,7 @@ export function DashboardFromConfig({
       const yKey = chart.metric2 as string | undefined
       if (!xKey || !yKey) return <div className="text-sm text-muted-foreground">Scatter requiere metric y metric2.</div>
 
-      const pts = filteredRows
+      const pts = chartRows
         .map((r) => ({ x: toNumber(r?.[xKey]), y: toNumber(r?.[yKey]) }))
         .filter((p) => p.x != null && p.y != null)
         .map((p) => ({ x: p.x!, y: p.y! }))
@@ -1560,7 +1850,7 @@ export function DashboardFromConfig({
       const metrics = (chart.metrics ?? []) as ChartMetricDefinition[]
       if (metrics.length < 2) return <div className="text-sm text-muted-foreground">Combo requiere ≥ 2 métricas.</div>
 
-      const built2 = buildSeries(filteredRows, { ...chart, seriesBy: undefined })
+      const built2 = buildSeries(chartRows, { ...chart, seriesBy: undefined })
       const s2 = built2.data
       const metricKeys: { key: string; dataKey: string; axis: "left" | "right"; render: "bar" | "line"; label: string }[] = metrics.map((m, idx) => ({
         key: `${m.field}__${m.agg}__${idx}`,
@@ -1591,8 +1881,57 @@ export function DashboardFromConfig({
       )
     }
 
+    if (tipo === "funnel") {
+      const key = seriesKeys[0]?.key ?? "value"
+      const funnelData = s.map((p, idx) => ({
+        name: p.name,
+        value: Number(p[key] ?? 0),
+        fill: palette[idx % palette.length],
+      }))
+      return (
+        <ResponsiveContainer width="100%" height={rowHeight}>
+          <FunnelChart>
+            <Tooltip />
+            <RechartsFunnel dataKey="value" data={funnelData} isAnimationActive>
+              <LabelList position="right" fill="#555" stroke="none" dataKey="name" />
+            </RechartsFunnel>
+          </FunnelChart>
+        </ResponsiveContainer>
+      )
+    }
+
     if (tipo === "tabla") {
-      return <SortableTable data={s} />
+      // Construir labels legibles para las columnas
+      const tableLabels: Record<string, string> = {}
+      const groupByField = chart.groupBy as string | undefined
+      if (groupByField) tableLabels["name"] = groupByField
+
+      const mt = chart.measureType ?? "count"
+      if (mt === "count") {
+        const cf = (chart.countField ?? "__rows__") as string
+        tableLabels["value"] = cf === "__rows__" ? "conteo" : cf
+      } else {
+        const metrics = (chart.metrics ?? []) as ChartMetricDefinition[]
+        if (metrics.length > 0) {
+          for (const m of metrics) {
+            const k = `${m.field}__${m.agg}`
+            tableLabels[k] = `${m.field} (${m.agg})`
+          }
+        } else if (chart.metric) {
+          tableLabels["value"] = `${chart.metric} (${chart.agg ?? "sum"})`
+        }
+      }
+
+      return (
+        <div style={{ maxHeight: `${rowHeight}px`, overflowY: "auto" }}>
+          <SortableTable
+            data={s}
+            rowHeight={(chart as any).tableRowHeight}
+            columnLabels={tableLabels}
+            columnWidths={(chart as any).columnWidths}
+          />
+        </div>
+      )
     }
 
     return <div className="text-sm text-muted-foreground">Tipo "{tipo}" aún no implementado.</div>
@@ -1752,7 +2091,7 @@ export function DashboardFromConfig({
               title={kpi.nombre} 
               value={formatKpiValue(v, kpi)} 
               columnas={columnas}
-              branding={branding}  // ← AGREGAR
+              branding={branding}
             />
           )
         })}
@@ -1779,7 +2118,7 @@ export function DashboardFromConfig({
                 {(row.graficos ?? []).map((chart) => (
                   <div
                       key={chart.id}
-                      className="col-span-12 border p-4"
+                      className="border p-4 min-w-0"
                       style={{ 
                         gridColumn: `span ${chart.columnas} / span ${chart.columnas}`,
                         backgroundColor: branding?.chartBackgroundColor || "#ffffff",
@@ -1787,7 +2126,7 @@ export function DashboardFromConfig({
                       } as any}
                     >
                     <div className="mb-2 text-sm font-medium">{chart.titulo}</div>
-                    {renderChart(chart, (["barras", "torta"].includes(chart.tipo as string)) ? (field, value) => setChartFilter({ field, value }) : undefined)}
+                    {renderChart(chart, (row as any).altura ?? 320, (["barras", "torta"].includes(chart.tipo as string)) ? (field, value) => setChartFilter({ field, value }) : undefined)}
                   </div>
                 ))}
               </div>
@@ -1811,6 +2150,7 @@ export function DashboardFromConfig({
               rows={filteredRows} 
               photoFields={photoFields}
               metadataFields={branding.galleryMetadataFields}
+              metadataFieldLabels={branding.galleryMetadataFieldLabels}
               imageHeight={branding.galleryImageHeight}
               backgroundColor={branding.galleryBackgroundColor ?? "#f8fafc"}
               imageBackground={(branding as any).galleryImageBackground ?? "#000000"}

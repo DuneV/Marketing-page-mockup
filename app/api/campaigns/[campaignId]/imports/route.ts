@@ -1,3 +1,5 @@
+// app\api\campaigns\[campaignId]\imports\route.ts
+
 import { NextResponse } from "next/server"
 
 const BASE = process.env.IMPORT_API_BASE_URL

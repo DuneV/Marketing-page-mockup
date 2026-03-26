@@ -40,6 +40,7 @@ import { assignUserToCampaign } from "@/lib/data/users"
 import { getCompany } from "@/lib/data/companies"
 
 import { downloadTemplate, createImport, analyzeImport, commitImport } from "@/lib/api/importApi"
+import { saveCampaignColumnMapping } from "@/lib/data/campaigns"
 
 import { toast } from "sonner"
 import { useAuthRole } from "@/lib/auth/useAuthRole"
@@ -389,10 +390,19 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
       appendLog("4) Confirmando importación...")
 
       await commitImport(importId, mapping)
-
       appendLog("✓ Importación confirmada")
-      toast.success("Campaña y datos creados exitosamente")
 
+      const campaignIdToSave = createdCampaignIdRef.current
+      if (campaignIdToSave && Object.keys(mapping).length > 0) {
+        try {
+          await saveCampaignColumnMapping(campaignIdToSave, "primary", mapping)
+          appendLog("✓ Mapeo de columnas guardado para futuros uploads")
+        } catch (mappingErr) {
+          console.warn("No se pudo guardar el mapping:", mappingErr)
+        }
+      }
+
+      toast.success("Campaña y datos creados exitosamente")
       setTimeout(() => {
         handleClose()
         onSuccess()

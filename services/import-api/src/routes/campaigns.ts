@@ -142,43 +142,27 @@ campaignsRouter.get("/:campaignId/available-fields", async (req, res) => {
     await requireAdmin(req)
     const { campaignId } = req.params
 
-    console.log("Getting available fields for campaign:", campaignId)
-
-    // 1) Último import DONE de esa campaña
-    const lastImport = await queryOne<any>(
-      `SELECT id, status, summary
+    // Un import DONE activo por slot (el más reciente de cada uno)
+    const activeImports = await query<{ id: string; source_label: string }>(
+      `SELECT DISTINCT ON (source_label) id, source_label
        FROM imports.imports
        WHERE campaign_id = $1
          AND import_type = 'campaigns'
          AND status = 'DONE'
-       ORDER BY created_at DESC
-       LIMIT 1`,
+       ORDER BY source_label, created_at DESC`,
       [campaignId]
     )
 
-    if (!lastImport) {
-      return res.json({ fields: [], filters: [], importId: null })
+    if (activeImports.length === 0) {
+      return res.json({ fields: [], filters: [], slots: [], importByLabel: {}, importId: null })
     }
 
-    console.log("Last import found:", lastImport.id)
-
-    // 2) Campos canónicos mapeados en ese import
-    const mappings = await query<{ canonical_field: string }>(
-      `SELECT DISTINCT canonical_field
-       FROM imports.import_mappings
-       WHERE import_id = $1
-       ORDER BY canonical_field`,
-      [lastImport.id]
+    const importByLabel: Record<string, string> = Object.fromEntries(
+      activeImports.map(i => [i.source_label, i.id])
     )
+    const primaryImportId = importByLabel["primary"] ?? activeImports[0].id
 
-    if (mappings.length === 0) {
-      return res.json({ fields: [], filters: [], importId: lastImport.id })
-    }
-
-    console.log("Canonical fields found:", mappings.map(m => m.canonical_field))
-
-    // 3) Traer el schema (canonical_fields) para conocer tipos declarados en SQL
-    //    IMPORTANTE: ajusta version si no es 1
+    // Schema
     const schemaRow = await queryOne<{ canonical_fields: any }>(
       `SELECT canonical_fields
        FROM imports.import_schemas
@@ -186,60 +170,61 @@ campaignsRouter.get("/:campaignId/available-fields", async (req, res) => {
          AND version = 1
        LIMIT 1`
     )
-
     let canonicalSchema: Record<string, { type?: string }> = {}
     const raw = schemaRow?.canonical_fields
-
     if (typeof raw === "string") canonicalSchema = JSON.parse(raw)
     else canonicalSchema = raw ?? {}
 
-    // 4) Muestra de datos staging (para sampleCount)
-    const sampleRows = await query<{ data: any }>(
-      `SELECT data
-       FROM staging.staging_rows
-       WHERE import_id = $1
-         AND is_valid = true
-       LIMIT 100`,
-      [lastImport.id]
-    )
+    // Campos por slot
+    const allFields: Array<{
+      name: string
+      type: AvailableFieldType
+      sampleCount: number
+      sourceLabel: string
+    }> = []
 
-    console.log("Sample rows retrieved:", sampleRows.length)
+    for (const imp of activeImports) {
+      const mappings = await query<{ canonical_field: string }>(
+        `SELECT DISTINCT canonical_field
+         FROM imports.import_mappings
+         WHERE import_id = $1
+         ORDER BY canonical_field`,
+        [imp.id]
+      )
 
-    // 5) Tipos desde schema (no inferidos)
-    const fieldTypes: Record<string, AvailableFieldType> = {}
-    for (const m of mappings) {
-      const fieldName = m.canonical_field
-      const schemaType = canonicalSchema?.[fieldName]?.type
-      fieldTypes[fieldName] = normalizeSchemaType(schemaType)
+      const sampleRows = await query<{ data: any }>(
+        `SELECT data FROM staging.staging_rows
+         WHERE import_id = $1 AND is_valid = true LIMIT 100`,
+        [imp.id]
+      )
+
+      for (const m of mappings) {
+        const name = m.canonical_field
+        const type = normalizeSchemaType(canonicalSchema?.[name]?.type)
+        const sampleCount = sampleRows.filter(
+          r => r.data?.[name] != null && r.data?.[name] !== ""
+        ).length
+        allFields.push({ name, type, sampleCount, sourceLabel: imp.source_label })
+      }
     }
 
-    console.log("Field types from schema:", fieldTypes)
-
-    // 6) Construir fields (con sampleCount)
-    const fields = mappings.map(m => {
-      const name = m.canonical_field
-      const sampleCount = sampleRows.filter(
-        r => r.data?.[name] != null && r.data?.[name] !== ""
-      ).length
-
-      return {
-        name,
-        type: fieldTypes[name] ?? "unknown",
-        sampleCount,
-      }
-    })
-
-    // 7) Construir filtros disponibles
-    const filters = mappings
-      .map(m => m.canonical_field)
-      .filter(name => FILTERABLE_FIELDS.has(name))
-      .map(name => ({
-        name,
-        type: fieldTypes[name] ?? "unknown",
-        operators: FILTER_OPS[fieldTypes[name] ?? "unknown"],
+    // Filtros solo del slot primary (o primero disponible)
+    const primaryLabel = importByLabel["primary"] ? "primary" : activeImports[0].source_label
+    const filters = allFields
+      .filter(f => f.sourceLabel === primaryLabel && FILTERABLE_FIELDS.has(f.name))
+      .map(f => ({
+        name: f.name,
+        type: f.type,
+        operators: FILTER_OPS[f.type ?? "unknown"],
       }))
 
-    return res.json({ fields, filters, importId: lastImport.id })
+    return res.json({
+      fields: allFields,
+      filters,
+      slots: activeImports.map(i => i.source_label),
+      importByLabel,
+      importId: primaryImportId,
+    })
   } catch (e: any) {
     console.error("Error getting available fields:", e)
     return res.status(500).json({
@@ -1037,78 +1022,139 @@ campaignsRouter.get("/:campaignId/dataset", async (req, res) => {
     const auth = await requireAuth(req)
     const { campaignId } = req.params
 
-    // VALIDACIÓN EXPLÍCITA: Solo admin y company
     if (auth.role !== "admin" && auth.role !== "company") {
-      return res.status(403).json({ 
-        error: "FORBIDDEN",
-        message: "No tienes permisos para acceder a este recurso"
-      })
+      return res.status(403).json({ error: "FORBIDDEN" })
     }
 
-    // 1) Buscar último import DONE
-    let lastImport
+    // Un import DONE activo por slot
+    let activeImports: Array<{ id: string; source_label: string }>
 
     if (auth.role === "company") {
-      if (!auth.companyId) {
-        return res.status(400).json({ error: "MISSING_COMPANY_ID" })
-      }
+      if (!auth.companyId) return res.status(400).json({ error: "MISSING_COMPANY_ID" })
 
-      // Company: solo imports de SU empresa
-      lastImport = await queryOne<{ id: string }>(
-        `SELECT id
+      activeImports = await query<{ id: string; source_label: string }>(
+        `SELECT DISTINCT ON (source_label) id, source_label
          FROM imports.imports
          WHERE campaign_id = $1
            AND company_id = $2
            AND import_type = 'campaigns'
            AND status = 'DONE'
-         ORDER BY created_at DESC
-         LIMIT 1`,
+         ORDER BY source_label, created_at DESC`,
         [campaignId, auth.companyId]
       )
 
-      if (!lastImport) {
-        return res.status(403).json({ 
-          error: "FORBIDDEN",
-          message: "No tienes acceso a esta campaña o no tiene datos importados"
-        })
+      if (activeImports.length === 0) {
+        return res.status(403).json({ error: "FORBIDDEN" })
       }
-    } else if (auth.role === "admin") {
-      // Admin: cualquier import
-      lastImport = await queryOne<{ id: string }>(
-        `SELECT id
+    } else {
+      activeImports = await query<{ id: string; source_label: string }>(
+        `SELECT DISTINCT ON (source_label) id, source_label
          FROM imports.imports
          WHERE campaign_id = $1
            AND import_type = 'campaigns'
            AND status = 'DONE'
-         ORDER BY created_at DESC
-         LIMIT 1`,
+         ORDER BY source_label, created_at DESC`,
         [campaignId]
       )
     }
 
-    if (!lastImport) {
-      return res.json({ rows: [] })
+    if (activeImports.length === 0) {
+      return res.json({ rows: [], dataBySlot: {} })
     }
 
-    // 2) Obtener datos desde staging
-    const rows = await query<{ data: any }>(
-      `SELECT data
-       FROM staging.staging_rows
-       WHERE import_id = $1
-         AND is_valid = true
-       ORDER BY row_number ASC
-       LIMIT 50000`,
-      [lastImport.id]
-    )
+    const dataBySlot: Record<string, any[]> = {}
 
-    console.log(`Dataset loaded: ${rows.length} rows for campaign ${campaignId} (role: ${auth.role})`)
+    for (const imp of activeImports) {
+      const rows = await query<{ data: any }>(
+        `SELECT data
+         FROM staging.staging_rows
+         WHERE import_id = $1
+           AND is_valid = true
+         ORDER BY row_number ASC
+         LIMIT 50000`,
+        [imp.id]
+      )
+      dataBySlot[imp.source_label] = rows.map(r => r.data)
+    }
 
-    return res.json({ rows: rows.map(r => r.data) })
+    const primaryRows = dataBySlot["primary"] ?? Object.values(dataBySlot)[0] ?? []
+
+    console.log(`Dataset loaded for ${campaignId}: slots=${Object.keys(dataBySlot).join(",")}, totalRows=${Object.values(dataBySlot).flat().length}`)
+
+    return res.json({ rows: primaryRows, dataBySlot })
   } catch (e: any) {
     console.error("dataset error:", e)
     return res.status(500).json({ error: e?.message ?? "error" })
   }
 })
+
+// DELETE /campaigns/:campaignId/imports/slot/:sourceLabel
+// Elimina SOLO el slot indicado (no "primary" por seguridad)
+campaignsRouter.delete("/:campaignId/imports/slot/:sourceLabel", async (req, res) => {
+  try {
+    await requireAdmin(req)
+    const { campaignId, sourceLabel } = req.params
+
+    if (!sourceLabel || sourceLabel === "primary") {
+      return res.status(400).json({
+        error: "INVALID_SLOT",
+        message: "No se puede eliminar el slot 'primary' desde este endpoint.",
+      })
+    }
+
+    const imports = await query<{ id: string; gcs_uri: string }>(
+      `SELECT id, gcs_uri
+       FROM imports.imports
+       WHERE campaign_id = $1
+         AND import_type = 'campaigns'
+         AND source_label = $2`,
+      [campaignId, sourceLabel]
+    )
+
+    if (imports.length === 0) {
+      return res.json({ ok: true, deletedImports: 0, deletedStagingRows: 0, deletedMappings: 0 })
+    }
+
+    const importIds = imports.map(i => i.id)
+
+    // GCS (best-effort)
+    await Promise.all(
+      imports.map(i => i.gcs_uri).filter(Boolean).map(async (uri) => {
+        try { await deleteGsUri(uri) } catch { /* ignore */ }
+      })
+    )
+
+    const delStaging = await query<{ count: string }>(
+      `WITH d AS (DELETE FROM staging.staging_rows WHERE import_id = ANY($1) RETURNING 1)
+       SELECT COUNT(*)::text AS count FROM d`,
+      [importIds]
+    )
+
+    const delMappings = await query<{ count: string }>(
+      `WITH d AS (DELETE FROM imports.import_mappings WHERE import_id = ANY($1) RETURNING 1)
+       SELECT COUNT(*)::text AS count FROM d`,
+      [importIds]
+    )
+
+    const delImports = await query<{ count: string }>(
+      `WITH d AS (DELETE FROM imports.imports WHERE id = ANY($1) RETURNING 1)
+       SELECT COUNT(*)::text AS count FROM d`,
+      [importIds]
+    )
+
+    return res.json({
+      ok: true,
+      sourceLabel,
+      deletedImports: Number(delImports[0]?.count ?? 0),
+      deletedStagingRows: Number(delStaging[0]?.count ?? 0),
+      deletedMappings: Number(delMappings[0]?.count ?? 0),
+    })
+  } catch (e: any) {
+    console.error("delete slot error:", e)
+    return res.status(e?.status ?? 500).json({ error: e?.message ?? "error" })
+  }
+})
+
 
 campaignsRouter.delete("/:campaignId/imports", async (req, res) => {
   try {
@@ -1371,7 +1417,7 @@ campaignsRouter.get("/:campaignId/latest-import", async (req, res) => {
     }
 
     const row = await queryOne<any>(
-      `SELECT id, original_filename, status, created_at, updated_at
+      `SELECT id, original_filename, status, source_label, created_at, updated_at
        FROM imports.imports
        WHERE campaign_id = $1
          AND import_type = 'campaigns'
@@ -1380,16 +1426,34 @@ campaignsRouter.get("/:campaignId/latest-import", async (req, res) => {
       [campaignId]
     )
 
-    if (!row) return res.json({ exists: false, latest: null })
+    const slotRows = await query<any>(
+      `SELECT DISTINCT ON (source_label)
+         id, original_filename, status, source_label, created_at, updated_at
+       FROM imports.imports
+       WHERE campaign_id = $1
+         AND import_type = 'campaigns'
+       ORDER BY source_label, created_at DESC`,
+      [campaignId]
+    )
+
+    if (!row) return res.json({ exists: false, latest: null, slots: [] })
     return res.json({
       exists: true,
       latest: {
         id: row.id,
         filename: row.original_filename,
         status: row.status,
+        sourceLabel: row.source_label ?? "primary",
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       },
+      slots: slotRows.map((r: any) => ({
+        sourceLabel: r.source_label ?? "primary",
+        id: r.id,
+        filename: r.original_filename,
+        status: r.status,
+        createdAt: r.created_at,
+      })),
     })
   } catch (e: any) {
     console.error("latest-import error:", e)
@@ -1408,19 +1472,21 @@ campaignsRouter.post("/:campaignId/imports/replace", async (req, res) => {
     const user = await requireAdmin(req)
     const { campaignId } = req.params
 
-    const body = req.body as { companyId?: string; filename: string }
+    const body = req.body as { companyId?: string; filename: string; sourceLabel?: string }
     const filename = body?.filename
+    const sourceLabel = body.sourceLabel?.trim() || "primary"
     if (!filename || !filename.toLowerCase().endsWith(".xlsx")) {
       return res.status(400).json({ error: "Only .xlsx allowed and filename is required" })
     }
 
-    // 1) agarrar imports actuales de esa campaña
+    // 1) agarrar imports del slot específico de esa campaña
     const existing = await query<{ id: string; gcs_uri: string; company_id: string }>(
       `SELECT id, gcs_uri, company_id
        FROM imports.imports
        WHERE campaign_id = $1
-         AND import_type = 'campaigns'`,
-      [campaignId]
+         AND import_type = 'campaigns'
+         AND source_label = $2`,
+      [campaignId, sourceLabel]
     )
 
     const existingIds = existing.map(x => x.id)
@@ -1468,9 +1534,9 @@ campaignsRouter.post("/:campaignId/imports/replace", async (req, res) => {
 
     await query(
       `INSERT INTO imports.imports
-        (id, company_id, campaign_id, import_type, schema_version, uploaded_by, original_filename, gcs_uri, status, created_at, updated_at)
+        (id, company_id, campaign_id, import_type, schema_version, uploaded_by, original_filename, gcs_uri, status, source_label, created_at, updated_at)
        VALUES
-        ($1, $2, $3, $4, $5, $6, $7, $8, 'UPLOADED', now(), now())`,
+        ($1, $2, $3, $4, $5, $6, $7, $8, 'UPLOADED', $9, now(), now())`,
       [
         importId,
         resolvedCompanyId,
@@ -1480,6 +1546,7 @@ campaignsRouter.post("/:campaignId/imports/replace", async (req, res) => {
         user.uid,
         safeFilename,
         gcsUri,
+        sourceLabel,
       ]
     )
 
@@ -1487,6 +1554,7 @@ campaignsRouter.post("/:campaignId/imports/replace", async (req, res) => {
       ok: true,
       importId,
       uploadUrl,
+      sourceLabel,
       deletedPreviousImports: existingIds.length,
     })
   } catch (e: any) {

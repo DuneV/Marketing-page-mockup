@@ -30,7 +30,10 @@ import {
   commitImportFromPrevious,
   getLatestCampaignImport,
   listCampaignImports,
+  deleteCampaignSlot,
 } from "@/lib/api/importApi"
+import { saveCampaignColumnMapping, mergeColumnMappings } from "@/lib/data/campaigns"
+import { getAvailableFields } from "@/lib/api/campaignApi"
 import type { Campaign } from "@/types/campaign"
 
 interface CampaignDetailModalProps {
@@ -49,6 +52,7 @@ type ImportVersion = {
   id: string
   filename?: string
   status?: string
+  sourceLabel?: string
   createdAt?: string
   updatedAt?: string
 }
@@ -86,6 +90,8 @@ function buildExportXlsxUrl(spreadsheetId: string, gid?: string) {
 
 export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetailModalProps) {
   // Hooks SIEMPRE arriba, sin returns antes.
+  const [slotToDelete, setSlotToDelete] = useState<string | null>(null)
+  const [isDeletingSlot, setIsDeletingSlot] = useState(false)
   const [file, setFile] = useState<File | null>(null)
   const [importId, setImportId] = useState<string | null>(null)
   const [preview, setPreview] = useState<any>(null)
@@ -99,6 +105,15 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
 
   // ✅ NUEVO: URL de Google Sheets (NO se guarda en campaña; solo para importar)
   const [sheetUrl, setSheetUrl] = useState<string>("")
+  const [activeSourceLabel, setActiveSourceLabel] = useState<string>("primary")
+  const [availableSlots, setAvailableSlots] = useState<string[]>(["primary"])
+
+  // Pestaña de relaciones
+  const [mappingTabSlot, setMappingTabSlot] = useState<string>("primary")
+  const [editableMapping, setEditableMapping] = useState<Record<string, string>>({})
+  const [canonicalFields, setCanonicalFields] = useState<string[]>([])
+  const [isSavingMapping, setIsSavingMapping] = useState(false)
+  const [mappingDirty, setMappingDirty] = useState(false)
 
   const campaignId = campaign?.id ?? null
   const companyId = campaign?.empresaId ?? null
@@ -140,18 +155,33 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
           setLatest(null)
         }
 
-        // 2) Versions
+         // 2) Versions
         const v = await listCampaignImports(campaignId)
         const imports: ImportVersion[] = (v?.imports ?? []).map((it: any) => ({
           id: it.id,
           filename: it.filename ?? it.originalFilename ?? it.original_filename,
           status: it.status,
+          sourceLabel: it.source_label ?? "primary",
           createdAt: it.createdAt ?? it.created_at,
           updatedAt: it.updatedAt ?? it.updated_at,
         }))
 
         setVersions(imports)
-        setSelectedVersionId(imports[0]?.id ?? null) // asumiendo orden desc
+        setSelectedVersionId(imports[0]?.id ?? null)
+
+        // Slots únicos existentes
+        const slots = Array.from(new Set(imports.map(i => (i as any).sourceLabel ?? "primary")))
+        if (!slots.includes("primary")) slots.unshift("primary")
+        setAvailableSlots(slots)
+
+        // Cargar campos canónicos para el selector de mapeo
+        try {
+          const { fields } = await getAvailableFields(campaignId)
+          const uniqueFieldNames = Array.from(new Set(fields.map(f => f.name))).sort()
+          setCanonicalFields(uniqueFieldNames)
+        } catch {
+          setCanonicalFields([])
+        }
       } catch {
         setLatest(null)
         setVersions([])
@@ -160,7 +190,13 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
     })()
   }, [isOpen, campaignId])
 
-  // Ahora sí, puedes hacer early return (después de hooks)
+  // Sincronizar editableMapping cuando cambia el slot seleccionado
+  useEffect(() => {
+    const saved = campaign?.columnMapping?.[mappingTabSlot] ?? {}
+    setEditableMapping({ ...saved })
+    setMappingDirty(false)
+  }, [mappingTabSlot, campaign?.columnMapping])
+
   if (!campaign) return null
 
   // ============================
@@ -284,6 +320,7 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
         importType: "campaigns",
         filename: file.name,
         campaignId,
+        sourceLabel: activeSourceLabel,
       })
 
       setImportId(newImportId)
@@ -305,10 +342,24 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
       appendLog("3) Analizando datos...")
       const analyzed = await analyzeImport(newImportId)
       setPreview(analyzed)
-      setMapping(analyzed.suggestions ?? {})
-      appendLog("✓ Análisis completado")
 
-      toast.success("Archivo analizado", { description: "Revisa el mapeo de columnas y confirma" })
+      const { mapping: mergedMapping, restoredCount, newCount } = mergeColumnMappings(
+        campaign.columnMapping,
+        activeSourceLabel,
+        analyzed.headers ?? [],
+        analyzed.suggestions ?? {}
+      )
+      setMapping(mergedMapping)
+
+      appendLog("✓ Análisis completado")
+      if (restoredCount > 0) appendLog(`✓ ${restoredCount} columna(s) restauradas del mapeo anterior`)
+      if (newCount > 0) appendLog(`⚠ ${newCount} columna(s) nuevas — revisa el mapeo`)
+
+      toast.success("Archivo analizado", {
+        description: restoredCount > 0
+          ? `${restoredCount} columnas pre-mapeadas, revisa las ${newCount} nuevas`
+          : "Revisa el mapeo de columnas y confirma",
+      })
     } catch (e: any) {
       toast.error(e?.message ?? "Error al procesar archivo")
       appendLog(`ERROR: ${e?.message ?? e}`)
@@ -329,6 +380,15 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
 
       appendLog("✓ Importación confirmada")
       appendLog("Los datos se procesarán en segundo plano")
+
+      if (campaignId && Object.keys(mapping).length > 0) {
+        try {
+          await saveCampaignColumnMapping(campaignId, activeSourceLabel, mapping)
+          appendLog("✓ Mapeo de columnas guardado para futuros uploads")
+        } catch (mappingErr) {
+          console.warn("No se pudo guardar el mapping:", mappingErr)
+        }
+      }
 
       toast.success("Importación iniciada", { description: "Los datos se están procesando" })
 
@@ -390,6 +450,7 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
         campaignId,
         companyId,
         filename: file.name,
+        sourceLabel: activeSourceLabel,
       })
 
       setImportId(created.importId)
@@ -471,6 +532,58 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
 
   const schemaFields = Object.keys(preview?.schema?.canonicalFields ?? {})
 
+  const handleSaveEditableMapping = async () => {
+    if (!campaignId) return
+    setIsSavingMapping(true)
+    try {
+      await saveCampaignColumnMapping(campaignId, mappingTabSlot, editableMapping)
+      setMappingDirty(false)
+      toast.success("Mapeo guardado", {
+        description: `Slot "${mappingTabSlot}" actualizado correctamente`,
+      })
+    } catch (e: any) {
+      toast.error(e?.message ?? "Error al guardar mapeo")
+    } finally {
+      setIsSavingMapping(false)
+    }
+  }
+  const handleDeleteSlot = async (sourceLabel: string) => {
+  if (!campaignId) return
+  setIsDeletingSlot(true)
+  try {
+    await deleteCampaignSlot(campaignId, sourceLabel)
+    setSlotToDelete(null)
+
+    // Refrescar versiones y slots
+    const v = await listCampaignImports(campaignId)
+    const imports: ImportVersion[] = (v?.imports ?? []).map((it: any) => ({
+      id: it.id,
+      filename: it.filename ?? it.originalFilename ?? it.original_filename,
+      status: it.status,
+      sourceLabel: it.source_label ?? "primary",
+      createdAt: it.createdAt ?? it.created_at,
+      updatedAt: it.updatedAt ?? it.updated_at,
+    }))
+    setVersions(imports)
+    setSelectedVersionId(imports[0]?.id ?? null)
+
+    const slots = Array.from(new Set(imports.map(i => (i as any).sourceLabel ?? "primary")))
+    if (!slots.includes("primary")) slots.unshift("primary")
+    setAvailableSlots(slots)
+
+    // Si el slot activo era el que se borró, volver a primary
+    if (activeSourceLabel === sourceLabel) setActiveSourceLabel("primary")
+    if (mappingTabSlot === sourceLabel) setMappingTabSlot("primary")
+
+    toast.success(`Slot "${sourceLabel}" eliminado`, {
+      description: "Los imports, staging rows y mappings fueron borrados.",
+    })
+    } catch (e: any) {
+      toast.error(e?.message ?? "Error al eliminar slot")
+    } finally {
+      setIsDeletingSlot(false)
+    }
+  }
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-y-auto">
@@ -484,13 +597,14 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
         </DialogHeader>
 
         <Tabs defaultValue="detalles" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="detalles">Detalles</TabsTrigger>
-            <TabsTrigger value="info">Información Adicional</TabsTrigger>
+            <TabsTrigger value="info">Info</TabsTrigger>
             <TabsTrigger value="excel">
               <FileText className="h-4 w-4 mr-2" />
-              Datos Excel
+              Excel
             </TabsTrigger>
+            <TabsTrigger value="mapeo">Mapeo</TabsTrigger>
           </TabsList>
 
           {/* TAB: Detalles */}
@@ -657,15 +771,93 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
 
                         <div className="flex items-center justify-between gap-3 mt-1">
                           <div className="truncate">{v.filename ?? "(sin filename)"}</div>
-                          <div className="text-xs">{v.status ?? ""}</div>
+                          <div className="flex items-center gap-2">
+                            {v.sourceLabel && v.sourceLabel !== "primary" && (
+                              <span className="text-xs bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full">
+                                {v.sourceLabel}
+                              </span>
+                            )}
+                            <span className="text-xs">{v.status ?? ""}</span>
+                          </div>
                         </div>
+
                       </button>
                     ))}
                   </div>
                 )}
               </CardContent>
             </Card>
+            {/* ── Fuentes de datos activas ── */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Fuentes de datos activas</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {availableSlots.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No hay slots registrados.</p>
+                ) : (
+                  availableSlots.map((slot) => {
+                    const isPrimary = slot === "primary"
+                    const isConfirming = slotToDelete === slot
 
+                    return (
+                      <div
+                        key={slot}
+                        className="flex items-center justify-between border rounded-lg px-3 py-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium font-mono">{slot}</span>
+                          {isPrimary && (
+                            <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded">
+                              principal
+                            </span>
+                          )}
+                        </div>
+
+                        {!isPrimary && (
+                          <div className="flex items-center gap-2">
+                            {isConfirming ? (
+                              <>
+                                <span className="text-xs text-red-600 dark:text-red-400">
+                                  ¿Eliminar todos los datos de este slot?
+                                </span>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  className="h-7 text-xs"
+                                  disabled={isDeletingSlot}
+                                  onClick={() => handleDeleteSlot(slot)}
+                                >
+                                  {isDeletingSlot ? "Eliminando..." : "Confirmar"}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-xs"
+                                  disabled={isDeletingSlot}
+                                  onClick={() => setSlotToDelete(null)}
+                                >
+                                  Cancelar
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
+                                onClick={() => setSlotToDelete(slot)}
+                              >
+                                Eliminar slot
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })
+                )}
+              </CardContent>
+            </Card>
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">Plantilla de Datos</CardTitle>
@@ -699,6 +891,48 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                 </div>
 
                 {/* ✅ NUEVO: Google Sheets URL (igual Create) */}
+                {/* Selector de fuente/slot */}
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Fuente de datos (slot)</p>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {availableSlots.map(slot => (
+                      <button
+                        key={slot}
+                        type="button"
+                        onClick={() => setActiveSourceLabel(slot)}
+                        className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                          activeSourceLabel === slot
+                            ? "bg-amber-600 text-white border-amber-600"
+                            : "border-slate-300 hover:border-amber-400 text-slate-600 dark:text-slate-300"
+                        }`}
+                      >
+                        {slot}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className="px-3 py-1 rounded-full text-xs border border-dashed border-slate-300 hover:border-amber-400 text-slate-500 transition-colors"
+                      onClick={() => {
+                        const name = window.prompt("Nombre del nuevo slot (ej: ventas, inventario):")
+                        if (!name?.trim()) return
+                        const clean = name.trim().toLowerCase().replace(/\s+/g, "_")
+                        if (!availableSlots.includes(clean)) {
+                          setAvailableSlots(prev => [...prev, clean])
+                        }
+                        setActiveSourceLabel(clean)
+                      }}
+                    >
+                      + Nueva fuente
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Slot activo: <strong>{activeSourceLabel}</strong> — los KPIs agregan sobre todos los slots; los gráficos usan el slot que declares en cada uno.
+                  </p>
+                </div>
+
+                <div className="border-t pt-4" />
+
+                {/* ✅ Google Sheets URL */}
                 <div className="space-y-2">
                   <p className="text-sm font-medium">Importar desde Google Sheets (URL)</p>
                   <div className="flex gap-2">
@@ -799,29 +1033,36 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                     </div>
                   </CardContent>
                 </Card>
-
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-lg">Mapeo de Columnas</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2 max-h-[300px] overflow-y-auto">
-                    {(preview.headers ?? []).map((header: string) => (
-                      <div key={header} className="flex items-center gap-2">
-                        <span className="w-1/3 text-sm font-medium truncate">{header}</span>
-                        <select
-                          className="flex-1 border rounded px-2 py-1 text-sm bg-background"
-                          value={mapping[header] ?? ""}
-                          onChange={(e) => setMapping((m) => ({ ...m, [header]: e.target.value }))}
-                        >
-                          <option value="">(ignorar)</option>
-                          {schemaFields.map((field: string) => (
-                            <option key={field} value={field}>
-                              {field}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    ))}
+                    {(preview.headers ?? []).map((header: string) => {
+                      const isRestored = !!(campaign.columnMapping?.[activeSourceLabel]?.[header])
+                      return (
+                        <div key={header} className="flex items-center gap-2">
+                          <span className={`w-1/3 text-sm font-medium truncate flex items-center gap-1 ${isRestored ? "text-green-600 dark:text-green-400" : ""}`}>
+                            {header}
+                            {isRestored && (
+                              <span className="text-[10px] font-normal opacity-70 shrink-0">(guardado)</span>
+                            )}
+                          </span>
+                          <select
+                            className={`flex-1 border rounded px-2 py-1 text-sm bg-background ${isRestored ? "border-green-400 dark:border-green-700" : ""}`}
+                            value={mapping[header] ?? ""}
+                            onChange={(e) => setMapping((m) => ({ ...m, [header]: e.target.value }))}
+                          >
+                            <option value="">(ignorar)</option>
+                            {schemaFields.map((field: string) => (
+                              <option key={field} value={field}>
+                                {field}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )
+                    })}
 
                     {preview.missingRequired?.length > 0 && (
                       <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded">
@@ -847,8 +1088,130 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
               </CardContent>
             </Card>
           </TabsContent>
-        </Tabs>
-      </DialogContent>
+
+        {/* TAB: Mapeo de Columnas */}
+        <TabsContent value="mapeo" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Relaciones de Columnas por Slot</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Aquí puedes ver y editar el mapeo guardado entre columnas del Excel y campos canónicos, por slot. Si subes el mismo archivo, estas relaciones se restauran automáticamente.
+              </p>
+
+              {/* Selector de slot */}
+              <div className="flex flex-wrap gap-2 items-center">
+                {availableSlots.map(slot => (
+                  <button
+                    key={slot}
+                    type="button"
+                    onClick={() => setMappingTabSlot(slot)}
+                    className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                      mappingTabSlot === slot
+                        ? "bg-amber-600 text-white border-amber-600"
+                        : "border-slate-300 hover:border-amber-400 text-slate-600 dark:text-slate-300"
+                    }`}
+                  >
+                    {slot}
+                  </button>
+                ))}
+              </div>
+
+              {/* Tabla de mapeo */}
+              {Object.keys(editableMapping).length === 0 ? (
+                <div className="text-center py-8 text-sm text-muted-foreground border rounded-lg">
+                  No hay mapeo guardado para el slot <strong>{mappingTabSlot}</strong>.
+                  <br />
+                  Sube un Excel y confirma la importación para guardar las relaciones.
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                  <div className="grid grid-cols-12 gap-2 px-2 py-1 text-xs font-medium text-muted-foreground border-b">
+                    <div className="col-span-5">Columna del Excel</div>
+                    <div className="col-span-1 text-center">→</div>
+                    <div className="col-span-6">Campo canónico</div>
+                  </div>
+                  {Object.entries(editableMapping).map(([sourceCol, canonicalField]) => (
+                    <div key={sourceCol} className="grid grid-cols-12 gap-2 items-center px-2">
+                      <div className="col-span-5 text-sm font-mono truncate" title={sourceCol}>
+                        {sourceCol}
+                      </div>
+                      <div className="col-span-1 text-center text-muted-foreground text-xs">→</div>
+                      <div className="col-span-6">
+                        <select
+                          className="w-full border rounded px-2 py-1 text-sm bg-background"
+                          value={canonicalField}
+                          onChange={(e) => {
+                            setEditableMapping(prev => ({ ...prev, [sourceCol]: e.target.value }))
+                            setMappingDirty(true)
+                          }}
+                        >
+                          <option value="">(ignorar)</option>
+                          {canonicalFields.map(f => (
+                            <option key={f} value={f}>{f}</option>
+                          ))}
+                          {/* Si el campo actual no está en canonicalFields, mostrarlo igual */}
+                          {canonicalField && !canonicalFields.includes(canonicalField) && (
+                            <option value={canonicalField}>{canonicalField}</option>
+                          )}
+                        </select>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Estadísticas del mapeo */}
+              {Object.keys(editableMapping).length > 0 && (
+                <div className="flex gap-4 text-xs text-muted-foreground border-t pt-3">
+                  <span>
+                    <strong className="text-foreground">
+                      {Object.values(editableMapping).filter(Boolean).length}
+                    </strong> mapeadas
+                  </span>
+                  <span>
+                    <strong className="text-foreground">
+                      {Object.values(editableMapping).filter(v => !v).length}
+                    </strong> ignoradas
+                  </span>
+                  <span>
+                    <strong className="text-foreground">
+                      {Object.keys(editableMapping).length}
+                    </strong> columnas totales
+                  </span>
+                </div>
+              )}
+
+              {/* Botones */}
+              <div className="flex gap-2 pt-2">
+                <Button
+                  onClick={handleSaveEditableMapping}
+                  disabled={isSavingMapping || !mappingDirty}
+                  className="bg-amber-600 hover:bg-amber-700"
+                  size="sm"
+                >
+                  {isSavingMapping ? "Guardando..." : "Guardar cambios"}
+                </Button>
+                {mappingDirty && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const saved = campaign?.columnMapping?.[mappingTabSlot] ?? {}
+                      setEditableMapping({ ...saved })
+                      setMappingDirty(false)
+                    }}
+                  >
+                    Descartar
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </DialogContent>
     </Dialog>
   )
 }

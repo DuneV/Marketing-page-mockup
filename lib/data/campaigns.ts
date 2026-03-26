@@ -340,3 +340,53 @@ export async function deleteAllCampaignComments(campaignId: string): Promise<voi
 
   await batch.commit()
 }
+
+/**
+ * Guardar el mapping de columnas para un slot específico.
+ * Usa dot notation de Firestore para no sobreescribir otros slots.
+ */
+export async function saveCampaignColumnMapping(
+  campaignId: string,
+  sourceLabel: string,
+  mapping: Record<string, string>
+): Promise<void> {
+  const clean = Object.fromEntries(
+    Object.entries(mapping).filter(([, v]) => v && v.trim() !== "")
+  )
+  await updateDoc(doc(db, "campaigns", campaignId), {
+    [`columnMapping.${sourceLabel}`]: clean,
+    updatedAt: serverTimestamp(),
+  })
+}
+
+/**
+ * Merge del mapping guardado (para un slot) con los headers de un nuevo archivo.
+ * - Header ya conocido en este slot → usa el valor guardado
+ * - Header nuevo                   → usa la sugerencia del análisis, o vacío
+ */
+export function mergeColumnMappings(
+  saved: Record<string, Record<string, string>> | undefined,
+  sourceLabel: string,
+  newHeaders: string[],
+  suggestions: Record<string, string>
+): { mapping: Record<string, string>; restoredCount: number; newCount: number } {
+  const savedForSlot = saved?.[sourceLabel]
+  const mapping: Record<string, string> = {}
+  let restoredCount = 0
+  let newCount = 0
+
+  for (const header of newHeaders) {
+    if (savedForSlot?.[header]) {
+      mapping[header] = savedForSlot[header]
+      restoredCount++
+    } else if (suggestions?.[header]) {
+      mapping[header] = suggestions[header]
+      newCount++
+    } else {
+      mapping[header] = ""
+      newCount++
+    }
+  }
+
+  return { mapping, restoredCount, newCount }
+}

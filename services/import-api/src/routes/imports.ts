@@ -13,12 +13,14 @@ importsRouter.post("/", async (req, res) => {
   try {
     const user = await requireAdmin(req)
 
-    const { companyId, importType, filename, campaignId } = req.body as {
+    const { companyId, importType, filename, campaignId, sourceLabel } = req.body as {
       companyId: string
       importType: string
       filename: string
       campaignId?: string
+      sourceLabel?: string
     }
+    const resolvedSourceLabel = sourceLabel?.trim() || "primary"
 
     if (!companyId || !importType || !filename) {
       return res.status(400).json({
@@ -51,10 +53,10 @@ importsRouter.post("/", async (req, res) => {
 
     await query(
       `INSERT INTO imports.imports
-        (id, company_id, campaign_id, import_type, schema_version, uploaded_by, original_filename, gcs_uri, status, created_at, updated_at)
+        (id, company_id, campaign_id, import_type, schema_version, uploaded_by, original_filename, gcs_uri, status, source_label, created_at, updated_at)
       VALUES
-        ($1, $2, $3, $4, $5, $6, $7, $8, 'UPLOADED', now(), now())`,
-      [importId, companyId, campaignId ?? null, importType, schema.version, user.uid, safeFilename, gcsUri]
+        ($1, $2, $3, $4, $5, $6, $7, $8, 'UPLOADED', $9, now(), now())`,
+      [importId, companyId, campaignId ?? null, importType, schema.version, user.uid, safeFilename, gcsUri, resolvedSourceLabel]
     )
 
     return res.json({ importId, uploadUrl })
@@ -136,7 +138,7 @@ importsRouter.post("/:id/commit-from-previous", async (req, res) => {
     const importId = req.params.id
 
     const current = await queryOne<any>(
-      `SELECT id, campaign_id, import_type
+      `SELECT id, campaign_id, import_type, source_label
        FROM imports.imports
        WHERE id = $1`,
       [importId]
@@ -149,10 +151,11 @@ importsRouter.post("/:id/commit-from-previous", async (req, res) => {
        FROM imports.imports
        WHERE campaign_id = $1
          AND import_type = $2
-         AND id <> $3
+         AND source_label = $3
+         AND id <> $4
        ORDER BY created_at DESC
        LIMIT 1`,
-      [current.campaign_id, current.import_type, importId]
+      [current.campaign_id, current.import_type, current.source_label ?? "primary", importId]
     )
 
     if (!prev) {
@@ -225,6 +228,7 @@ importsRouter.get("/campaigns/:campaignId", async (req, res) => {
         original_filename,
         gcs_uri,
         status,
+        source_label,
         created_at,
         updated_at,
         summary

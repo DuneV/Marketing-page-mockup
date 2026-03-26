@@ -21,6 +21,8 @@ export interface Campaign {
   // Computed fields
   imageCount?: number
   commentCount?: number
+  // Mapping guardado por slot: { "primary": { "col": "field" }, "ventas": {...} }
+  columnMapping?: Record<string, Record<string, string>>
 }
 
 export interface CampaignFormData {
