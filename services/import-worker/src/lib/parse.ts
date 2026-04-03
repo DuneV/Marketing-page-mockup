@@ -36,24 +36,28 @@ function rowScore(row: ExcelJS.Row) {
     else stringLike++
   })
 
-  // headers suelen ser más texto que números
   const score = stringLike * 2 + nonEmpty - numberLike
   return { score, nonEmpty }
 }
 
 function findHeaderRowNumber(ws: ExcelJS.Worksheet, maxScan = 20) {
-  const scanLimit = Math.min(ws.rowCount || 0, maxScan)
+  // Recolectar primeras filas con eachRow para evitar depender de ws.rowCount
+  const scannedRows: Array<{ rowNumber: number; row: ExcelJS.Row }> = []
+  ws.eachRow((row, rowNumber) => {
+    if (rowNumber <= maxScan) {
+      scannedRows.push({ rowNumber, row })
+    }
+  })
+
   let bestRow = 1
   let bestScore = -Infinity
 
-  for (let r = 1; r <= Math.max(scanLimit, 1); r++) {
-    const row = ws.getRow(r)
+  for (const { rowNumber, row } of scannedRows) {
     const { score, nonEmpty } = rowScore(row)
     if (nonEmpty === 0) continue
-
     if (score > bestScore) {
       bestScore = score
-      bestRow = r
+      bestRow = rowNumber
     }
   }
   return bestRow
@@ -89,7 +93,8 @@ function buildColumns(ws: ExcelJS.Worksheet, headerRowNumber: number): ColDef[] 
   )
 
   const cols: ColDef[] = []
-  const lookAheadEnd = Math.min(ws.rowCount, headerRowNumber + 5)
+  // lookAheadEnd: usamos headerRowNumber + 5 directamente, sin depender de ws.rowCount
+  const lookAheadEnd = headerRowNumber + 5
 
   for (let c = 1; c <= Math.max(maxCol, 1); c++) {
     const rawHeader = cellToString(headerRow.getCell(c).value).trim()
@@ -99,7 +104,6 @@ function buildColumns(ws: ExcelJS.Worksheet, headerRowNumber: number): ColDef[] 
       continue
     }
 
-    // Si no hay header pero sí hay datos debajo, inclúyelo con placeholder
     if (columnHasData(ws, c, headerRowNumber + 1, lookAheadEnd)) {
       cols.push({ col: c, header: `Unnamed column ${c}` })
     }
@@ -128,27 +132,38 @@ export async function processImport(importId: string) {
   const wb = new ExcelJS.Workbook()
   await wb.xlsx.load(bytes as any)
 
-  // Usa activeTab si existe (mismo patrón que en analyze)
+  // Usa activeTab si existe
   const activeTab = (wb.views?.[0] as any)?.activeTab ?? 0
   const ws = wb.worksheets[activeTab] ?? wb.worksheets[0]
   if (!ws) throw new Error("No worksheet")
 
-  // Detectar fila de headers y construir columnas preservando índice
   const headerRowNumber = findHeaderRowNumber(ws, 20)
   const columns = buildColumns(ws, headerRowNumber)
 
   if (columns.length === 0) throw new Error("No headers detected")
 
-  // Limpia staging previo si re-procesas
   await query(`delete from staging.staging_rows where import_id=$1`, [importId])
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // FIX: Usar ws.eachRow() en lugar de un for-loop con ws.rowCount.
+  //
+  // Los archivos exportados por Google Sheets/Forms NO incluyen el elemento
+  // <dimension> en el XML de la hoja. Sin ese elemento, ExcelJS calcula
+  // ws.rowCount de forma incorrecta y trunca la iteración (ej: reporta 288
+  // filas cuando hay 336). ws.eachRow() itera sobre los objetos de fila ya
+  // cargados en memoria, por lo que siempre cubre todas las filas reales.
+  // ─────────────────────────────────────────────────────────────────────────
+  const dataRows: Array<{ row: ExcelJS.Row; num: number }> = []
+  ws.eachRow((row, rowNumber) => {
+    if (rowNumber > headerRowNumber) {
+      dataRows.push({ row, num: rowNumber })
+    }
+  })
 
   let inserted = 0
   let emptyStreak = 0
 
-  for (let r = headerRowNumber + 1; r <= ws.rowCount; r++) {
-    const row = ws.getRow(r)
-    if (!row) continue
-
+  for (const { row, num: r } of dataRows) {
     const raw: Record<string, any> = {}
     for (const c of columns) {
       raw[c.header] = row.getCell(c.col).value ?? null
@@ -157,12 +172,12 @@ export async function processImport(importId: string) {
     const allEmpty = Object.values(raw).every((x) => isEmptyValue(x))
     if (allEmpty) {
       emptyStreak++
-      if (emptyStreak >= 5) break
+      // 50 filas vacías consecutivas = fin real del dataset
+      if (emptyStreak >= 50) break
       continue
     }
     emptyStreak = 0
 
-    // aplica mapping -> canonical (source_column debe matchear EXACTO el header que generamos aquí)
     const canonical: Record<string, any> = {}
     for (const [sourceHeader, value] of Object.entries(raw)) {
       const target = mapSourceToCanonical[sourceHeader]

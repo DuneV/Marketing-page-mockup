@@ -881,11 +881,17 @@ function FilterCombobox({
   value,
   onChange,
   disabled,
+  cardBackground,
+  textColor,
+  cardBorderRadius,
 }: {
   options: string[]
   value: string
   onChange: (v: string) => void
   disabled?: boolean
+  cardBackground?: string
+  textColor?: string
+  cardBorderRadius?: number
 }) {
   const [query, setQuery] = useState("")
   const [open, setOpen] = useState(false)
@@ -905,13 +911,19 @@ function FilterCombobox({
   return (
     <div className="relative">
       <div
-        className="flex items-center border rounded px-2 gap-1 bg-background cursor-text"
+        className="flex items-center border rounded px-2 gap-1 cursor-text"
+        style={{
+          backgroundColor: cardBackground || "var(--background)",
+          color: textColor || "inherit",
+          borderRadius: `${cardBorderRadius ?? 6}px`,
+          borderColor: textColor ? `${textColor}40` : undefined,
+        }}
         onClick={() => { if (!disabled) setOpen(true) }}
       >
         <input
-          className="flex-1 py-1.5 text-sm bg-transparent outline-none placeholder:text-muted-foreground"
+          className="flex-1 py-1.5 text-sm bg-transparent outline-none"
+          style={{ color: textColor || "inherit" }}
           placeholder={value || "Buscar…"}
-          value={open ? query : value}
           disabled={disabled}
           onChange={(e) => {
             setQuery(e.target.value)
@@ -932,9 +944,17 @@ function FilterCombobox({
       </div>
 
       {open && filtered.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto border rounded bg-popover shadow-md text-sm">
+        <div
+          className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto border shadow-md text-sm"
+          style={{
+            backgroundColor: cardBackground || "var(--popover)",
+            color: textColor || "inherit",
+            borderRadius: `${cardBorderRadius ?? 6}px`,
+          }}
+        >
           <div
-            className="px-3 py-1.5 cursor-pointer hover:bg-muted text-muted-foreground"
+            className="px-3 py-1.5 cursor-pointer hover:opacity-80"
+            style={{ opacity: 0.6 }}
             onMouseDown={() => { onChange(""); setQuery(""); setOpen(false) }}
           >
             Todos
@@ -983,7 +1003,14 @@ function FilterPanel({
   const [tempFilters, setTempFilters] = useState<ReportFilters>(filters)
   const [filterOptions, setFilterOptions] = useState<Record<string, any[]>>({})
   const [loadingOptions, setLoadingOptions] = useState<Record<string, boolean>>({})
-
+  useEffect(() => {
+    for (const condition of tempFilters.condiciones ?? []) {
+      if (condition.campo) {
+        loadFieldOptions(condition.campo)
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaignId])
   const loadFieldOptions = async (fieldName: string) => {
     if (!campaignId || filterOptions[fieldName] || loadingOptions[fieldName]) return
     
@@ -1231,7 +1258,7 @@ function FilterPanel({
                 </Select>
 
                 {condition.campo && fieldOptions.length > 0 ? (
-                  fieldOptions.length > 10 ? (
+                  fieldOptions.length > 7 ? (
                     <FilterCombobox
                       options={fieldOptions.map(String)}
                       value={condition.valor || ""}

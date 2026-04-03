@@ -55,6 +55,7 @@ type ImportVersion = {
   sourceLabel?: string
   createdAt?: string
   updatedAt?: string
+  summary?: { insertedToStaging?: number; [key: string]: any }
 }
 
 const statusColors: Record<string, string> = {
@@ -161,9 +162,10 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
           id: it.id,
           filename: it.filename ?? it.originalFilename ?? it.original_filename,
           status: it.status,
-          sourceLabel: it.source_label ?? "primary",
+          sourceLabel: it.source_label ?? it.sourceLabel ?? "primary",
           createdAt: it.createdAt ?? it.created_at,
           updatedAt: it.updatedAt ?? it.updated_at,
+          summary: it.summary ?? null,
         }))
 
         setVersions(imports)
@@ -408,11 +410,16 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
             id: it.id,
             filename: it.filename ?? it.originalFilename ?? it.original_filename,
             status: it.status,
+            sourceLabel: it.source_label ?? it.sourceLabel ?? "primary",
             createdAt: it.createdAt ?? it.created_at,
             updatedAt: it.updatedAt ?? it.updated_at,
+            summary: it.summary ?? null,
           }))
           setVersions(imports)
           setSelectedVersionId(imports[0]?.id ?? null)
+          const slots = Array.from(new Set(imports.map(i => i.sourceLabel ?? "primary")))
+          if (!slots.includes("primary")) slots.unshift("primary")
+          setAvailableSlots(slots)
         }
       } catch {}
 
@@ -485,11 +492,16 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
           id: it.id,
           filename: it.filename ?? it.originalFilename ?? it.original_filename,
           status: it.status,
+          sourceLabel: it.source_label ?? it.sourceLabel ?? "primary",
           createdAt: it.createdAt ?? it.created_at,
           updatedAt: it.updatedAt ?? it.updated_at,
+          summary: it.summary ?? null,
         }))
         setVersions(imports)
         setSelectedVersionId(imports[0]?.id ?? null)
+        const slots = Array.from(new Set(imports.map(i => i.sourceLabel ?? "primary")))
+        if (!slots.includes("primary")) slots.unshift("primary")
+        setAvailableSlots(slots)
       } catch {}
 
       try {
@@ -560,9 +572,10 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
       id: it.id,
       filename: it.filename ?? it.originalFilename ?? it.original_filename,
       status: it.status,
-      sourceLabel: it.source_label ?? "primary",
+      sourceLabel: it.source_label ?? it.sourceLabel ?? "primary",
       createdAt: it.createdAt ?? it.created_at,
       updatedAt: it.updatedAt ?? it.updated_at,
+      summary: it.summary ?? null,
     }))
     setVersions(imports)
     setSelectedVersionId(imports[0]?.id ?? null)
@@ -742,51 +755,193 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
 
           {/* TAB: Datos Excel */}
           <TabsContent value="excel" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Versiones</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {versions.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Aún no hay imports para esta campaña.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {versions.map((v) => (
-                      <button
-                        key={v.id}
-                        type="button"
-                        onClick={() => setSelectedVersionId(v.id)}
-                        className={`w-full text-left border rounded p-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-900 ${
-                          selectedVersionId === v.id
-                            ? "border-amber-600"
-                            : "border-slate-200 dark:border-slate-800"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="font-mono truncate">{v.id}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {v.createdAt ? new Date(v.createdAt).toLocaleString("es-ES") : ""}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between gap-3 mt-1">
-                          <div className="truncate">{v.filename ?? "(sin filename)"}</div>
-                          <div className="flex items-center gap-2">
-                            {v.sourceLabel && v.sourceLabel !== "primary" && (
-                              <span className="text-xs bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full">
-                                {v.sourceLabel}
-                              </span>
-                            )}
-                            <span className="text-xs">{v.status ?? ""}</span>
-                          </div>
-                        </div>
-
-                      </button>
-                    ))}
+            {(() => {
+  // Agrupar versiones por slot
+  const bySlot = new Map<string, ImportVersion[]>()
+  for (const imp of versions) {
+    const label = imp.sourceLabel ?? "primary"
+    const arr = bySlot.get(label) ?? []
+    arr.push(imp)
+    bySlot.set(label, arr)
+  }
+ 
+  // Ordenar: primary primero, resto alfabético
+  const slotEntries = Array.from(bySlot.entries()).sort(([a], [b]) => {
+    if (a === "primary") return -1
+    if (b === "primary") return 1
+    return a.localeCompare(b)
+  })
+ 
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg">Versiones por fuente</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {slotEntries.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Aún no hay imports para esta campaña.
+          </p>
+        ) : (
+          slotEntries.map(([slotLabel, slotImports]) => {
+            // Última versión del slot (más reciente por updatedAt/createdAt)
+            const sorted = [...slotImports].sort(
+              (a, b) =>
+                new Date(b.updatedAt ?? b.createdAt ?? 0).getTime() -
+                new Date(a.updatedAt ?? a.createdAt ?? 0).getTime()
+            )
+            const latest = sorted[0]
+            const rows = latest.summary?.insertedToStaging ?? 0
+            const versionCount = slotImports.length
+ 
+            const relTime = (() => {
+              const d = latest.updatedAt ?? latest.createdAt
+              if (!d) return null
+              try {
+                const diff = Date.now() - new Date(d).getTime()
+                const mins = Math.floor(diff / 60000)
+                if (mins < 1) return "hace un momento"
+                if (mins < 60) return `hace ${mins} min`
+                const hrs = Math.floor(mins / 60)
+                if (hrs < 24) return `hace ${hrs} h`
+                const days = Math.floor(hrs / 24)
+                return `hace ${days} día${days !== 1 ? "s" : ""}`
+              } catch {
+                return null
+              }
+            })()
+ 
+            const statusColor =
+              latest.status?.toUpperCase() === "DONE"
+                ? "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300"
+                : latest.status?.toUpperCase() === "PROCESSING"
+                ? "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
+                : latest.status?.toUpperCase() === "FAILED" ||
+                  latest.status?.toUpperCase() === "ERROR"
+                ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
+                : "bg-slate-100 text-slate-600"
+ 
+            return (
+              <details key={slotLabel} className="border rounded-lg overflow-hidden group">
+                {/* Summary = header siempre visible */}
+                <summary className="flex items-center gap-3 px-4 py-3 bg-muted/30 hover:bg-muted/50 cursor-pointer list-none transition-colors">
+                  {/* Icono expand */}
+                  <svg
+                    className="h-4 w-4 text-muted-foreground shrink-0 transition-transform group-open:rotate-90"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+ 
+                  {/* Nombre del slot */}
+                  <span className="font-medium text-sm font-mono flex-1 truncate">
+                    {slotLabel}
+                  </span>
+ 
+                  {/* Badges */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-xs border rounded-full px-2 py-0.5 text-muted-foreground">
+                      {versionCount} {versionCount === 1 ? "versión" : "versiones"}
+                    </span>
+ 
+                    {rows > 0 && (
+                      <span className="text-xs border rounded-full px-2 py-0.5 text-muted-foreground">
+                        {rows.toLocaleString("es-CO")} filas
+                      </span>
+                    )}
+ 
+                    <span className={`text-xs rounded-full px-2 py-0.5 ${statusColor}`}>
+                      {latest.status ?? "—"}
+                    </span>
                   </div>
-                )}
-              </CardContent>
-            </Card>
+                </summary>
+ 
+                {/* Detalle expandible */}
+                <div className="px-4 py-3 border-t space-y-3 bg-background">
+                  {/* Última versión */}
+                  <div>
+                    <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+                      Última versión
+                    </p>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 text-sm">
+                      <span className="font-mono text-xs truncate text-foreground">
+                        {latest.filename ?? "(sin nombre)"}
+                      </span>
+                      {relTime && (
+                        <span className="text-xs text-muted-foreground shrink-0">{relTime}</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground font-mono mt-0.5">
+                      {latest.id}
+                    </p>
+                  </div>
+ 
+                  {/* Resumen numérico */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="bg-muted/40 rounded-lg px-3 py-2 text-center">
+                      <p className="text-base font-bold">
+                        {rows > 0 ? rows.toLocaleString("es-CO") : "—"}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">Filas importadas</p>
+                    </div>
+                    <div className="bg-muted/40 rounded-lg px-3 py-2 text-center">
+                      <p className="text-base font-bold">{versionCount}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {versionCount === 1 ? "Versión" : "Versiones"}
+                      </p>
+                    </div>
+                    <div className="bg-muted/40 rounded-lg px-3 py-2 text-center">
+                      <p className="text-base font-bold">
+                        {latest.status?.toUpperCase() === "DONE" ? "✓" : "…"}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">Estado</p>
+                    </div>
+                  </div>
+ 
+                  {/* Historial de versiones del slot */}
+                  {versionCount > 1 && (
+                    <div>
+                      <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+                        Historial
+                      </p>
+                      <div className="space-y-1 max-h-36 overflow-y-auto">
+                        {sorted.map((v, idx) => (
+                          <div
+                            key={v.id}
+                            className="flex items-center gap-2 text-xs text-muted-foreground py-0.5"
+                          >
+                            <span className="shrink-0 w-4 text-center font-mono">
+                              {idx === 0 ? "●" : "○"}
+                            </span>
+                            <span className="truncate font-mono flex-1">
+                              {v.filename ?? v.id}
+                            </span>
+                            <span className="shrink-0">
+                              {v.createdAt
+                                ? new Date(v.createdAt).toLocaleDateString("es-ES", {
+                                    day: "2-digit",
+                                    month: "short",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })
+                                : ""}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </details>
+            )
+          })
+        )}
+      </CardContent>
+    </Card>
+  )
+})()}
             {/* ── Fuentes de datos activas ── */}
             <Card>
               <CardHeader>
