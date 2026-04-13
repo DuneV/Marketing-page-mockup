@@ -1,5 +1,3 @@
-// app/company/campaigns/[campaignId]/dashboard/page.tsx
-
 "use client"
 
 import { useEffect, useState } from "react"
@@ -19,7 +17,7 @@ export default function CompanyCampaignDashboardPage() {
   const campaignId = params.campaignId
 
   const [config, setConfig] = useState<ReportConfiguration | null>(null)
-  const [data, setData] = useState<any[]>([])
+  const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -31,35 +29,32 @@ export default function CompanyCampaignDashboardPage() {
       setError(null)
       
       try {
-        // 1. Cargar configuración del dashboard
         const remote = await getCampaignReportConfig(campaignId)
         const exists = (remote as any)?.exists
         const cfg = (remote as any)?.config as ReportConfiguration | null
 
         if (!exists || !cfg) {
           setConfig(null)
-          setData([])
+          setData(null)
           setLoading(false)
           return
         }
 
         setConfig(cfg)
 
-        // 2. Cargar datos del dataset de la campaña
         try {
-          const rows = await getCampaignDataset(campaignId)
-          console.log(`[Dashboard] Loaded ${rows?.length ?? 0} rows for campaign ${campaignId}`)
-          setData(rows || [])
+          const dataset = await getCampaignDataset(campaignId)
+          setData(dataset)
         } catch (dataError: any) {
           console.error("Error loading campaign dataset:", dataError)
-          setError("No se pudieron cargar los datos de la campaña. Asegúrate de que se haya importado información.")
-          setData([])
+          setError("No se pudieron cargar los datos de la campaña.")
+          setData(null)
         }
 
       } catch (e: any) {
         console.error("Error loading dashboard config:", e)
         setConfig(null)
-        setData([])
+        setData(null)
         setError(e?.message ?? "No se pudo cargar el dashboard")
       } finally {
         setLoading(false)
@@ -131,23 +126,9 @@ export default function CompanyCampaignDashboardPage() {
             </p>
           </CardContent>
         </Card>
-      ) : data.length === 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>No hay datos disponibles</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              No se encontraron datos para esta campaña. Asegúrate de que se haya importado información desde un archivo Excel.
-            </p>
-            {error && (
-              <p className="text-sm text-red-600 mt-2">{error}</p>
-            )}
-          </CardContent>
-        </Card>
       ) : (
-        <DashboardFromConfig 
-          config={config} 
+        <DashboardFromConfig
+          config={config}
           data={data}
           campaignId={campaignId}
         />

@@ -23,8 +23,14 @@ app.post("/pubsub/import", async (req, res) => {
     await processImport(importId)
 
     res.status(204).send("")
-  } catch (e) {
+  } catch (e: any) {
     console.error(e)
+
+    if (e?.message === "IMPORT_NOT_FOUND") {
+      console.error(`[worker] IMPORT_NOT_FOUND — descartando mensaje`)
+      return res.status(204).send("")  // siempre ack, nunca reintentar
+    }
+
     res.status(500).send("error")
   }
 })

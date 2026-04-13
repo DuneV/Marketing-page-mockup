@@ -16,7 +16,7 @@ export default function CampaignDashboardPreviewPage() {
   const campaignId = params.campaignId
 
   const [config, setConfig] = useState<ReportConfiguration | null>(null)
-  const [rows, setRows] = useState<any[]>([])
+  const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [loadingData, setLoadingData] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -48,9 +48,9 @@ export default function CampaignDashboardPreviewPage() {
       setDataError(null)
       try {
         const dataset = await getCampaignDataset(campaignId)
-        setRows(Array.isArray(dataset) ? dataset : [])
+        setData(dataset)
       } catch (e: any) {
-        setRows([])
+        setData(null)
         setDataError(e?.message ?? "No se pudo cargar dataset")
       } finally {
         setLoadingData(false)
@@ -79,7 +79,9 @@ export default function CampaignDashboardPreviewPage() {
           </Button>
         </div>
 
-        <h1 className="absolute left-1/2 -translate-x-1/2 text-2xl font-bold">Previsualización de Dashboard</h1>
+        <h1 className="absolute left-1/2 -translate-x-1/2 text-2xl font-bold">
+          Previsualización de Dashboard
+        </h1>
 
         <div className="flex gap-2">
           <Button variant="outline" onClick={handleDownload} disabled={!config} className="gap-2">
@@ -118,14 +120,15 @@ export default function CampaignDashboardPreviewPage() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground">
-              Esta campaña todavía no tiene configuración de reporte guardada. Ve a campañas y crea el dashboard con el builder.
+              Esta campaña todavía no tiene configuración de reporte guardada. Ve a campañas y
+              crea el dashboard con el builder.
             </p>
           </CardContent>
         </Card>
       ) : loadingData ? (
         <div className="p-6">Cargando datos...</div>
       ) : (
-        <DashboardFromConfig config={config} data={rows} campaignId={campaignId} />
+        <DashboardFromConfig config={config} data={data} campaignId={campaignId} />
       )}
     </div>
   )

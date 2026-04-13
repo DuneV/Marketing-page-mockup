@@ -31,6 +31,7 @@ export const CHART_TYPE_LABELS: Record<ChartType, string> = {
   treemap: "Mapa de Árbol",
   tabla: "Tabla",
   combo: "Gráfico Combinado",
+  highlights: "Comentarios / Highlights",
 }
 
 // Etiquetas amigables para operaciones de KPI

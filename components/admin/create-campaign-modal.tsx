@@ -80,6 +80,81 @@ interface CreateCampaignModalProps {
 
 type Step = "campaign" | "excel"
 
+function SearchableSelect({
+  value,
+  onChange,
+  options,
+  placeholder = "(ignorar)",
+}: {
+  value: string
+  onChange: (v: string) => void
+  options: string[]
+  placeholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState("")
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [])
+
+  const filtered = options.filter((o) => o.toLowerCase().includes(search.toLowerCase()))
+
+  return (
+    <div ref={ref} className="relative flex-1">
+      <button
+        type="button"
+        onClick={() => { setOpen((p) => !p); setSearch("") }}
+        className="w-full border rounded px-2 py-1 text-sm bg-background text-left truncate"
+      >
+        {value || placeholder}
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full bg-popover border rounded shadow-md">
+          <div className="p-1 border-b">
+            <input
+              autoFocus
+              className="w-full px-2 py-1 text-sm bg-transparent outline-none"
+              placeholder="Buscar campo..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            <button
+              type="button"
+              className="w-full text-left px-3 py-1.5 text-sm hover:bg-muted text-muted-foreground"
+              onClick={() => { onChange(""); setOpen(false) }}
+            >
+              {placeholder}
+            </button>
+            {filtered.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-muted-foreground">Sin resultados</p>
+            ) : (
+              filtered.map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  className={`w-full text-left px-3 py-1.5 text-sm hover:bg-muted ${value === f ? "bg-amber-50 dark:bg-amber-950/30 font-medium" : ""}`}
+                  onClick={() => { onChange(f); setOpen(false) }}
+                >
+                  {f}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: CreateCampaignModalProps) {
   const { user: currentUser } = useAuthRole()
   const [step, setStep] = useState<Step>("campaign")
@@ -438,7 +513,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
     onClose()
   }
 
-  const schemaFields = Object.keys(preview?.schema?.canonicalFields ?? {})
+  const schemaFields = Object.keys(preview?.schema?.canonicalFields ?? {}).sort()
   const progress = step === "campaign" ? 50 : 100
 
   return (
@@ -760,16 +835,11 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
                     {(preview.headers ?? []).map((h: string) => (
                       <div key={h} className="flex items-center gap-2">
                         <span className="w-1/3 text-sm font-medium truncate">{h}</span>
-                        <select
-                          className="flex-1 border rounded px-2 py-1 text-sm bg-background"
+                        <SearchableSelect
                           value={mapping[h] ?? ""}
-                          onChange={(e) => setMapping(m => ({ ...m, [h]: e.target.value }))}
-                        >
-                          <option value="">(ignorar)</option>
-                          {schemaFields.map((f: string) => (
-                            <option key={f} value={f}>{f}</option>
-                          ))}
-                        </select>
+                          onChange={(v) => setMapping(m => ({ ...m, [h]: v }))}
+                          options={schemaFields}
+                        />
                       </div>
                     ))}
 

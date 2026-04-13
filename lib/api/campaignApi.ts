@@ -90,6 +90,13 @@ export async function getCampaignDataset(campaignId: string) {
 
   if (!res.ok) throw new Error(await res.text())
   const json = await res.json()
+
+  // Si hay dataBySlot, retornar el objeto completo
+  if (json?.dataBySlot && typeof json.dataBySlot === "object" && Object.keys(json.dataBySlot).length > 0) {
+    return { rows: json.rows ?? [], dataBySlot: json.dataBySlot }
+  }
+
+  // Fallback: array simple (comportamiento anterior)
   return Array.isArray(json?.rows) ? json.rows : []
 }
 

@@ -1,5 +1,6 @@
 "use client"
-
+import { Input as BaseInput } from "@/components/ui/input"
+import { useRef } from "react"
 import { useEffect, useMemo, useState } from "react"
 import {
   getAvailableFields,
@@ -17,10 +18,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -86,6 +85,8 @@ function gsUriToHttpUrl(gsUri: string, previewCache?: string): string {
 // -----------------------------
 interface ReportConfigBuilderCampaignProps {
   campaign: Campaign
+  open: boolean
+  onOpenChange: (open: boolean) => void
   onSaved?: () => void
 }
 
@@ -208,6 +209,7 @@ const ALL_CHART_TYPES: ChartType[] = [
   "treemap",
   "tabla",
   "combo",
+  "highlights",
 ]
 
 // -----------------------------
@@ -279,11 +281,70 @@ function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n))
 }
 
+function DebouncedInput({
+  value,
+  onChange,
+  delay = 300,
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement> & {
+  value: string | number
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+  delay?: number
+}) {
+  const [localValue, setLocalValue] = useState(value)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Sincronizar si el valor externo cambia (ej: al cargar config)
+  useEffect(() => {
+    setLocalValue(value)
+  }, [value])
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setLocalValue(e.target.value)
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => {
+      onChange(e)
+    }, delay)
+  }
+
+  return <Input {...props} value={localValue} onChange={handleChange} />
+}
+
+function Input({
+  type,
+  onChange,
+  value,
+  ...props
+}: React.ComponentProps<typeof BaseInput>) {
+  const isText = !type || type === "text" || type === "email" || type === "url"
+  const [local, setLocal] = useState(value ?? "")
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    setLocal(value ?? "")
+  }, [value])
+
+  if (!isText) {
+    return <BaseInput type={type} value={value} onChange={onChange} {...props} />
+  }
+
+  return (
+    <BaseInput
+      type={type}
+      value={local}
+      onChange={(e) => {
+        setLocal(e.target.value)
+        if (timer.current) clearTimeout(timer.current)
+        timer.current = setTimeout(() => onChange?.(e), 250)
+      }}
+      {...props}
+    />
+  )
+}
 // -----------------------------
 // Main component
 // -----------------------------
-export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigBuilderCampaignProps) {
-  const [open, setOpen] = useState(false)
+export function ReportConfigBuilderCampaign({ campaign, open, onOpenChange, onSaved }: ReportConfigBuilderCampaignProps) {
   const [config, setConfig] = useState<Omit<ReportConfiguration, "id" | "fechaCreacion" | "fechaActualizacion"> | null>(null)
   const [templates, setTemplates] = useState<ReportTemplate[]>([])
   const [validationErrors, setValidationErrors] = useState<string[]>([])
@@ -879,7 +940,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
       await saveCampaignReportConfig(campaign.id, fullToSave as any)
 
       setValidationErrors([])
-      setOpen(false)
+      onOpenChange(false)
       onSaved?.()
     } catch (error) {
       console.error("Error guardando configuración:", error)
@@ -927,38 +988,20 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
 
   if (!config) {
     return (
-      <TooltipProvider>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button variant="outline" size="sm">
-              <LayoutDashboard className="h-4 w-4" />
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-xl">
-            <DialogHeader>
-              <DialogTitle>Cargando...</DialogTitle>
-            </DialogHeader>
-          </DialogContent>
-        </Dialog>
-      </TooltipProvider>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Cargando...</DialogTitle>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
     )
   }
 
   return (
-    <TooltipProvider>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <DialogTrigger asChild>
-              <Button variant="outline" size="sm">
-                <LayoutDashboard className="h-4 w-4" />
-              </Button>
-            </DialogTrigger>
-          </TooltipTrigger>
-          <TooltipContent>Configurar Reporte</TooltipContent>
-        </Tooltip>
-
-        <DialogContent className="max-w-[90vw] sm:max-w-4xl lg:max-w-5xl max-h-[85vh] flex flex-col p-0">
+   <TooltipProvider>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="flex flex-col p-0 !fixed !inset-4 !w-[calc(100vw-2rem)] !h-[calc(100vh-2rem)] !max-w-none !max-h-none !rounded-lg !translate-x-0 !translate-y-0 !animate-none">
           <div className="px-6 pt-6 pb-4 shrink-0">
             <DialogHeader>
               <DialogTitle>Configurar Reporte - {campaign.nombre}</DialogTitle>
@@ -1659,10 +1702,10 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                   {constants.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No hay constantes. Úsalas para fórmulas tipo KPI / Const o KPI * Const.</p>
                   ) : (
-                    constants.map((c) => {
+                    constants.map((c, _idx) => {
                       const kind = c.kind ?? "static"
                       return (
-                        <div key={c.key} className="border rounded p-3 space-y-2">
+                        <div key={_idx} className="border rounded p-3 space-y-2">
                           {/* Fila 1: key, label, tipo, eliminar */}
                           <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
                             <div className="md:col-span-3">
@@ -1671,7 +1714,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                 className="h-8 font-mono"
                                 value={c.key}
                                 onChange={(e) => {
-                                  const nextKey = e.target.value.trim()
+                                  const nextKey = e.target.value  //  sin .trim()
                                   if (!nextKey) return
                                   if (constants.some((x) => x.key === nextKey && x.key !== c.key)) return
                                   setConstants(constants.map((x) => (x.key === c.key ? { ...x, key: nextKey } : x)))
@@ -3387,6 +3430,51 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                                     </div>
                                   </div>
                                 )}
+                                {/* Highlights: bullets manuales */}
+                                {(chart.tipo as string) === "highlights" && (
+                                  <div className="mt-2 border-t pt-2 space-y-2">
+                                    <Label className="text-xs font-medium">Comentarios / Highlights</Label>
+                                    <p className="text-[11px] text-muted-foreground">
+                                      Escribe cada bullet manualmente. No usa datos del Excel.
+                                    </p>
+                                    {((chart as any).highlightItems ?? []).map((item: string, idx: number) => (
+                                      <div key={idx} className="flex gap-2 items-start">
+                                        <Input
+                                          className="h-8 text-sm flex-1"
+                                          value={item}
+                                          placeholder={`Bullet ${idx + 1}...`}
+                                          onChange={(e) => {
+                                            const next = [...((chart as any).highlightItems ?? [])]
+                                            next[idx] = e.target.value
+                                            updateChart(row.id, chart.id, { highlightItems: next } as any)
+                                          }}
+                                        />
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-8 w-8 p-0 shrink-0"
+                                          onClick={() => {
+                                            const next = ((chart as any).highlightItems ?? []).filter((_: any, i: number) => i !== idx)
+                                            updateChart(row.id, chart.id, { highlightItems: next } as any)
+                                          }}
+                                        >
+                                          <Trash2 className="h-4 w-4 text-destructive" />
+                                        </Button>
+                                      </div>
+                                    ))}
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        const next = [...((chart as any).highlightItems ?? []), ""]
+                                        updateChart(row.id, chart.id, { highlightItems: next } as any)
+                                      }}
+                                    >
+                                      <Plus className="h-3 w-3 mr-1" />
+                                      Agregar bullet
+                                    </Button>
+                                  </div>
+                                )}
                               </div>
                             )
                           })}
@@ -3406,7 +3494,7 @@ export function ReportConfigBuilderCampaign({ campaign, onSaved }: ReportConfigB
                 Descargar JSON
               </Button>
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setOpen(false)} disabled={isLoading}>
+                <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isLoading}>
                   Cancelar
                 </Button>
                 <Button onClick={handleSave} disabled={isLoading || availableFields.length === 0}>

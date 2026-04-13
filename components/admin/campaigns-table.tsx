@@ -1,13 +1,12 @@
-// components/admin/campaings-table.tsx
-
+"use client"
+import { memo } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Trash2, Edit, UserPlus, Target } from "lucide-react"
+import { Trash2, Edit, UserPlus, Target, LayoutDashboard } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import type { Campaign } from "@/types/campaign"
 import { EmptyState } from "./empty-state"
-import { ReportConfigBuilderCampaign } from "./report-config-builder-campaign"
 
 interface CampaignsTableProps {
   campaigns: Campaign[]
@@ -15,7 +14,7 @@ interface CampaignsTableProps {
   onDelete: (campaignId: string) => void
   onRowClick: (campaignId: string) => void
   onAssignUser: (campaignId: string) => void
-  onReportConfig?: () => void
+  onReportConfig?: (campaignId: string) => void
 }
 
 const statusColors = {
@@ -32,7 +31,14 @@ const statusLabels = {
   cancelada: "Cancelada",
 }
 
-export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssignUser, onReportConfig }: CampaignsTableProps) {
+export const CampaignsTable = memo(function CampaignsTable({
+  campaigns,
+  onEdit,
+  onDelete,
+  onRowClick,
+  onAssignUser,
+  onReportConfig,
+}: CampaignsTableProps) {
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("es-ES", {
       year: "numeric",
@@ -40,15 +46,6 @@ export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssi
       day: "numeric",
     })
   }
-
-  // const formatCurrency = (amount: number) => {
-  //   return new Intl.NumberFormat("es-CO", {
-  //     style: "currency",
-  //     currency: "COP",
-  //     minimumFractionDigits: 0,
-  //     maximumFractionDigits: 0,
-  //   }).format(amount)
-  // }
 
   return (
     <TooltipProvider>
@@ -60,7 +57,6 @@ export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssi
             <TableHead className="hidden md:table-cell md:w-[15%]">Usuario Responsable</TableHead>
             <TableHead className="hidden md:table-cell md:w-[10%]">Estado</TableHead>
             <TableHead className="hidden md:table-cell md:w-[15%]">Fechas</TableHead>
-            {/* <TableHead className="hidden md:table-cell md:w-[12%] text-right">Presupuesto</TableHead> */}
             <TableHead className="w-[55%] md:w-[15%] text-right">Acciones</TableHead>
           </TableRow>
         </TableHeader>
@@ -114,12 +110,26 @@ export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssi
                 <TableCell className="hidden md:table-cell text-sm text-slate-600 dark:text-slate-400">
                   {formatDate(campaign.fechaInicio)} - {formatDate(campaign.fechaFin)}
                 </TableCell>
-                {/* <TableCell className="hidden md:table-cell text-right font-medium">
-                  {formatCurrency(campaign.presupuesto)}
-                </TableCell> */}
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                    <ReportConfigBuilderCampaign campaign={campaign} onSaved={onReportConfig} />
+                    {onReportConfig && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onReportConfig(campaign.id)
+                            }}
+                          >
+                            <LayoutDashboard className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Configurar Reporte</TooltipContent>
+                      </Tooltip>
+                    )}
+
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
@@ -177,4 +187,4 @@ export function CampaignsTable({ campaigns, onEdit, onDelete, onRowClick, onAssi
       </Table>
     </TooltipProvider>
   )
-}
+})

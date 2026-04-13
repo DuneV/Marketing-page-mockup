@@ -33,7 +33,8 @@ import {
   Funnel as RechartsFunnel,
   LabelList,
 } from "recharts"
-
+import { useRef } from "react"
+import { FileDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
@@ -1425,14 +1426,68 @@ export function DashboardFromConfig({
   // Estado para URL pública de la imagen hero (convierte gs:// a URL firmada)
   const [heroImagePublicUrl, setHeroImagePublicUrl] = useState<string | null>(null)
   const [chartFilter, setChartFilter] = useState<{ field: string; value: string } | null>(null)
+  const printRef = useRef<HTMLDivElement>(null)
+  const [isExporting, setIsExporting] = useState(false)
   // Efecto para cargar URL pública si es gsUri
+  const handleExportPdf = async () => {
+  if (!printRef.current) return
+  setIsExporting(true)
+
+  // Parchear getComputedStyle para interceptar colores oklch/lab
+  const originalGetComputedStyle = window.getComputedStyle.bind(window)
+  ;(window as any).getComputedStyle = (element: Element, pseudo?: string | null) => {
+    const style = originalGetComputedStyle(element, pseudo)
+    return new Proxy(style, {
+      get(target, prop) {
+        const value = (target as any)[prop]
+        if (typeof value === "string" && (value.includes("oklch") || value.includes("lab("))) {
+          return "#000000"
+        }
+        if (typeof value === "function") {
+          return value.bind(target)
+        }
+        return value
+      },
+    })
+  }
+
+  try {
+    const html2pdf = (await import("html2pdf.js")).default
+    await html2pdf()
+      .set({
+        margin: 8,
+        filename: `${config.campaignNombre ?? "dashboard"}.pdf`,
+        image: { type: "jpeg", quality: 0.98 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          allowTaint: true,
+          backgroundColor: "#ffffff",
+        },
+        jsPDF: {
+          unit: "px",
+          format: [
+            printRef.current!.scrollWidth + 16,
+            printRef.current!.scrollHeight + 16,
+          ],
+          orientation: "portrait",
+        },
+      })
+      .from(printRef.current)
+      .save()
+  } finally {
+    window.getComputedStyle = originalGetComputedStyle
+    setIsExporting(false)
+  }
+}
+
   useEffect(() => {
     const heroImageUrl = branding.heroImageUrl
     if (!heroImageUrl) {
       setHeroImagePublicUrl(null)
       return
     }
-
     // Si es gsUri, convertir a URL pública firmada
     if (heroImageUrl.startsWith("gs://")) {
       ;(async () => {
@@ -1461,6 +1516,8 @@ export function DashboardFromConfig({
   })
 
   const { rows, dataBySlot } = useMemo<{ rows: RowData[]; dataBySlot: Record<string, RowData[]> }>(() => {
+    
+    
     if (Array.isArray(data)) {
       return { rows: data as RowData[], dataBySlot: { primary: data as RowData[] } }
     }
@@ -1482,7 +1539,6 @@ export function DashboardFromConfig({
     console.warn("[DashboardFromConfig] data no es array:", data)
     return { rows: [], dataBySlot: {} }
   }, [data])
-
   // Apply filters to data
   const filteredRows = useMemo(() => {
     let result = applyFilters(rows, userFilters)
@@ -1545,19 +1601,54 @@ export function DashboardFromConfig({
     const visible = kpis.filter((k) => k.visible !== false)
     const byId: KPIValueMap = {}
 
-    // pass 1: field + expression — sobre datos de TODOS los slots
-        for (const k of kpis) {
-      const kind = (k.kind ?? "field") as any
-      if (kind === "formula") continue
-      // Aplicar filtro de categoría si está configurado
-      const catField = (k as any).categoriaField as string | undefined
-      const catValue = (k as any).categoriaValue as string | undefined
-      const kpiRows: RowData[] =
-        catField && catValue
-          ? allSlotsRows.filter((r) => String(r?.[catField] ?? "") === catValue)
-          : allSlotsRows
-      if (kind === "expression") {
-        byId[k.id] = evaluateExpressionKpi((k as any).expression ?? "", kpiRows, constMap, byId, kpis as KPIDefinition[])
+     // pass 1: field + expression
+  const getSlotRowsForField = (fieldName: string): RowData[] => {
+    if (!fieldName) return allSlotsRows
+    for (const [slot, slotRows] of Object.entries(dataBySlot)) {
+      const sample = slotRows.find(r => r?.[fieldName] != null && r?.[fieldName] !== "")
+      if (sample) {
+        let r = applyFilters(slotRows, userFilters)
+        if (chartFilter) {
+          r = r.filter(row => String(row?.[chartFilter.field] ?? "") === chartFilter.value)
+        }
+        return r
+      }
+    }
+    return allSlotsRows
+  }
+
+  for (const k of kpis) {
+    const kind = (k.kind ?? "field") as any
+    if (kind === "formula") continue
+    const catField = (k as any).categoriaField as string | undefined
+    const catValue = (k as any).categoriaValue as string | undefined
+
+    const baseRows = kind === "field"
+      ? getSlotRowsForField(k.fuente as string)
+      : allSlotsRows
+
+    const kpiRows: RowData[] = catField && catValue
+      ? baseRows.filter((r) => String(r?.[catField] ?? "") === catValue)
+      : baseRows
+
+    if (kind === "expression") {
+        const hasActiveFilter =
+          (userFilters.condiciones ?? []).some((c) => c.campo && c.valor) ||
+          !!userFilters.fechas?.inicio ||
+          !!userFilters.fechas?.fin ||
+          chartFilter !== null
+
+        if (catField && catValue && kpiRows.length === 0 && hasActiveFilter) {
+          byId[k.id] = 0
+        } else {
+          byId[k.id] = evaluateExpressionKpi(
+            (k as any).expression ?? "",
+            kpiRows,
+            constMap,
+            byId,
+            kpis as KPIDefinition[]
+          )
+        }
       } else {
         byId[k.id] = computeBaseKpiValue(kpiRows, k)
       }
@@ -1960,7 +2051,31 @@ export function DashboardFromConfig({
         </div>
       )
     }
+      if (tipo === "highlights") {
+      const items: string[] = ((chart as any).highlightItems ?? []).filter(Boolean)
 
+      return (
+        <div className="space-y-2 overflow-y-auto" style={{ maxHeight: `${rowHeight}px` }}>
+          {items.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Sin comentarios configurados</p>
+          ) : (
+            items.map((text, idx) => (
+              <div
+                key={idx}
+                className="flex gap-3 items-start p-3 rounded-lg border"
+                style={{ backgroundColor: branding?.chartBackgroundColor || "#ffffff" }}
+              >
+                <div
+                  className="shrink-0 mt-1.5 h-2 w-2 rounded-full"
+                  style={{ backgroundColor: palette[idx % palette.length] }}
+                />
+                <p className="text-sm leading-relaxed">{text}</p>
+              </div>
+            ))
+          )}
+        </div>
+      )
+    }
     return <div className="text-sm text-muted-foreground">Tipo "{tipo}" aún no implementado.</div>
   }
 
@@ -2056,6 +2171,7 @@ export function DashboardFromConfig({
 
   return (
     <div className="space-y-6">
+      <div ref={printRef}> 
       {/* Hero */}
       {(heroImagePublicUrl || branding.heroTitle || branding.heroSubtitle) && (
         <div 
@@ -2095,6 +2211,7 @@ export function DashboardFromConfig({
       )}
 
       {/* Filters */}
+      <div className="mt-6">
       <FilterPanel
         filters={userFilters}
         onFiltersChange={setUserFilters}
@@ -2106,7 +2223,7 @@ export function DashboardFromConfig({
         textColor={branding.filterTextColor}
         iconColor={branding.filterIconColor}
       />
-
+      </div>
       {/* KPI cards con grid de 12 columnas */}
       <div className="grid grid-cols-12 gap-4">
                 {visibleKpis.map((kpi) => {
@@ -2125,7 +2242,7 @@ export function DashboardFromConfig({
       </div>
 
       {/* Tabs: Gráficos vs Evidencias */}
-      <Tabs defaultValue="graficos" className="w-full">
+      <Tabs defaultValue="graficos" className="w-full mt-8">
         <TabsList className="grid w-full max-w-md grid-cols-2">
           <TabsTrigger value="graficos">
             <BarChart3 className="h-4 w-4 mr-2" />
@@ -2196,11 +2313,17 @@ export function DashboardFromConfig({
       </Tabs>
 
       {/* Stats badge at bottom */}
-      <div className="mt-8 pt-6 border-t text-center">
+      <div className="mt-8 pt-6 border-t flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
           Mostrando {filteredRows.length} de {rows.length} registros
         </p>
+        <Button variant="outline" onClick={handleExportPdf} disabled={isExporting} className="gap-2">
+          <FileDown className="h-4 w-4" />
+          {isExporting ? "Exportando..." : "Exportar PDF"}
+        </Button>
       </div>
+
+      </div> {/* ← cierre printRef */}
     </div>
   )
 }

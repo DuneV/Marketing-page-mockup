@@ -18,7 +18,8 @@ export type ChartType =
   | "heatmap"         // Heat map
   | "treemap"         // Tree map
   | "tabla"          // Data table
-  | "combo";
+  | "combo"
+  | "highlights"     
 
 // Columnas de Bootstrap (1-12)
 export type BootstrapCol = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;

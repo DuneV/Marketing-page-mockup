@@ -2,6 +2,7 @@ import { Router } from "express"
 import crypto from "crypto"
 import { requireAdmin } from "../middleware/requireAdmin.js"
 import { bucketName, createSignedUploadUrl, createSignedReadUrlFromGs } from "../lib/gcs.js"
+import { requireAuth } from "../middleware/requireAuth.js"
 
 export const assetsRouter = Router()
 
@@ -50,7 +51,7 @@ assetsRouter.post("/upload-url", async (req, res) => {
 
 assetsRouter.get("/read-url", async (req, res) => {
   try {
-    await requireAdmin(req)
+    await requireAuth(req)
 
     const gsUri = String(req.query.gsUri ?? "")
     const expiresMinutes = Number(req.query.expiresMinutes ?? "60")

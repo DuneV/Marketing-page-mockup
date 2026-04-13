@@ -114,7 +114,12 @@ function buildColumns(ws: ExcelJS.Worksheet, headerRowNumber: number): ColDef[] 
 }
 
 export async function processImport(importId: string) {
-  const imp = await queryOne(`select * from imports.imports where id=$1`, [importId])
+  let imp = null
+  for (let attempt = 0; attempt < 6; attempt++) {
+    imp = await queryOne(`select * from imports.imports where id=$1`, [importId])
+    if (imp) break
+    if (attempt < 5) await new Promise((r) => setTimeout(r, 500))
+  }
   if (!imp) throw new Error("IMPORT_NOT_FOUND")
 
   const mappings = await query(
