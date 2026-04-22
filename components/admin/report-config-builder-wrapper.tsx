@@ -1,4 +1,3 @@
-// components/admin/report-config-builder-wrapper.tsx
 "use client"
 
 import { useEffect, useState } from "react"
@@ -13,6 +12,7 @@ export function ReportConfigBuilderCampaignWrapper({ campaignId }: { campaignId:
   const router = useRouter()
   const [campaign, setCampaign] = useState<Campaign | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [open, setOpen] = useState(true)
 
   useEffect(() => {
     if (!campaignId) return
@@ -36,7 +36,11 @@ export function ReportConfigBuilderCampaignWrapper({ campaignId }: { campaignId:
       ) : !campaign ? (
         <p className="text-sm text-muted-foreground">Cargando campaña...</p>
       ) : (
-        <ReportConfigBuilderCampaign campaign={campaign} />
+        <ReportConfigBuilderCampaign
+          campaign={campaign}
+          open={open}
+          onOpenChange={setOpen}
+        />
       )}
     </div>
   )

@@ -57,6 +57,8 @@ type DashboardConstant = {
   agg?: KPIOperation
   filterField?: string
   filterValue?: string
+  categoriaField?: string  
+  categoriaValue?: string  
 }
 
 
@@ -170,6 +172,31 @@ function applyFilters(rows: RowData[], filters: ReportFilters | undefined): RowD
   }
 
   return filtered
+}
+
+// Function of conversion to excel
+
+function exportToExcel(data: any[], columnLabels?: Record<string, string>, filename?: string) {
+  import("xlsx").then((XLSX) => {
+    if (!data || data.length === 0) return
+    const columns = Object.keys(data[0])
+    
+    // Construir header con etiquetas
+    const header = columns.map(k => columnLabels?.[k] ?? k)
+    
+    // Construir filas
+    const rows = data.map(row =>
+      columns.map(k => {
+        const v = row[k]
+        return typeof v === "number" ? v : String(v ?? "")
+      })
+    )
+    
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Datos")
+    XLSX.writeFile(wb, `${filename ?? "tabla"}.xlsx`)
+  })
 }
 
 // -----------------------------
@@ -577,7 +604,7 @@ function KpiCard({
     <div 
       className="border p-4" 
       style={{ 
-        gridColumn: `span ${columnas} / span ${columnas}`,
+        gridColumn: `span ${Math.round(columnas * 4)} / span ${Math.round(columnas * 4)}`,
         backgroundColor: branding?.kpiBackgroundColor || "#ffffff",
         color: branding?.kpiTextColor || "#000000",
         borderRadius: `${branding?.kpiBorderRadius ?? 8}px`,
@@ -924,7 +951,11 @@ function FilterCombobox({
         <input
           className="flex-1 py-1.5 text-sm bg-transparent outline-none"
           style={{ color: textColor || "inherit" }}
-          placeholder={value || "Buscar…"}
+          placeholder={value
+            ? (/^\d{4}-\d{2}-\d{2}T/.test(value)
+                ? new Date(value).toLocaleDateString("es-CO", { year: "numeric", month: "long", day: "numeric" })
+                : value)
+            : "Buscar…"}
           disabled={disabled}
           onChange={(e) => {
             setQuery(e.target.value)
@@ -960,15 +991,20 @@ function FilterCombobox({
           >
             Todos
           </div>
-          {filtered.slice(0, 100).map((opt) => (
-            <div
-              key={opt}
-              className={`px-3 py-1.5 cursor-pointer hover:bg-muted ${opt === value ? "bg-muted font-medium" : ""}`}
-              onMouseDown={() => { onChange(opt); setQuery(""); setOpen(false) }}
-            >
-              {opt}
-            </div>
-          ))}
+          {filtered.slice(0, 100).map((opt) => {
+            const displayOpt = /^\d{4}-\d{2}-\d{2}T/.test(opt)
+              ? new Date(opt).toLocaleDateString("es-CO", { year: "numeric", month: "long", day: "numeric" })
+              : opt
+            return (
+              <div
+                key={opt}
+                className={`px-3 py-1.5 cursor-pointer hover:bg-muted ${opt === value ? "bg-muted font-medium" : ""}`}
+                onMouseDown={() => { onChange(opt); setQuery(""); setOpen(false) }}
+              >
+                {displayOpt}
+              </div>
+            )
+          })}
           {filtered.length > 100 && (
             <div className="px-3 py-1.5 text-xs text-muted-foreground border-t">
               {filtered.length - 100} más — refina la búsqueda
@@ -979,6 +1015,47 @@ function FilterCombobox({
     </div>
   )
 }
+
+function FieldSearchSelect({
+  value, onValueChange, fields,
+}: {
+  value: string
+  onValueChange: (v: string) => void
+  fields: string[]
+}) {
+  const [query, setQuery] = useState("")
+  const filtered = useMemo(() => {
+    if (!query.trim()) return fields
+    return fields.filter(f => f.toLowerCase().includes(query.toLowerCase()))
+  }, [fields, query])
+
+  return (
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger className="text-xs">
+        <SelectValue placeholder="Campo" />
+      </SelectTrigger>
+      <SelectContent>
+        <div className="px-2 py-1.5 sticky top-0 bg-popover z-10">
+          <input
+            className="w-full text-xs border rounded px-2 py-1 bg-background outline-none"
+            placeholder="Buscar campo..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.stopPropagation()}
+          />
+        </div>
+        {filtered.length === 0 ? (
+          <div className="px-3 py-2 text-xs text-muted-foreground">Sin resultados</div>
+        ) : (
+          filtered.map((field) => (
+            <SelectItem key={field} value={field}>{field}</SelectItem>
+          ))
+        )}
+      </SelectContent>
+    </Select>
+  )
+}
+
 // Filter Panel Component - Clean design with theme colors
 function FilterPanel({
   filters,
@@ -1001,6 +1078,7 @@ function FilterPanel({
   textColor?: string
   iconColor?: string
 }) {
+  
   const [tempFilters, setTempFilters] = useState<ReportFilters>(filters)
   const [filterOptions, setFilterOptions] = useState<Record<string, any[]>>({})
   const [loadingOptions, setLoadingOptions] = useState<Record<string, boolean>>({})
@@ -1013,7 +1091,7 @@ function FilterPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignId])
   const loadFieldOptions = async (fieldName: string) => {
-    if (!campaignId || filterOptions[fieldName] || loadingOptions[fieldName]) return
+    if (!campaignId || (filterOptions[fieldName] !== undefined && filterOptions[fieldName].length > 0) || loadingOptions[fieldName]) return
     
     setLoadingOptions(prev => ({ ...prev, [fieldName]: true }))
     try {
@@ -1035,9 +1113,11 @@ function FilterPanel({
         // FALLBACK: Extraer valores únicos del dataset local
         const uniqueValues = new Set<string>()
         rows.forEach(row => {
-          const value = row[fieldName]
+          const actualKey = Object.keys(row).find(
+            k => k.toLowerCase() === fieldName.toLowerCase()
+          ) ?? fieldName
+          const value = row[actualKey]
           if (value !== null && value !== undefined && value !== '') {
-            // Manejar valores que pueden ser objetos o strings
             const strValue = typeof value === 'object' ? JSON.stringify(value) : String(value)
             uniqueValues.add(strValue)
           }
@@ -1066,7 +1146,7 @@ function FilterPanel({
       setLoadingOptions(prev => ({ ...prev, [fieldName]: false }))
     }
   }
-
+  
   const updateTempDateRange = (field: "inicio" | "fin", value: string) => {
     setTempFilters({
       ...tempFilters,
@@ -1135,7 +1215,7 @@ function FilterPanel({
     tempFilters.fechas?.inicio ||
     tempFilters.fechas?.fin ||
     (tempFilters.condiciones && tempFilters.condiciones.some((c) => c.valor))
-
+  
   return (
     <div className="mb-6">
       {/* Header */}
@@ -1164,9 +1244,8 @@ function FilterPanel({
       </div>
 
       {/* Filter Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Fecha Inicio */}
-        <div className="border p-4 shadow-sm" style={{ backgroundColor: cardBackground || "var(--card)", borderRadius: `${cardBorderRadius ?? 8}px`, color: textColor || "inherit" }}>
+      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(12, minmax(0, 1fr))" }}>
+        {/* <div className="border p-4 shadow-sm" style={{ backgroundColor: cardBackground || "var(--card)", borderRadius: `${cardBorderRadius ?? 8}px`, color: textColor || "inherit" }}>
           <div className="flex items-center gap-2 mb-2">
             <Calendar className="h-4 w-4" style={{ color: iconColor || undefined }} />
             <label className="text-sm font-semibold">Fecha</label>
@@ -1189,10 +1268,10 @@ function FilterPanel({
               <SelectItem value="2026-02-01">2026-02-01</SelectItem>
             </SelectContent>
           </Select>
-        </div>
+        </div> */}
 
         {/* Fecha Fin */}
-        <div className="border p-4 shadow-sm" style={{ backgroundColor: cardBackground || "var(--card)", borderRadius: `${cardBorderRadius ?? 8}px`, color: textColor || "inherit" }}>
+        {/* <div className="border p-4 shadow-sm" style={{ backgroundColor: cardBackground || "var(--card)", borderRadius: `${cardBorderRadius ?? 8}px`, color: textColor || "inherit" }}>
           <div className="flex items-center gap-2 mb-2">
             <Calendar className="h-4 w-4" style={{ color: iconColor || undefined }} />
             <label className="text-sm font-semibold">Fecha</label>
@@ -1215,7 +1294,7 @@ function FilterPanel({
               <SelectItem value="2026-02-01">2026-02-01</SelectItem>
             </SelectContent>
           </Select>
-        </div>
+        </div> */}
 
         {/* Dynamic Condition Filters */}
         {tempFilters.condiciones?.map((condition, index) => {
@@ -1223,7 +1302,12 @@ function FilterPanel({
           const isLoadingFieldOptions = loadingOptions[condition.campo]
           
           return (
-            <div key={index} className="border p-4 shadow-sm relative" style={{ backgroundColor: cardBackground || "var(--card)", borderRadius: `${cardBorderRadius ?? 8}px`, color: textColor || "inherit" }}>
+            <div key={index} className="border p-3 shadow-sm relative" style={{
+              backgroundColor: cardBackground || "var(--card)",
+              borderRadius: `${cardBorderRadius ?? 8}px`,
+              color: textColor || "inherit",
+              gridColumn: `span ${Math.max(3, condition.columnas ?? 3)} / span ${Math.max(3, condition.columnas ?? 3)}`,
+            }}>
               <Button
                 variant="ghost"
                 size="sm"
@@ -1242,21 +1326,11 @@ function FilterPanel({
               <p className="text-xs mb-3" style={{ opacity: 0.6 }}>Operador: {condition.operador}</p>
 
               <div className="space-y-2">
-                <Select
+                <FieldSearchSelect
                   value={condition.campo}
                   onValueChange={(value) => updateTempCondition(index, "campo", value)}
-                >
-                  <SelectTrigger className="text-xs">
-                    <SelectValue placeholder="Campo" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableFields.map((field) => (
-                      <SelectItem key={field} value={field}>
-                        {field}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  fields={availableFields}
+                />
 
                 {condition.campo && fieldOptions.length > 0 ? (
                   fieldOptions.length > 7 ? (
@@ -1309,6 +1383,62 @@ function FilterPanel({
     </div>
   )
 }
+
+function GroupedTable({
+  data, groupByField, displayFields, columnLabels, columnWidths, rowHeight,
+}: {
+  data: RowData[]
+  groupByField: string
+  displayFields: string[]
+  columnLabels?: Record<string, string>
+  columnWidths?: Record<string, number>
+  rowHeight?: number
+}) {
+  const groups = useMemo(() => groupRows(data, groupByField), [data, groupByField])
+  return (
+    <div className="overflow-auto relative">
+      <table className="min-w-[520px] w-full text-sm border-collapse">
+        <thead className="sticky top-0 z-10 bg-background">
+          <tr className="border-b">
+            {[groupByField, ...displayFields].map(k => (
+              <th key={k}
+                className="text-left px-2 font-medium select-none bg-background border-b shadow-sm"
+                style={{
+                  paddingTop: rowHeight ?? 8,
+                  paddingBottom: rowHeight ?? 8,
+                  width: columnWidths?.[k] ? `${columnWidths[k]}px` : undefined,
+                }}>
+                {columnLabels?.[k] ?? k}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from(groups.entries()).map(([groupName, rows]) =>
+            rows.map((row, rowIdx) => (
+              <tr key={`${groupName}_${rowIdx}`} className="border-b hover:bg-muted/30 transition-colors">
+                {rowIdx === 0 && (
+                  <td rowSpan={rows.length}
+                    className="px-2 font-medium align-middle border-r bg-muted/10"
+                    style={{ paddingTop: rowHeight ?? 8, paddingBottom: rowHeight ?? 8 }}>
+                    {groupName}
+                  </td>
+                )}
+                {displayFields.map(f => (
+                  <td key={f} className="px-2"
+                    style={{ paddingTop: rowHeight ?? 8, paddingBottom: rowHeight ?? 8 }}>
+                    {String(row[f] ?? "")}
+                  </td>
+                ))}
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // -----------------------------
 // Sortable Table Component
 // -----------------------------
@@ -1317,16 +1447,32 @@ function SortableTable({
   rowHeight,
   columnLabels,
   columnWidths,
+  showTotals,
+  showSubtotals,
 }: {
   data: any[]
   rowHeight?: number
   columnLabels?: Record<string, string>
   columnWidths?: Record<string, number>
+  showTotals?: boolean
+  showSubtotals?: boolean
 }) {
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
 
   const columns = Object.keys(data?.[0] ?? {})
+
+  const numCols = useMemo(() => {
+    if (!showSubtotals || data.length === 0) return []
+    return columns.slice(1).filter(col =>
+      data.some(r => !isNaN(Number(r[col])) && r[col] !== "")
+    )
+  }, [data, columns, showSubtotals])
+
+  const displayColumns = useMemo(() => {
+    if (!showSubtotals || numCols.length === 0) return columns
+    return [columns[0], "__suma__", ...columns.slice(1)]
+  }, [columns, showSubtotals, numCols])
 
   const sorted = useMemo(() => {
     if (!sortKey) return data
@@ -1336,12 +1482,7 @@ function SortableTable({
       const an = Number(av)
       const bn = Number(bv)
       const isNum = !isNaN(an) && !isNaN(bn)
-      let cmp = 0
-      if (isNum) {
-        cmp = an - bn
-      } else {
-        cmp = String(av ?? "").localeCompare(String(bv ?? ""), "es", { sensitivity: "base" })
-      }
+      let cmp = isNum ? an - bn : String(av ?? "").localeCompare(String(bv ?? ""), "es", { sensitivity: "base" })
       return sortDir === "asc" ? cmp : -cmp
     })
   }, [data, sortKey, sortDir])
@@ -1355,55 +1496,97 @@ function SortableTable({
     }
   }
 
+  const totalsRow = useMemo(() => {
+    if (!showTotals || data.length === 0) return null
+    const totals: Record<string, any> = {}
+    for (const col of columns) {
+      if (col === columns[0]) { totals[col] = "Total"; continue }
+      const nums = data.map(r => Number(r[col])).filter(n => !isNaN(n))
+      totals[col] = nums.length > 0 ? nums.reduce((a, b) => a + b, 0) : ""
+    }
+    return totals
+  }, [data, columns, showTotals])
+
+  const getCellValue = (row: any, k: string) => {
+    if (k === "__suma__") {
+      return numCols.reduce((acc, col) => acc + (Number(row[col]) || 0), 0).toLocaleString("es-CO")
+    }
+    return String(row[k] ?? "")
+  }
+
   if (data.length === 0) return <p className="text-sm text-muted-foreground">Sin datos.</p>
 
   return (
-    <div className="overflow-auto">
-      <table className="min-w-[520px] w-full text-sm">
-        <thead>
-          <tr className="border-b">
-            {columns.map((k) => {
-              const isActive = sortKey === k
-              const isNum = !isNaN(Number(data[0]?.[k]))
-              return (
-                <th
-                  key={k}
-                  className="text-left px-2 font-medium cursor-pointer select-none hover:bg-muted/50 transition-colors"
-                  style={{
-                    paddingTop: rowHeight ?? 8,
-                    paddingBottom: rowHeight ?? 8,
-                    width: columnWidths?.[k] ? `${columnWidths[k]}px` : undefined,
-                    minWidth: columnWidths?.[k] ? `${columnWidths[k]}px` : undefined,
-                  }}
-                  onClick={() => handleSort(k)}
-                >
-                  <div className="flex items-center gap-1">
-                    <span>{columnLabels?.[k] ?? k}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {isActive
-                        ? sortDir === "asc"
-                          ? isNum ? "↑" : "A→Z"
-                          : isNum ? "↓" : "Z→A"
-                        : "↕"}
-                    </span>
-                  </div>
-                </th>
-              )
-            })}
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map((row, i) => (
-            <tr key={i} className="border-b hover:bg-muted/30 transition-colors">
-              {columns.map((k) => (
-                <td key={k} className="px-2" style={{ paddingTop: rowHeight ?? 8, paddingBottom: rowHeight ?? 8, width: columnWidths?.[k] ? `${columnWidths[k]}px` : undefined }}>
-                  {String(row[k] ?? "")}
-                </td>
-              ))}
+    <div className="flex flex-col h-full">
+      <div className="overflow-auto flex-1">
+        <table className="min-w-[520px] w-full text-sm">
+          <thead>
+            <tr className="border-b">
+              {displayColumns.map((k) => {
+                const isActive = sortKey === k
+                const isNum = k !== "__suma__" && !isNaN(Number(data[0]?.[k]))
+                return (
+                  <th
+                    key={k}
+                    className="text-left px-2 font-medium cursor-pointer select-none hover:bg-muted/50 transition-colors"
+                    style={{
+                      paddingTop: rowHeight ?? 8,
+                      paddingBottom: rowHeight ?? 8,
+                      width: k !== "__suma__" && columnWidths?.[k] ? `${columnWidths[k]}px` : undefined,
+                      minWidth: k !== "__suma__" && columnWidths?.[k] ? `${columnWidths[k]}px` : undefined,
+                    }}
+                    onClick={() => k !== "__suma__" && handleSort(k)}
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>{k === "__suma__" ? "Suma" : (columnLabels?.[k] ?? k)}</span>
+                      {k !== "__suma__" && (
+                        <span className="text-xs text-muted-foreground">
+                          {isActive ? (sortDir === "asc" ? (isNum ? "↑" : "A→Z") : (isNum ? "↓" : "Z→A")) : "↕"}
+                        </span>
+                      )}
+                    </div>
+                  </th>
+                )
+              })}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {sorted.map((row, i) => (
+              <tr key={i} className="border-b hover:bg-muted/30 transition-colors">
+                {displayColumns.map((k) => (
+                  <td key={k} className="px-2"
+                    style={{ paddingTop: rowHeight ?? 8, paddingBottom: rowHeight ?? 8,
+                      width: k !== "__suma__" && columnWidths?.[k] ? `${columnWidths[k]}px` : undefined }}>
+                    {getCellValue(row, k)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {totalsRow && (
+        <div className="shrink-0 border-t-2 bg-muted/20 overflow-hidden">
+          <table className="min-w-[520px] w-full text-sm">
+            <tbody>
+              <tr>
+                {displayColumns.map((k) => (
+                  <td key={k} className="px-2 font-semibold"
+                    style={{ paddingTop: rowHeight ?? 8, paddingBottom: rowHeight ?? 8,
+                      width: k !== "__suma__" && columnWidths?.[k] ? `${columnWidths[k]}px` : undefined }}>
+                    {k === "__suma__"
+                      ? numCols.reduce((acc, col) => acc + (Number(totalsRow[col]) || 0), 0).toLocaleString("es-CO")
+                      : typeof totalsRow[k] === "number"
+                      ? totalsRow[k].toLocaleString("es-CO")
+                      : totalsRow[k] ?? ""}
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
@@ -1550,9 +1733,24 @@ export function DashboardFromConfig({
 
   // Get available fields from data
   const availableFields = useMemo(() => {
-    if (rows.length === 0) return []
-    return Object.keys(rows[0]).sort()
-  }, [rows])
+    const configFilterableFields = (config as any).filterableFields as string[] | undefined
+    
+    // Si hay campos configurados explícitamente, usar solo esos
+    if (configFilterableFields && configFilterableFields.length > 0) {
+      return configFilterableFields
+    }
+    
+    // Fallback: todos los campos de todos los slots
+    const allKeys = new Set<string>()
+    for (const slotRows of Object.values(dataBySlot)) {
+      if (slotRows.length > 0) {
+        for (const key of Object.keys(slotRows[0])) {
+          allKeys.add(key)
+        }
+      }
+    }
+    return Array.from(allKeys).sort()
+  }, [dataBySlot, config])
   // Datos de todos los slots CON filtros de usuario (para constantes filtered_agg)
   const allSlotsRows = useMemo(() => {
     const combined = Object.values(dataBySlot).flat()
@@ -1562,7 +1760,9 @@ export function DashboardFromConfig({
     }
     return result
   }, [dataBySlot, userFilters, chartFilter])
-
+   const allSlotsRowsUnfiltered = useMemo(() => {
+    return Object.values(dataBySlot).flat()
+  }, [dataBySlot])
   const constMap = useMemo(() => {
     const m: Record<string, number> = {}
     for (const c of constants) {
@@ -1570,17 +1770,42 @@ export function DashboardFromConfig({
       const kind = c.kind ?? "static"
       if (kind === "static") {
         m[c.key] = Number(c.value ?? 0)
-      } else if (kind === "filtered_agg" && c.field) {
-        const subset = c.filterField && c.filterValue
-          ? allSlotsRows.filter((r) => String(r?.[c.filterField!] ?? "") === c.filterValue)
-          : allSlotsRows
+      } else if (kind === "filtered_agg") {
+        if (c.field) {
+          let subset = c.filterField && c.filterValue
+            ? allSlotsRows.filter((r) => String(r?.[c.filterField!] ?? "") === c.filterValue)
+            : allSlotsRows
 
-        const nums = subset.map((r) => toNumber(r?.[c.field!])).filter((n): n is number => n !== null)
-        m[c.key] = aggregateNumeric(nums, c.agg ?? "sum")
+          if (c.categoriaField && c.categoriaValue) {
+            subset = subset.filter((r) => String(r?.[c.categoriaField!] ?? "") === c.categoriaValue)
+          }
+
+          const nums = c.field === "__rows__"
+          ? subset.map(() => 1)
+          : subset.map((r) => toNumber(r?.[c.field!])).filter((n): n is number => n !== null)
+          m[c.key] = c.field === "__rows__" ? subset.length : aggregateNumeric(nums, c.agg ?? "sum")
+        } else {
+          if (c.categoriaField && c.categoriaValue) {
+          const filtroActivo = (userFilters.condiciones ?? []).find(
+            (f) => f.campo === c.categoriaField && f.valor && f.operador === "eq"
+          )
+          const chartFilterActivo = chartFilter?.field === c.categoriaField
+
+          if (filtroActivo && String(filtroActivo.valor) !== c.categoriaValue) {
+            m[c.key] = 0
+          } else if (chartFilterActivo && chartFilter?.value !== c.categoriaValue) {
+            m[c.key] = 0
+          } else {
+            m[c.key] = Number(c.value ?? 0)
+          }
+        } else {
+          m[c.key] = Number(c.value ?? 0)
+        }
+        }
       }
     }
     return m
-  }, [constants, allSlotsRows])
+  }, [constants, allSlotsRows, userFilters, chartFilter])
 
   const palette = useMemo(() => {
     const p = config.paletaColores
@@ -1598,7 +1823,9 @@ export function DashboardFromConfig({
   // KPIs computation — usan todos los slots combinados
   const { kpiValues, visibleKpis } = useMemo(() => {
     const kpis = (config.kpis ?? []) as ExtendedKPI[]
-    const visible = kpis.filter((k) => k.visible !== false)
+    const visible = kpis
+  .filter((k) => k.visible !== false)
+  .sort((a, b) => ((a as any).orden ?? 999) - ((b as any).orden ?? 999))
     const byId: KPIValueMap = {}
 
      // pass 1: field + expression
@@ -1607,9 +1834,19 @@ export function DashboardFromConfig({
     for (const [slot, slotRows] of Object.entries(dataBySlot)) {
       const sample = slotRows.find(r => r?.[fieldName] != null && r?.[fieldName] !== "")
       if (sample) {
-        let r = applyFilters(slotRows, userFilters)
+        const globalFieldMap = ((config as any).slotFieldMap ?? []) as { from: string; to: string; slot: string }[]
+        const slotMap = globalFieldMap.filter(m => m.slot === slot)
+        const translatedFilters: ReportFilters = slotMap.length > 0 ? {
+          ...userFilters,
+          condiciones: (userFilters.condiciones ?? []).map(cond => {
+            const mapped = slotMap.find(m => m.from === cond.campo)
+            return mapped ? { ...cond, campo: mapped.to } : cond
+          })
+        } : userFilters
+        let r = applyFilters(slotRows, translatedFilters)
         if (chartFilter) {
-          r = r.filter(row => String(row?.[chartFilter.field] ?? "") === chartFilter.value)
+          const mappedField = slotMap.find(m => m.from === chartFilter.field)?.to ?? chartFilter.field
+          r = r.filter(row => String(row?.[mappedField] ?? "") === chartFilter.value)
         }
         return r
       }
@@ -1718,6 +1955,7 @@ export function DashboardFromConfig({
               rowHeight={(chart as any).tableRowHeight}
               columnLabels={{ name: "KPI", value: "Valor" }}
               columnWidths={(chart as any).columnWidths}
+              showTotals={(chart as any).showTotals}
             />
           </div>
         )
@@ -1742,10 +1980,23 @@ export function DashboardFromConfig({
     // ──────────────────────────────────────────────────────────────────────
     // Cada chart usa su slot declarado
     const chartSourceLabel = (chart as any).sourceLabel as string | undefined
+    const globalFieldMap = ((config as any).slotFieldMap ?? []) as { from: string; to: string; slot: string }[]
+
     const chartRows = chartSourceLabel && dataBySlot[chartSourceLabel]
       ? (() => {
-          let r = applyFilters(dataBySlot[chartSourceLabel], userFilters)
-          if (chartFilter) r = r.filter(row => String(row?.[chartFilter.field] ?? "") === chartFilter.value)
+          const slotMap = globalFieldMap.filter(m => m.slot === chartSourceLabel)
+          const translatedFilters: ReportFilters = slotMap.length > 0 ? {
+            ...userFilters,
+            condiciones: (userFilters.condiciones ?? []).map(cond => {
+              const mapped = slotMap.find(m => m.from === cond.campo)
+              return mapped ? { ...cond, campo: mapped.to } : cond
+            })
+          } : userFilters
+          let r = applyFilters(dataBySlot[chartSourceLabel], translatedFilters)
+          if (chartFilter) {
+            const mappedField = slotMap.find(m => m.from === chartFilter.field)?.to ?? chartFilter.field
+            r = r.filter(row => String(row?.[mappedField] ?? "") === chartFilter.value)
+          }
           return r
         })()
       : filteredRows
@@ -1815,7 +2066,61 @@ export function DashboardFromConfig({
       const stackId = (chart.barMode ?? "grouped") === "stacked" ? "stack" : undefined
       const groupByField = chart.groupBy as string
       const isFiltered = chartFilter?.field === groupByField
+      const slotSeries = (chart as any).slotSeries as {
+        slot: string; groupBy: string; agg?: KPIOperation; label: string
+      }[] | undefined
+      
+      // ── Modo multi-slot ──────────────────────────────────────────
+      if (slotSeries && slotSeries.length > 0) {
+        const globalFieldMap = ((config as any).slotFieldMap ?? []) as { from: string; to: string; slot: string }[]
+        const allNames = new Set<string>()
+        const seriesMaps = slotSeries.map(ss => {
+          const fieldMap = globalFieldMap.filter(m => m.slot === ss.slot)
+          const translatedFilters: ReportFilters = {
+            ...userFilters,
+            condiciones: (userFilters.condiciones ?? []).map(cond => {
+              const mapped = fieldMap.find(m => m.from === cond.campo)
+              return mapped ? { ...cond, campo: mapped.to } : cond
+            })
+          }
+          let r = applyFilters(dataBySlot[ss.slot] ?? [], translatedFilters)
+          if (chartFilter) {
+            const mappedField = fieldMap.find(m => m.from === chartFilter.field)?.to ?? chartFilter.field
+            r = r.filter(row => String(row?.[mappedField] ?? "") === chartFilter.value)
+          }
+          const grouped = groupRows(r, ss.groupBy)
+          const valueMap = new Map<string, number>()
+          for (const [name, rows] of grouped.entries()) {
+            allNames.add(name)
+            const aggField = (ss as any).field as string | undefined
+            valueMap.set(name, aggField
+              ? rows.reduce((acc, r) => acc + (Number(r[aggField]) || 0), 0)
+              : rows.length)
+          }
+          return valueMap
+        })
 
+        const chartData = Array.from(allNames).map(name => {
+          const point: any = { name }
+          slotSeries.forEach((ss, idx) => { point[ss.label] = seriesMaps[idx].get(name) ?? 0 })
+          return point
+        })
+
+        return (
+          <ResponsiveContainer width="100%" height={rowHeight}>
+            <BarChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              {slotSeries.map((ss, idx) => (
+                <Bar key={ss.label} dataKey={ss.label} fill={(ss as any).color || palette[idx % palette.length]} />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
+        )
+      }
       return (
         <div className="relative">
           {isFiltered && (
@@ -2019,38 +2324,210 @@ export function DashboardFromConfig({
     }
 
     if (tipo === "tabla") {
-      // Construir labels legibles para las columnas
-      const tableLabels: Record<string, string> = {}
-      const groupByField = chart.groupBy as string | undefined
-      if (groupByField) tableLabels["name"] = groupByField
+    
+  const slotJoin = (chart as any).slotJoin as {
+    primarySlot: string
+    primaryGroupBy: string
+    groupByLabel?: string
+    columns: { slot: string; groupByField: string; field?: string; agg: KPIOperation; label: string }[]
+  } | undefined
+  const displayMode = (chart as any).displayMode as string | undefined
+  const columnLabelMap = (chart as any).columnLabelMap as Record<string, string> | undefined
+  
+  
+  // ── Modo filas agrupadas (Tableau style) ─────────────────────────
+      if (displayMode === "grouped_rows") {
+        
+        const groupDisplayField = (chart as any).groupDisplayField as string ?? chart.groupBy as string ?? ""
+        const rawFields = (chart as any).rawFields as string[] ?? []
+        const groupedTotals = (chart as any).showTotals
+          ? (() => {
+              const totals: Record<string, any> = {}
+              const numericRawFields = rawFields.filter(f =>
+                chartRows.some(r => !isNaN(Number(r[f])) && r[f] !== "" && r[f] != null)
+              )
+              totals[groupDisplayField] = "Total"
+              for (const f of rawFields) {
+                if (numericRawFields.includes(f)) {
+                  totals[f] = chartRows.reduce((acc, r) => acc + (Number(r[f]) || 0), 0)
+                } else {
+                  totals[f] = ""
+                }
+              }
+              return totals
+            })()
+          : null
+        // Construir datos para exportación (sin formato, con todos los campos)
+        
+        const exportData = chartRows.map(row => {
+          const r: any = {}
+          const allFields = [groupDisplayField, ...rawFields]
+          allFields.forEach(f => { r[columnLabelMap?.[f] ?? f] = row[f] ?? "" })
+          return r
+        })
+        return (
+          <div style={{ height: `${rowHeight}px`, overflowY: "hidden", display: "flex", flexDirection: "column" }}>
+            <div className="flex justify-end mb-1 shrink-0">
+              <button
+                onClick={() => exportToExcel(exportData, {}, (chart as any).titulo ?? "tabla")}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border rounded px-2 py-1 hover:bg-muted/50 transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                Excel
+              </button>
+            </div>
+            <div className="overflow-auto flex-1">
+              <GroupedTable
+                data={chartRows}
+                groupByField={groupDisplayField}
+                displayFields={rawFields}
+                columnLabels={columnLabelMap}
+                columnWidths={(chart as any).columnWidths}
+                rowHeight={(chart as any).tableRowHeight}
+              />
+            </div>
+            {groupedTotals && (
+              <div className="shrink-0 border-t-2 bg-muted/20 overflow-hidden">
+                <table className="min-w-[520px] w-full text-sm">
+                  <tbody>
+                    <tr>
+                      {[groupDisplayField, ...rawFields].map((k) => (
+                        <td key={k} className="px-2 font-semibold"
+                          style={{ paddingTop: (chart as any).tableRowHeight ?? 8, paddingBottom: (chart as any).tableRowHeight ?? 8 }}>
+                          {typeof groupedTotals[k] === "number"
+                            ? groupedTotals[k].toLocaleString("es-CO")
+                            : groupedTotals[k] ?? ""}
+                        </td>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )
+      }
+  // ── Modo JOIN multi-slot ──────────────────────────────────────────────
+  if (slotJoin && slotJoin.primaryGroupBy && slotJoin.columns.length > 0) {
+    // 1. Obtener valores únicos del campo de agrupación principal
+    const primaryRows = (() => {
+      let r = applyFilters(dataBySlot[slotJoin.primarySlot] ?? [], userFilters)
+      if (chartFilter) r = r.filter(row => String(row?.[chartFilter.field] ?? "") === chartFilter.value)
+      return r
+    })()
+    const groupValues = Array.from(new Set(primaryRows.map(r => {
+      const v = r?.[slotJoin.primaryGroupBy]
+      return v == null || String(v).trim() === "" ? "(vacío)" : String(v)
+    })))
 
-      const mt = chart.measureType ?? "count"
-      if (mt === "count") {
-        const cf = (chart.countField ?? "__rows__") as string
-        tableLabels["value"] = cf === "__rows__" ? "conteo" : cf
-      } else {
-        const metrics = (chart.metrics ?? []) as ChartMetricDefinition[]
-        if (metrics.length > 0) {
-          for (const m of metrics) {
-            const k = `${m.field}__${m.agg}`
-            tableLabels[k] = `${m.field} (${m.agg})`
-          }
-        } else if (chart.metric) {
-          tableLabels["value"] = `${chart.metric} (${chart.agg ?? "sum"})`
+    // 2. Para cada columna, agrupar su slot por groupByField y calcular métrica
+    const fieldMap: { from: string; to: string }[] = (slotJoin as any).fieldMap ?? []
+
+    const colMaps: Map<string, number>[] = slotJoin.columns.map(col => {
+      const slotRows = (() => {
+        const translatedFilters: ReportFilters = {
+          ...userFilters,
+          condiciones: (userFilters.condiciones ?? []).map(cond => {
+            const mapped = fieldMap.find(m => m.from === cond.campo)
+            return mapped ? { ...cond, campo: mapped.to } : cond
+          })
+        }
+        let r = applyFilters(dataBySlot[col.slot] ?? [], translatedFilters)
+        if (chartFilter) {
+          const mappedChartField = fieldMap.find(m => m.from === chartFilter.field)?.to ?? chartFilter.field
+          r = r.filter(row => String(row?.[mappedChartField] ?? "") === chartFilter.value)
+        }
+        return r
+      })()
+      const grouped = new Map<string, number[]>()
+      for (const row of slotRows) {
+        const key = row?.[col.groupByField]
+        const k = key == null || String(key).trim() === "" ? "(vacío)" : String(key)
+        if (!grouped.has(k)) grouped.set(k, [])
+        if (col.field) {
+          const n = toNumber(row?.[col.field])
+          if (n != null) grouped.get(k)!.push(n)
+        } else {
+          grouped.get(k)!.push(1)
         }
       }
+      const valueMap = new Map<string, number>()
+      for (const [k, nums] of grouped.entries()) {
+        valueMap.set(k, aggregateNumeric(nums, col.agg ?? "count"))
+      }
+      return valueMap
+    })
 
-      return (
-        <div style={{ maxHeight: `${rowHeight}px`, overflowY: "auto" }}>
-          <SortableTable
-            data={s}
-            rowHeight={(chart as any).tableRowHeight}
-            columnLabels={tableLabels}
-            columnWidths={(chart as any).columnWidths}
-          />
-        </div>
-      )
+    // 3. Construir tabla joined
+    const tableData = groupValues.map(name => {
+      const row: Record<string, any> = { [slotJoin.groupByLabel ?? slotJoin.primaryGroupBy]: name }
+      slotJoin.columns.forEach((col, idx) => {
+        row[col.label] = colMaps[idx].get(name) ?? 0
+      })
+      return row
+    })
+
+    return (
+      <div style={{ maxHeight: `${rowHeight}px`, overflowY: "auto" }}>
+        <SortableTable
+          data={tableData}
+          rowHeight={(chart as any).tableRowHeight}
+          columnWidths={(chart as any).columnWidths}
+        />
+      </div>
+    )
+  }
+
+  // ── Modo normal ───────────────────────────────────────────────────────
+  const tableLabels: Record<string, string> = {}
+  const groupByField = chart.groupBy as string | undefined
+  if (groupByField) tableLabels["name"] = columnLabelMap?.["name"] ?? columnLabelMap?.[groupByField] ?? groupByField
+
+  const mt = chart.measureType ?? "count"
+  if (mt === "count") {
+    const cf = (chart.countField ?? "__rows__") as string
+    const autoLabel = cf === "__rows__" ? "conteo" : cf
+    tableLabels["value"] = columnLabelMap?.["value"] ?? columnLabelMap?.[autoLabel] ?? autoLabel
+  } else {
+    const metrics = (chart.metrics ?? []) as ChartMetricDefinition[]
+    if (metrics.length > 0) {
+      for (const m of metrics) {
+        const k = `${m.field}__${m.agg}`
+        tableLabels[k] = columnLabelMap?.[k] ?? `${m.field} (${m.agg})`
+      }
+    } else if (chart.metric) {
+      tableLabels["value"] = columnLabelMap?.["value"] ?? `${chart.metric} (${chart.agg ?? "sum"})`
     }
+  }
+  if (s.length > 0) {
+    for (const k of Object.keys(s[0])) {
+      if (!tableLabels[k] && columnLabelMap?.[k]) {
+        tableLabels[k] = columnLabelMap[k]
+      }
+    }
+  }
+  return (
+     <div style={{ height: `${rowHeight}px`, overflowY: "hidden", display: "flex", flexDirection: "column" }}>
+      <div className="flex justify-end mb-1 shrink-0">
+        <button
+          onClick={() => exportToExcel(s, tableLabels, (chart as any).titulo ?? "tabla")}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border rounded px-2 py-1 hover:bg-muted/50 transition-colors"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          Excel
+        </button>
+      </div>
+      <SortableTable
+        data={s}
+        rowHeight={(chart as any).tableRowHeight}
+        columnLabels={tableLabels}
+        columnWidths={(chart as any).columnWidths}
+        showTotals={(chart as any).showTotals}
+        showSubtotals={(chart as any).showSubtotals}
+      />
+    </div>
+  )
+}
       if (tipo === "highlights") {
       const items: string[] = ((chart as any).highlightItems ?? []).filter(Boolean)
 
@@ -2128,7 +2605,7 @@ export function DashboardFromConfig({
       
       const photos: Array<{ url: string; field: string; rowData: RowData; index: number }> = []
       
-      filteredRows.forEach((row, rowIndex) => {
+      allSlotsRows.forEach((row, rowIndex) => {
         photoFields.forEach(field => {
           const value = row[field]
           if (!value) return
@@ -2217,7 +2694,7 @@ export function DashboardFromConfig({
         onFiltersChange={setUserFilters}
         availableFields={availableFields}
         campaignId={campaignId}
-        rows={filteredRows}
+        rows={allSlotsRowsUnfiltered}
         cardBackground={branding.filterBackgroundColor}
         cardBorderRadius={branding.filterBorderRadius}
         textColor={branding.filterTextColor}
@@ -2225,7 +2702,7 @@ export function DashboardFromConfig({
       />
       </div>
       {/* KPI cards con grid de 12 columnas */}
-      <div className="grid grid-cols-12 gap-4">
+      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(48, minmax(0, 1fr))" }}>
                 {visibleKpis.map((kpi) => {
           const v = kpiValues[kpi.id] ?? 0
           const columnas = (kpi as ExtendedKPI).columnas || 3
@@ -2259,7 +2736,7 @@ export function DashboardFromConfig({
           <div className="space-y-4">
             {(config.filas ?? []).map((row: DashboardRow) => (
               <div key={row.id} className="grid grid-cols-12 gap-4">
-                {(row.graficos ?? []).map((chart) => (
+                {[...(row.graficos ?? [])].sort((a, b) => ((a as any).orden ?? 999) - ((b as any).orden ?? 999)).map((chart) => (
                   <div
                       key={chart.id}
                       className="border p-4 min-w-0"
@@ -2291,7 +2768,7 @@ export function DashboardFromConfig({
         <TabsContent value="evidencias" className="mt-6">
           {hasPhotos ? (
             <EvidenceGallery 
-              rows={filteredRows} 
+              rows={allSlotsRows} 
               photoFields={photoFields}
               metadataFields={branding.galleryMetadataFields}
               metadataFieldLabels={branding.galleryMetadataFieldLabels}

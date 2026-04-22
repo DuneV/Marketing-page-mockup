@@ -40,9 +40,6 @@ companyUsersRouter.get("/", async (req, res) => {
     const rows = await query(
       `select firebase_uid as uid,
               email,
-              role_in_company as "companyRole",
-              area_id as "areaId",
-              status,
               created_at as "createdAt"
        from marketing.company_users
        where company_id = $1
@@ -172,9 +169,10 @@ companyUsersRouter.post("/", async (req, res) => {
 
     // 4) SQL link
     await query(
-      `insert into marketing.company_users(firebase_uid, company_id, email, role_in_company, area_id, status)
-       values ($1,$2,$3,$4,$5,$6)`,
-      [userRecord.uid, companyId, email, companyRole, areaId, "active"]
+      `INSERT INTO marketing.company_users(firebase_uid, company_id, email)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (firebase_uid, company_id) DO NOTHING`,
+      [userRecord.uid, companyId, email]
     )
 
     return res.json({ ok: true, uid: userRecord.uid })

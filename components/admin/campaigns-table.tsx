@@ -3,7 +3,7 @@ import { memo } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Trash2, Edit, UserPlus, Target, LayoutDashboard } from "lucide-react"
+import { Trash2, Edit, UserPlus, Target, LayoutDashboard,Copy } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import type { Campaign } from "@/types/campaign"
 import { EmptyState } from "./empty-state"
@@ -15,6 +15,7 @@ interface CampaignsTableProps {
   onRowClick: (campaignId: string) => void
   onAssignUser: (campaignId: string) => void
   onReportConfig?: (campaignId: string) => void
+  onClone?: (campaign: Campaign) => void
 }
 
 const statusColors = {
@@ -38,6 +39,7 @@ export const CampaignsTable = memo(function CampaignsTable({
   onRowClick,
   onAssignUser,
   onReportConfig,
+  onClone,
 }: CampaignsTableProps) {
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("es-ES", {
@@ -115,14 +117,7 @@ export const CampaignsTable = memo(function CampaignsTable({
                     {onReportConfig && (
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              onReportConfig(campaign.id)
-                            }}
-                          >
+                          <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onReportConfig(campaign.id) }}>
                             <LayoutDashboard className="h-4 w-4" />
                           </Button>
                         </TooltipTrigger>
@@ -130,16 +125,20 @@ export const CampaignsTable = memo(function CampaignsTable({
                       </Tooltip>
                     )}
 
+                    {onClone && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onClone(campaign) }}>
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Clonar campaña</TooltipContent>
+                      </Tooltip>
+                    )}
+
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onEdit(campaign.id)
-                          }}
-                        >
+                        <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onEdit(campaign.id) }}>
                           <Edit className="h-4 w-4" />
                         </Button>
                       </TooltipTrigger>
@@ -148,14 +147,7 @@ export const CampaignsTable = memo(function CampaignsTable({
 
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onAssignUser(campaign.id)
-                          }}
-                        >
+                        <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onAssignUser(campaign.id) }}>
                           <UserPlus className="h-4 w-4" />
                         </Button>
                       </TooltipTrigger>
@@ -164,15 +156,8 @@ export const CampaignsTable = memo(function CampaignsTable({
 
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onDelete(campaign.id)
-                          }}
-                          className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
-                        >
+                        <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onDelete(campaign.id) }}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950">
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </TooltipTrigger>

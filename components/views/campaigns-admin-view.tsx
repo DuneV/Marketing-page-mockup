@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Target, Plus, TrendingUp, BarChart3 } from "lucide-react"
 import { getAllCampaigns, deleteCampaign, deleteAllCampaignImages, deleteAllCampaignComments } from "@/lib/data/campaigns"
-import { deleteCampaignImports, deleteCampaignReportConfig } from "@/lib/api/campaignApi"
+import { deleteCampaignImports, deleteCampaignReportConfig, cloneCampaign } from "@/lib/api/campaignApi"
 import { getAllCompanies } from "@/lib/data/companies"
 import { assignUserToCampaign } from "@/lib/data/users"
 import { AdminKPICard } from "@/components/admin/admin-kpi-card"
@@ -23,6 +23,9 @@ import { toast } from "sonner"
 import { useAuthRole } from "@/lib/auth/useAuthRole"
 import type { Campaign } from "@/types/campaign"
 import type { Company } from "@/types/company"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
 const statusFilterOptions: FilterOption[] = [
   { value: "planificacion", label: "Planificación" },
@@ -45,11 +48,7 @@ export function CampaignsAdminView() {
   const [statusFilter, setStatusFilter] = useState("all")
   const [reportConfigCampaignId, setReportConfigCampaignId] = useState<string | null>(null)
   const [isReportConfigOpen, setIsReportConfigOpen] = useState(false)
-
-  useEffect(() => {
-    loadData()
-  }, [])
-
+  
   const loadData = useCallback(async () => {
     setIsLoading(true)
     try {
@@ -67,6 +66,30 @@ export function CampaignsAdminView() {
     }
   }, [])
 
+  const [cloneTarget, setCloneTarget] = useState<Campaign | null>(null)
+  const [cloneName, setCloneName] = useState("")
+  const [cloning, setCloning] = useState(false)
+
+  const handleClone = useCallback(async () => {
+    if (!cloneTarget) return
+    setCloning(true)
+    try {
+      const result = await cloneCampaign(cloneTarget.id, cloneName)
+      setCloneTarget(null)
+      toast.success("Campaña clonada", {
+        description: `Nueva campaña creada con ID: ${result.newCampaignId}`,
+      })
+      await loadData()
+    } catch (e: any) {
+      toast.error(`Error al clonar: ${e.message}`)
+    } finally {
+      setCloning(false)
+    }
+  }, [cloneTarget, cloneName, loadData])
+
+  useEffect(() => {
+    loadData()
+  }, [])
   const handleDeleteCampaign = useCallback(async () => {
     if (!deleteCampaignId) return
     const campaign = campaigns.find((c) => c.id === deleteCampaignId)
@@ -254,6 +277,10 @@ export function CampaignsAdminView() {
             onRowClick={handleRowClick}
             onAssignUser={() => {}}
             onReportConfig={handleReportConfigClick}
+            onClone={(campaign) => {      // ← AGREGA
+              setCloneTarget(campaign)
+              setCloneName(`${campaign.nombre} (copia)`)
+            }}
           />
         </CardContent>
       </Card>
@@ -297,6 +324,32 @@ export function CampaignsAdminView() {
           onSaved={loadData}
         />
       )}
+      <Dialog open={!!cloneTarget} onOpenChange={(open) => !open && setCloneTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Clonar campaña</DialogTitle>
+            <DialogDescription>
+              Se copiarán todos los datos, slots e importaciones de "{cloneTarget?.nombre}".
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label>Nombre de la nueva campaña</Label>
+            <Input
+              value={cloneName}
+              onChange={(e) => setCloneName(e.target.value)}
+              placeholder="Nombre de la copia..."
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCloneTarget(null)} disabled={cloning}>
+              Cancelar
+            </Button>
+            <Button onClick={handleClone} disabled={cloning || !cloneName.trim()}>
+              {cloning ? "Clonando..." : "Clonar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -76,6 +76,7 @@
     "topojson-client": "^3.1.0",
     "uuid": "^13.0.0",
     "vaul": "^1.1.2",
+    "xlsx": "^0.18.5",
     "zod": "^4.1.13"
   },
   "devDependencies": {

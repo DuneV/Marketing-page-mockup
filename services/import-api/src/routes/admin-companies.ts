@@ -297,12 +297,21 @@ adminCompaniesRouter.post("/", async (req, res) => {
       ]
     )
 
-    const userRecord = await admin.auth().createUser({
-      email,
-      password: user.password,
-      displayName: user.nombre,
-      disabled: false,
-    })
+    let userRecord: any
+    try {
+      userRecord = await admin.auth().createUser({
+        email,
+        password: user.password,
+        displayName: user.nombre,
+        disabled: false,
+      })
+    } catch (e: any) {
+      if (e?.code === "auth/email-already-exists") {
+        userRecord = await admin.auth().getUserByEmail(email)
+      } else {
+        throw e
+      }
+    }
 
     await admin.auth().setCustomUserClaims(userRecord.uid, {
       role: "company",
@@ -327,11 +336,10 @@ adminCompaniesRouter.post("/", async (req, res) => {
       { merge: true }
     )
 
-    const roleCol = await resolveCompanyUsersRoleCol()
-
     await query(
-      `insert into marketing.company_users(firebase_uid, company_id, email)
-      values ($1,$2,$3)`,
+      `INSERT INTO marketing.company_users(firebase_uid, company_id, email)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (firebase_uid, company_id) DO NOTHING`,
       [userRecord.uid, companyId, email]
     )
 

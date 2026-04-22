@@ -2,6 +2,7 @@
 
 "use client"
 
+import { authHeaders } from "@/lib/api/authHeaders"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
@@ -140,6 +141,14 @@ export function EditCampaignModal({ isOpen, onClose, onSuccess, campaign, compan
       if (data.empresaId !== campaign.empresaId) {
         const selectedCompany = await getCompany(data.empresaId)
         empresaNombre = selectedCompany?.nombre || "Empresa desconocida"
+        
+        const headers = await authHeaders()
+        await fetch(`/api/campaigns/${campaign.id}/transfer-company`, {
+          method: "PATCH",
+          headers: { ...headers, "Content-Type": "application/json" },
+          body: JSON.stringify({ newCompanyId: data.empresaId }),
+        })
+        
       }
 
       // Actualizar campaña

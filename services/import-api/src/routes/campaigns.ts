@@ -1562,3 +1562,152 @@ campaignsRouter.post("/:campaignId/imports/replace", async (req, res) => {
     return res.status(e?.status ?? 500).json({ error: e?.message ?? "error" })
   }
 })
+
+// POST /campaigns/:campaignId/clone
+campaignsRouter.post("/:campaignId/clone", async (req, res) => {
+  try {
+    await requireAdmin(req)
+    const { campaignId } = req.params
+    const { newCampaignName, targetCampaignId: providedTargetId } = req.body as {
+      newCampaignName?: string
+      targetCampaignId?: string
+    }
+
+    // 1. Leer campaña origen en Firestore
+    const sourceDoc = await admin.firestore().collection("campaigns").doc(campaignId).get()
+    if (!sourceDoc.exists) {
+      return res.status(404).json({ error: "SOURCE_CAMPAIGN_NOT_FOUND" })
+    }
+    const sourceData = sourceDoc.data()!
+    const targetCampaignId = providedTargetId ?? crypto.randomUUID()
+
+    // 2. Crear nueva campaña en Firestore
+    const sourceCompanyId = sourceData.empresaId ?? null
+
+    const newCampaignData = {
+      ...sourceData,
+      nombre: newCampaignName ?? `${sourceData.nombre} (copia)`,
+      empresaId: sourceData.empresaId ?? sourceCompanyId,
+      empresaNombre: sourceData.empresaNombre ?? null,
+      fechaCreacion: new Date().toISOString(),
+      fechaActualizacion: new Date().toISOString(),
+    }
+    await admin.firestore().collection("campaigns").doc(targetCampaignId).set(newCampaignData)
+
+    // 3. Copiar report config en GCS (si existe)
+    try {
+      const sourceGsUri = `gs://${bucketName}/${reportConfigObjectPath(campaignId)}`
+      const config = await downloadJson(sourceGsUri) as any
+      config.campaignId = targetCampaignId
+      config.campaignNombre = newCampaignData.nombre
+      config.id = crypto.randomUUID()
+      config.fechaCreacion = new Date().toISOString()
+      config.fechaActualizacion = new Date().toISOString()
+      await uploadJson(reportConfigObjectPath(targetCampaignId), config)
+    } catch {
+      // Sin config, se ignora
+    }
+
+    // 4. Obtener último import DONE por slot
+    const sourceImports = await query<{
+      id: string; source_label: string; company_id: string
+      schema_version: number; original_filename: string; gcs_uri: string
+    }>(
+      `SELECT DISTINCT ON (source_label) id, source_label, company_id, schema_version, original_filename, gcs_uri
+       FROM imports.imports
+       WHERE campaign_id = $1
+         AND import_type = 'campaigns'
+         AND status = 'DONE'
+       ORDER BY source_label, created_at DESC`,
+      [campaignId]
+    )
+
+    const clonedImports: any[] = []
+
+    // 5. Por cada slot: nuevo import + copiar mappings + copiar staging_rows
+    for (const sourceImp of sourceImports) {
+      const newImportId = crypto.randomUUID()
+
+      await query(
+        `INSERT INTO imports.imports
+          (id, company_id, campaign_id, import_type, schema_version, uploaded_by,
+           original_filename, gcs_uri, status, source_label, created_at, updated_at)
+         VALUES ($1,$2,$3,'campaigns',$4,'clone',$5,$6,'DONE',$7,now(),now())`,
+        [newImportId, sourceImp.company_id, targetCampaignId,
+         sourceImp.schema_version, sourceImp.original_filename,
+         sourceImp.gcs_uri, sourceImp.source_label]
+      )
+
+      // Copiar mappings
+      const mappings = await query<{ source_column: string; canonical_field: string }>(
+        `SELECT source_column, canonical_field FROM imports.import_mappings WHERE import_id = $1`,
+        [sourceImp.id]
+      )
+      for (const m of mappings) {
+        await query(
+          `INSERT INTO imports.import_mappings(import_id, source_column, canonical_field) VALUES ($1,$2,$3)`,
+          [newImportId, m.source_column, m.canonical_field]
+        )
+      }
+
+      // Copiar staging_rows en bulk
+      const result = await query<{ count: string }>(
+        `WITH ins AS (
+           INSERT INTO staging.staging_rows(import_id, row_number, data, is_valid)
+           SELECT $1, row_number, data, is_valid
+           FROM staging.staging_rows WHERE import_id = $2
+           RETURNING 1
+         ) SELECT COUNT(*)::text AS count FROM ins`,
+        [newImportId, sourceImp.id]
+      )
+
+      clonedImports.push({
+        sourceLabel: sourceImp.source_label,
+        newImportId,
+        rowsCopied: Number(result[0]?.count ?? 0),
+      })
+    }
+
+    return res.json({
+      ok: true,
+      sourceCampaignId: campaignId,
+      newCampaignId: targetCampaignId,
+      newCampaignName: newCampaignData.nombre,
+      clonedImports,
+    })
+  } catch (e: any) {
+    console.error("clone campaign error:", e)
+    return res.status(e?.status ?? 500).json({ error: e?.message ?? "error" })
+  }
+})
+
+// PATCH /campaigns/:campaignId/transfer-company
+campaignsRouter.patch("/:campaignId/transfer-company", async (req, res) => {
+  try {
+    await requireAdmin(req)
+    const { campaignId } = req.params
+    const { newCompanyId } = req.body as { newCompanyId: string }
+
+    if (!newCompanyId) {
+      return res.status(400).json({ error: "MISSING_NEW_COMPANY_ID" })
+    }
+
+    const result = await query<{ count: string }>(
+      `WITH u AS (
+         UPDATE imports.imports
+         SET company_id = $2, updated_at = now()
+         WHERE campaign_id = $1
+         RETURNING 1
+       ) SELECT COUNT(*)::text AS count FROM u`,
+      [campaignId, newCompanyId]
+    )
+
+    return res.json({
+      ok: true,
+      updatedImports: Number(result[0]?.count ?? 0),
+    })
+  } catch (e: any) {
+    console.error("transfer-company error:", e)
+    return res.status(500).json({ error: e?.message ?? "error" })
+  }
+})

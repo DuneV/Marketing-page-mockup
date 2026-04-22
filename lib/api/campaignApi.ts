@@ -249,3 +249,18 @@ export async function getAssetReadUrl(gcsUri: string, expiresMinutes: number = 6
   const { url } = await res.json()
   return url
 }
+
+export async function cloneCampaign(
+  sourceCampaignId: string,
+  newCampaignName: string,
+  targetCampaignId?: string
+) {
+  const headers = await authHeaders()
+  const res = await fetch(`/api/campaigns/${sourceCampaignId}/clone`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({ newCampaignName, targetCampaignId }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}

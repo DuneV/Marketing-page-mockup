@@ -832,7 +832,7 @@ export function CreateCampaignModal({ isOpen, onClose, onSuccess, companies }: C
                     <CardTitle className="text-base">Mapeo de Columnas</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2 max-h-[300px] overflow-y-auto">
-                    {(preview.headers ?? []).map((h: string) => (
+                    {[...(preview.headers ?? [])].sort((a, b) => a.localeCompare(b, "es")).map((h: string) => (
                       <div key={h} className="flex items-center gap-2">
                         <span className="w-1/3 text-sm font-medium truncate">{h}</span>
                         <SearchableSelect
