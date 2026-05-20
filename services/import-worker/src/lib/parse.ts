@@ -4,16 +4,46 @@ import ExcelJS, { CellValue } from "exceljs"
 import { downloadGs } from "./gcs.js"
 import { query, queryOne } from "./db.js"
 
-function cellToString(v: CellValue | null | undefined) {
-  if (v == null) return ""
-  if (typeof v === "string") return v
-  if (typeof v === "number" || typeof v === "boolean") return String(v)
-  if (v instanceof Date) return v.toISOString()
-  try {
-    return String((v as any)?.result ?? (v as any))
-  } catch {
-    return String(v as any)
+function cellToValue(v: CellValue | null | undefined): any {
+  if (v == null) return null
+  if (typeof v === "string") return v.trim() === "" ? null : v
+  if (typeof v === "boolean") return v ? "SI" : "NO"
+  if (typeof v === "number") return Number.isFinite(v) ? v : null
+  if (v instanceof Date) return v.toISOString().split("T")[0]
+  // Formula result object
+  const result = (v as any)?.result
+  if (result !== undefined) return cellToValue(result)
+  return String(v as any)
+}
+
+function sanitizeCanonical(data: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {}
+  for (const [key, val] of Object.entries(data)) {
+    // Saltar claves vacías o raras
+    if (!key || typeof key !== "string") continue
+
+    if (val == null) { out[key] = null; continue }
+
+    // Números no finitos
+    if (typeof val === "number" && !Number.isFinite(val)) { out[key] = null; continue }
+
+    // Strings demasiado largos (evitar overflow en JSONB)
+    if (typeof val === "string" && val.length > 10000) { out[key] = val.slice(0, 10000); continue }
+
+    // Objetos anidados inesperados — aplanar a string
+    if (typeof val === "object" && !(val instanceof Date)) {
+      out[key] = JSON.stringify(val)
+      continue
+    }
+
+    out[key] = val
   }
+  return out
+}
+
+function cellToString(v: CellValue | null | undefined): string {
+  const val = cellToValue(v)
+  return val == null ? "" : String(val)
 }
 
 function isEmptyValue(v: unknown) {
@@ -165,19 +195,36 @@ export async function processImport(importId: string) {
     }
   })
 
+  const rowBuffer: Array<{ num: number; data: Record<string, any> }> = []
+
+  const flushBuffer = async () => {
+    if (rowBuffer.length === 0) return
+    const valuePlaceholders = rowBuffer.map((_, i) =>
+      `($1, $${i * 3 + 2}, $${i * 3 + 3}, true)`
+    ).join(", ")
+    const flatParams: any[] = [importId]
+    for (const r of rowBuffer) {
+      flatParams.push(r.num, JSON.stringify(r.data))
+    }
+    await query(
+      `INSERT INTO staging.staging_rows(import_id, row_number, data, is_valid) VALUES ${valuePlaceholders}`,
+      flatParams
+    )
+    rowBuffer.length = 0
+  }
+
   let inserted = 0
   let emptyStreak = 0
 
   for (const { row, num: r } of dataRows) {
     const raw: Record<string, any> = {}
     for (const c of columns) {
-      raw[c.header] = row.getCell(c.col).value ?? null
+      raw[c.header] = cellToValue(row.getCell(c.col).value)
     }
 
     const allEmpty = Object.values(raw).every((x) => isEmptyValue(x))
     if (allEmpty) {
       emptyStreak++
-      // 50 filas vacías consecutivas = fin real del dataset
       if (emptyStreak >= 50) break
       continue
     }
@@ -189,13 +236,15 @@ export async function processImport(importId: string) {
       if (target) canonical[target] = value
     }
 
-    await query(
-      `insert into staging.staging_rows(import_id, row_number, data, is_valid)
-       values ($1,$2,$3,true)`,
-      [importId, r, canonical]
-    )
+    rowBuffer.push({ num: r, data: sanitizeCanonical(canonical) })
     inserted++
+
+    if (rowBuffer.length >= 500) {
+      await flushBuffer()
+    }
   }
+
+  await flushBuffer() // flush filas restantes
 
   await query(
     `update imports.imports set status='DONE', summary=$2, updated_at=now() where id=$1`,
