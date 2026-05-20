@@ -1067,6 +1067,7 @@ function FilterPanel({
   cardBorderRadius,
   textColor,
   iconColor,
+  defaultFilterCols = 3,
 }: {
   filters: ReportFilters
   onFiltersChange: (filters: ReportFilters) => void
@@ -1077,6 +1078,7 @@ function FilterPanel({
   cardBorderRadius?: number
   textColor?: string
   iconColor?: string
+  defaultFilterCols?: number
 }) {
   
   const [tempFilters, setTempFilters] = useState<ReportFilters>(filters)
@@ -1181,11 +1183,12 @@ function FilterPanel({
   }
 
   const addCondition = () => {
+    const defaultCols = defaultFilterCols ?? 3
     setTempFilters({
       ...tempFilters,
       condiciones: [
         ...(tempFilters.condiciones || []),
-        { campo: "", operador: "eq", valor: "", columnas: 4 },
+        { campo: "", operador: "eq", valor: "", columnas: defaultCols },
       ],
     })
   }
@@ -1385,7 +1388,7 @@ function FilterPanel({
 }
 
 function GroupedTable({
-  data, groupByField, displayFields, columnLabels, columnWidths, rowHeight,
+  data, groupByField, displayFields, columnLabels, columnWidths, rowHeight, showSubtotals,
 }: {
   data: RowData[]
   groupByField: string
@@ -1393,43 +1396,98 @@ function GroupedTable({
   columnLabels?: Record<string, string>
   columnWidths?: Record<string, number>
   rowHeight?: number
+  showSubtotals?: boolean
 }) {
   const groups = useMemo(() => groupRows(data, groupByField), [data, groupByField])
+  const [sortDir, setSortDir] = useState<"asc" | "desc" | null>(null)
+  const sortedGroups = useMemo(() => {
+    const entries = Array.from(groups.entries())
+    if (!sortDir) return entries
+    return entries.sort(([a], [b]) =>
+      sortDir === "asc"
+        ? a.localeCompare(b, "es", { sensitivity: "base" })
+        : b.localeCompare(a, "es", { sensitivity: "base" })
+    )
+  }, [groups, sortDir])
+  const numericDisplayFields = useMemo(() => {
+    if (!showSubtotals || data.length === 0) return []
+    return displayFields.filter(f =>
+      data.some(r => !isNaN(Number(r[f])) && r[f] !== "" && r[f] != null)
+    )
+  }, [data, displayFields, showSubtotals])
+
+  const allDisplayFields = useMemo(() => {
+    if (!showSubtotals || numericDisplayFields.length === 0) return displayFields
+    return ["__suma__", ...displayFields]
+  }, [displayFields, showSubtotals, numericDisplayFields])
   return (
     <div className="overflow-auto relative">
-      <table className="min-w-[520px] w-full text-sm border-collapse">
+      <table className="min-w-[520px] w-full text-sm border-collapse table-fixed">
+        <colgroup>
+          {[groupByField, ...allDisplayFields].map(k => (
+            <col key={k} style={{ width: columnWidths?.[k] ? `${columnWidths[k]}px` : undefined }} />
+          ))}
+        </colgroup>
         <thead className="sticky top-0 z-10 bg-background">
           <tr className="border-b">
-            {[groupByField, ...displayFields].map(k => (
+            {[groupByField, ...allDisplayFields].map(k => (
               <th key={k}
-                className="text-left px-2 font-medium select-none bg-background border-b shadow-sm"
-                style={{
-                  paddingTop: rowHeight ?? 8,
-                  paddingBottom: rowHeight ?? 8,
-                  width: columnWidths?.[k] ? `${columnWidths[k]}px` : undefined,
+                className="text-left px-2 font-medium select-none bg-background border-b shadow-sm cursor-pointer hover:bg-muted/50 transition-colors"
+                style={{ paddingTop: rowHeight ?? 8, paddingBottom: rowHeight ?? 8,
+                  width: columnWidths?.[k] ? `${columnWidths[k]}px` : undefined }}
+                onClick={() => {
+                  if (k !== groupByField) return
+                  setSortDir(d => d === "asc" ? "desc" : d === "desc" ? null : "asc")
                 }}>
-                {columnLabels?.[k] ?? k}
+                <div className="flex items-center gap-1">
+                  <span>{k === "__suma__" ? "Suma" : (columnLabels?.[k] ?? k)}</span>
+                  {k === groupByField && (
+                    <span className="text-xs text-muted-foreground">
+                      {sortDir === "asc" ? "A→Z" : sortDir === "desc" ? "Z→A" : "↕"}
+                    </span>
+                  )}
+                </div>
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {Array.from(groups.entries()).map(([groupName, rows]) =>
+          {sortedGroups.map(([groupName, rows]) =>
             rows.map((row, rowIdx) => (
               <tr key={`${groupName}_${rowIdx}`} className="border-b hover:bg-muted/30 transition-colors">
                 {rowIdx === 0 && (
                   <td rowSpan={rows.length}
                     className="px-2 font-medium align-middle border-r bg-muted/10"
-                    style={{ paddingTop: rowHeight ?? 8, paddingBottom: rowHeight ?? 8 }}>
+                    style={{
+                      paddingTop: rowHeight ?? 8,
+                      paddingBottom: rowHeight ?? 8,
+                      position: "sticky",
+                      left: 0,
+                      zIndex: 1,
+                      backgroundColor: "var(--background)",
+                    }}>
                     {groupName}
                   </td>
                 )}
-                {displayFields.map(f => (
-                  <td key={f} className="px-2"
-                    style={{ paddingTop: rowHeight ?? 8, paddingBottom: rowHeight ?? 8 }}>
-                    {String(row[f] ?? "")}
-                  </td>
-                ))}
+                {allDisplayFields.map(f => {
+                  if (f === "__suma__") {
+                    if (rowIdx !== 0) return null
+                    const groupSum = rows.reduce((acc, r) =>
+                      acc + numericDisplayFields.reduce((s, col) => s + (Number(r[col]) || 0), 0), 0)
+                    return (
+                      <td key={f} rowSpan={rows.length} className="px-2 font-medium align-middle"
+                        style={{ paddingTop: rowHeight ?? 8, paddingBottom: rowHeight ?? 8 }}>
+                        {groupSum.toLocaleString("es-CO")}
+                      </td>
+                    )
+                  }
+                  return (
+                    <td key={f} className="px-2"
+                      style={{ paddingTop: rowHeight ?? 8, paddingBottom: rowHeight ?? 8 }}>
+                      {String(row[f] ?? "")}
+                    </td>
+                  )
+                })}
               </tr>
             ))
           )}
@@ -2106,16 +2164,37 @@ export function DashboardFromConfig({
           return point
         })
 
+        const isHorizontal = (chart as any).barOrientation === "horizontal"
+        const stackId = (chart as any).barMode === "stacked" ? "stack" : undefined
+        const ChartComponent = isHorizontal ? BarChart : BarChart
+        
         return (
           <ResponsiveContainer width="100%" height={rowHeight}>
-            <BarChart data={chartData}>
+            <BarChart
+              data={chartData}
+              layout={isHorizontal ? "vertical" : "horizontal"}
+            >
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" />
-              <YAxis />
+              {isHorizontal ? (
+                <>
+                  <XAxis type="number" tickFormatter={(v) => `${v}`} />
+                  <YAxis type="category" dataKey="name" width={80} />
+                </>
+              ) : (
+                <>
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                </>
+              )}
               <Tooltip />
               <Legend />
               {slotSeries.map((ss, idx) => (
-                <Bar key={ss.label} dataKey={ss.label} fill={(ss as any).color || palette[idx % palette.length]} />
+                <Bar
+                  key={ss.label}
+                  dataKey={ss.label}
+                  stackId={stackId}
+                  fill={(ss as any).color || palette[idx % palette.length]}
+                />
               ))}
             </BarChart>
           </ResponsiveContainer>
@@ -2340,13 +2419,51 @@ export function DashboardFromConfig({
         
         const groupDisplayField = (chart as any).groupDisplayField as string ?? chart.groupBy as string ?? ""
         const rawFields = (chart as any).rawFields as string[] ?? []
-        const groupedTotals = (chart as any).showTotals
+        const collapseToSum = !!(chart as any).collapseToSum
+        const tableRows = collapseToSum
           ? (() => {
-              const totals: Record<string, any> = {}
+              // Detectar cuáles rawFields son texto (se usan como sub-agrupación)
+              const textRawFields = rawFields.filter(f =>
+                chartRows.some(r => r[f] != null && r[f] !== "" && isNaN(Number(r[f])))
+              )
               const numericRawFields = rawFields.filter(f =>
+                !textRawFields.includes(f) &&
                 chartRows.some(r => !isNaN(Number(r[f])) && r[f] !== "" && r[f] != null)
               )
+
+              // Agrupar por groupDisplayField + todos los campos de texto
+              const groupKeys = [groupDisplayField, ...textRawFields]
+              const aggregated = new Map<string, Record<string, any>>()
+
+              for (const row of chartRows) {
+                const key = groupKeys.map(k => String(row[k] ?? "")).join("||")
+                if (!aggregated.has(key)) {
+                  const r: Record<string, any> = {}
+                  groupKeys.forEach(k => { r[k] = row[k] ?? "" })
+                  numericRawFields.forEach(f => { r[f] = 0 })
+                  aggregated.set(key, r)
+                }
+                const acc = aggregated.get(key)!
+                numericRawFields.forEach(f => {
+                  acc[f] = (acc[f] || 0) + (Number(row[f]) || 0)
+                })
+              }
+
+              return Array.from(aggregated.values())
+            })()
+          : chartRows
+        const groupedTotals = (chart as any).showTotals
+          ? (() => {
+              const sourceRows = tableRows
+              const totals: Record<string, any> = {}
+              const numericRawFields = rawFields.filter(f =>
+                sourceRows.some(r => !isNaN(Number(r[f])) && r[f] !== "" && r[f] != null)
+              )
               totals[groupDisplayField] = "Total"
+              if ((chart as any).showSubtotals && numericRawFields.length > 0) {
+                totals["__suma__"] = chartRows.reduce((acc, r) =>
+                  acc + numericRawFields.reduce((s, f) => s + (Number(r[f]) || 0), 0), 0)
+              }
               for (const f of rawFields) {
                 if (numericRawFields.includes(f)) {
                   totals[f] = chartRows.reduce((acc, r) => acc + (Number(r[f]) || 0), 0)
@@ -2377,23 +2494,46 @@ export function DashboardFromConfig({
               </button>
             </div>
             <div className="overflow-auto flex-1">
-              <GroupedTable
-                data={chartRows}
-                groupByField={groupDisplayField}
-                displayFields={rawFields}
-                columnLabels={columnLabelMap}
-                columnWidths={(chart as any).columnWidths}
-                rowHeight={(chart as any).tableRowHeight}
-              />
+              {collapseToSum ? (
+                <SortableTable
+                  data={tableRows}
+                  columnLabels={columnLabelMap}
+                  columnWidths={(chart as any).columnWidths}
+                  rowHeight={(chart as any).tableRowHeight}
+                  showSubtotals={(chart as any).showSubtotals}
+                />
+              ) : (
+                <GroupedTable
+                  data={tableRows}
+                  groupByField={groupDisplayField}
+                  displayFields={rawFields}
+                  columnLabels={columnLabelMap}
+                  columnWidths={(chart as any).columnWidths}
+                  rowHeight={(chart as any).tableRowHeight}
+                  showSubtotals={(chart as any).showSubtotals}
+                />
+              )}
             </div>
             {groupedTotals && (
-              <div className="shrink-0 border-t-2 bg-muted/20 overflow-hidden">
-                <table className="min-w-[520px] w-full text-sm">
+              <div className="shrink-0 border-t-2 bg-muted/20 overflow-hidden" style={{ marginLeft: "-3px" }}>
+                <table className="min-w-[520px] w-full text-sm border-collapse">
+                  <colgroup>
+                    {[groupDisplayField, ...((chart as any).showSubtotals ? ["__suma__", ...rawFields] : rawFields)].map((k) => (
+                      <col key={k} style={{
+                        width: (chart as any).columnWidths?.[k] ? `${(chart as any).columnWidths[k]}px` : undefined,
+                        minWidth: (chart as any).columnWidths?.[k] ? `${(chart as any).columnWidths[k]}px` : undefined,
+                      }} />
+                    ))}
+                  </colgroup>
                   <tbody>
                     <tr>
-                      {[groupDisplayField, ...rawFields].map((k) => (
+                      {[groupDisplayField, ...((chart as any).showSubtotals ? ["__suma__", ...rawFields] : rawFields)].map((k) => (
                         <td key={k} className="px-2 font-semibold"
-                          style={{ paddingTop: (chart as any).tableRowHeight ?? 8, paddingBottom: (chart as any).tableRowHeight ?? 8 }}>
+                          style={{
+                            paddingTop: (chart as any).tableRowHeight ?? 8,
+                            paddingBottom: (chart as any).tableRowHeight ?? 8,
+                            width: (chart as any).columnWidths?.[k] ? `${(chart as any).columnWidths[k]}px` : undefined,
+                          }}>
                           {typeof groupedTotals[k] === "number"
                             ? groupedTotals[k].toLocaleString("es-CO")
                             : groupedTotals[k] ?? ""}
@@ -2563,8 +2703,8 @@ export function DashboardFromConfig({
   // Prioridad 1: Usar configuración manual del builder
   // Prioridad 2: Auto-detección por nombre de campo y contenido
   const photoFields = useMemo(() => {
-    // Si hay configuración manual, usarla
-    if (branding.galleryPhotoFields && branding.galleryPhotoFields.length > 0) {
+    // Si galleryPhotoFields existe (aunque sea vacío), respetar la configuración manual
+    if (branding.galleryPhotoFields !== undefined) {
       return branding.galleryPhotoFields.filter(Boolean)
     }
 
@@ -2699,6 +2839,7 @@ export function DashboardFromConfig({
         cardBorderRadius={branding.filterBorderRadius}
         textColor={branding.filterTextColor}
         iconColor={branding.filterIconColor}
+        defaultFilterCols={(config as any).defaultFilterCols ?? 3}
       />
       </div>
       {/* KPI cards con grid de 12 columnas */}

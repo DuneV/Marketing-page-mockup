@@ -517,14 +517,16 @@ export function ReportConfigBuilderCampaign({ campaign, open, onOpenChange, onSa
     return availableFields
       .filter((f) => f.type === "text" || f.type === "date" || f.type === "boolean" || f.type === "unknown")
       .filter((f) => { if (seen.has(f.name)) return false; seen.add(f.name); return true })
+      .sort((a, b) => a.name.localeCompare(b.name, "es"))  
   }, [availableFields])
   const numericFields = useMemo(() => {
     const seen = new Set<string>()
     return availableFields
       .filter((f) => f.type === "number")
       .filter((f) => { if (seen.has(f.name)) return false; seen.add(f.name); return true })
-  }, [availableFields])
-  const allFieldNames = useMemo(() => Array.from(new Set(availableFields.map((f) => f.name))), [availableFields])
+      .sort((a, b) => a.name.localeCompare(b.name, "es"))
+      }, [availableFields])
+  const allFieldNames = useMemo(() => Array.from(new Set(availableFields.map((f) => f.name))).sort((a, b) => a.localeCompare(b, "es")), [availableFields])
   // Campos únicos por nombre para dropdowns globales (sin contexto de slot)
   const uniqueFields = useMemo(() => {
     const seen = new Set<string>()
@@ -533,6 +535,7 @@ export function ReportConfigBuilderCampaign({ campaign, open, onOpenChange, onSa
       seen.add(f.name)
       return true
     })
+    .sort((a, b) => a.name.localeCompare(b.name, "es"))
   }, [availableFields])
 
   const getValidOperationsForType = (type: AvailableField["type"]): KPIOperation[] => {
@@ -2103,7 +2106,25 @@ export function ReportConfigBuilderCampaign({ campaign, open, onOpenChange, onSa
                     </SelectContent>
                   </Select>
                 </div>
+
                 <CardContent className="space-y-3">
+                  <div className="flex items-center gap-3 mb-2">
+                    <Label className="text-xs whitespace-nowrap">Ancho por defecto de filtros (1-12 cols)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={12}
+                      className="h-8 w-20"
+                      value={(config as any).defaultFilterCols ?? 3}
+                      onChange={(e) => {
+                        const val = Math.max(1, Math.min(12, parseInt(e.target.value) || 3))
+                        setConfig({ ...config, defaultFilterCols: val } as any)
+                      }}
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      {Math.round(((config as any).defaultFilterCols ?? 3) / 12 * 100)}% del ancho
+                    </span>
+                  </div>
                   <Button
                     size="sm"
                     variant="outline"
@@ -2115,7 +2136,7 @@ export function ReportConfigBuilderCampaign({ campaign, open, onOpenChange, onSa
                         campo: first.name as any,
                         operador: ((first as any)?.operators?.[0] ?? "eq") as any,
                         valor: "",
-                        columnas: 4, // NUEVO: default 4 columnas
+                        columnas: (config as any).defaultFilterCols ?? 3, // NUEVO: default 4 columnas
                       } as any)
                       setConfig({ ...config, filtros: { ...config.filtros, condiciones: next } })
                     }}
@@ -2590,10 +2611,24 @@ export function ReportConfigBuilderCampaign({ campaign, open, onOpenChange, onSa
                             <div className="border rounded-lg p-3 bg-background space-y-3">
                               <Label className="text-xs">Expresión libre</Label>
                               <div className="space-y-1">
-                                <Input
-                                  className="h-8 font-mono text-xs"
-                                  value={kpi.expression ?? ""}
-                                  onChange={(e) => updateKPI(kpi.id, { expression: e.target.value })}
+                      
+                                <textarea
+                                  className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 font-mono text-xs resize-y outline-none focus:ring-1 focus:ring-ring"
+                                  value={
+                                    (kpi.expression ?? "")
+                                      .replace(/\{kpi:([^}]+)\}/g, (_, id) => {
+                                        const found = kpisTyped.find(k => k.id === id.trim())
+                                        return found ? `⟨${found.nombre}⟩` : `⟨?⟩`
+                                      })
+                                  }
+                                  onChange={(e) => {
+                                    // Convertir ⟨Nombre⟩ de vuelta a {kpi:uuid}
+                                    const raw = e.target.value.replace(/⟨([^⟩]+)⟩/g, (_, nombre) => {
+                                      const found = kpisTyped.find(k => k.nombre === nombre.trim())
+                                      return found ? `{kpi:${found.id}}` : `⟨${nombre}⟩`
+                                    })
+                                    updateKPI(kpi.id, { expression: raw })
+                                  }}
                                   placeholder="[Campo1] + {const_1} * 0.5"
                                 />
                                 <p className="text-[11px] text-muted-foreground">
@@ -3705,9 +3740,22 @@ export function ReportConfigBuilderCampaign({ campaign, open, onOpenChange, onSa
                                           } as any)
                                         }}
                                       />
+                                      
                                     </div>
                                       {(chart as AnyChart).displayMode === "grouped_rows" && (
-                                        <div className="space-y-3">
+                                         <>
+                                          <div className="flex items-center justify-between border-t pt-2">
+                                            <div>
+                                              <Label className="text-xs">Colapsar a una fila por grupo (sumar)</Label>
+                                              <p className="text-[11px] text-muted-foreground">Muestra una fila por ciudad con la suma de cada columna</p>
+                                            </div>
+                                            <Switch
+                                              checked={!!((chart as AnyChart) as any).collapseToSum}
+                                              onCheckedChange={(checked) => updateChart(row.id, chart.id, { collapseToSum: checked } as any)}
+                                            />
+                                          </div>
+
+                                          <div className="space-y-3">
                                           <div>
                                             <Label className="text-xs">Campo de agrupación visual</Label>
                                             <Select
@@ -3755,9 +3803,10 @@ export function ReportConfigBuilderCampaign({ campaign, open, onOpenChange, onSa
                                               }}
                                             >
                                               <Plus className="h-3 w-3 mr-1" /> Agregar columna
-                                            </Button>
+                                             </Button>
                                           </div>
                                         </div>
+                                      </>
                                       )}
                                     </div>
                                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-2">
@@ -3849,19 +3898,20 @@ export function ReportConfigBuilderCampaign({ campaign, open, onOpenChange, onSa
                                       </p>
                                       {Object.entries((chart as AnyChart).columnLabelMap ?? {}).map(([col, lbl], cidx) => (
                                         <div key={cidx} className="flex gap-2 items-center">
-                                          <Input
+                                          <DebouncedInput
                                             className="h-7 flex-1 font-mono text-xs"
                                             value={col}
                                             placeholder="clave"
                                             onChange={(e) => {
-                                              const old = { ...((chart as AnyChart).columnLabelMap ?? {}) }
-                                              const val = old[col]
-                                              delete old[col]
-                                              if (e.target.value) old[e.target.value] = val
-                                              updateChart(row.id, chart.id, { columnLabelMap: old } as any)
+                                              const entries = Object.entries(
+                                                (chart as AnyChart).columnLabelMap ?? {}
+                                              ).map(([k, v]) => k === col ? [e.target.value, v] : [k, v])
+                                              updateChart(row.id, chart.id, { 
+                                                columnLabelMap: Object.fromEntries(entries) 
+                                              } as any)
                                             }}
                                           />
-                                          <Input
+                                          <DebouncedInput
                                             className="h-7 flex-1 text-xs"
                                             value={lbl}
                                             placeholder="Etiqueta visible"
