@@ -58,6 +58,7 @@ export type KPIOperation =
   | "mean"            // Promedio
   | "sum"             // Suma
   | "count"           // Conteo
+  | "countDistinct"
   | "max"             // Máximo
   | "min"             // Mínimo
   | "median"          // Mediana

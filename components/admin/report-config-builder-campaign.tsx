@@ -361,6 +361,146 @@ function Input({
     />
   )
 }
+
+// -----------------------------
+// Helper: opciones de campo para expresiones, con estado de join
+// -----------------------------
+function buildComputedColumnFieldOptions(
+  chart: AnyChart,
+  availableFields: AvailableField[],
+  slotFieldMap: { from: string; to: string; slot: string }[]
+): { token: string; label: string; slot: string; joined: boolean }[] {
+  const primarySlot = chart.sourceLabel ?? "primary"
+  const groupField = (chart as any).groupDisplayField ?? (chart.groupBy as string) ?? ""
+
+  // Slots que tienen un mapeo configurado desde el campo de agrupación actual
+  const joinedSlots = new Set(
+    slotFieldMap.filter((m) => m.from === groupField).map((m) => m.slot)
+  )
+
+  const slots = Array.from(
+    new Set(["primary", ...availableFields.map((f) => (f as any).sourceLabel).filter(Boolean)])
+  )
+
+  const options: { token: string; label: string; slot: string; joined: boolean }[] = []
+  for (const slot of slots) {
+    const isJoined = slot === primarySlot || joinedSlots.has(slot)
+    const numericFieldsInSlot = availableFields.filter(
+      (f) => ((f as any).sourceLabel ?? "primary") === slot && f.type === "number"
+    )
+    for (const f of numericFieldsInSlot) {
+      const token = slot === primarySlot ? f.name : `${slot}::${f.name}`
+      options.push({ token, label: f.name, slot, joined: isJoined })
+    }
+  }
+  return options
+}
+
+// -----------------------------
+// Input de expresión con autocompletado [Campo] + indicador de join
+// -----------------------------
+function ExpressionFieldInput({
+  value,
+  onChange,
+  fieldOptions,
+  placeholder,
+}: {
+  value: string
+  onChange: (v: string) => void
+  fieldOptions: { token: string; label: string; slot: string; joined: boolean }[]
+  placeholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState("")
+  const [bracketStart, setBracketStart] = useState<number | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  const checkForBracket = (text: string, cursorPos: number) => {
+    const upToCursor = text.slice(0, cursorPos)
+    const lastOpen = upToCursor.lastIndexOf("[")
+    const lastClose = upToCursor.lastIndexOf("]")
+    if (lastOpen > lastClose) {
+      setBracketStart(lastOpen)
+      setQuery(upToCursor.slice(lastOpen + 1))
+      setOpen(true)
+    } else {
+      setOpen(false)
+      setBracketStart(null)
+    }
+  }
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const text = e.target.value
+    onChange(text)
+    checkForBracket(text, e.target.selectionStart ?? text.length)
+  }
+
+  const handleSelect = (token: string) => {
+    if (bracketStart === null || !inputRef.current) return
+    const cursorPos = inputRef.current.selectionStart ?? value.length
+    const before = value.slice(0, bracketStart)
+    const after = value.slice(cursorPos)
+    const next = `${before}[${token}]${after}`
+    onChange(next)
+    setOpen(false)
+    setBracketStart(null)
+    setQuery("")
+    requestAnimationFrame(() => {
+      const pos = before.length + token.length + 2
+      inputRef.current?.focus()
+      inputRef.current?.setSelectionRange(pos, pos)
+    })
+  }
+
+  const filtered = fieldOptions.filter(
+    (f) =>
+      f.token.toLowerCase().includes(query.toLowerCase()) ||
+      f.label.toLowerCase().includes(query.toLowerCase())
+  )
+
+  return (
+    <div className="relative">
+      <BaseInput
+        ref={inputRef}
+        className="h-7 text-xs font-mono"
+        placeholder={placeholder}
+        value={value}
+        onChange={handleChange}
+        onKeyUp={(e) =>
+          checkForBracket((e.target as HTMLInputElement).value, (e.target as HTMLInputElement).selectionStart ?? 0)
+        }
+        onFocus={(e) => checkForBracket(e.target.value, e.target.selectionStart ?? 0)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {open && (
+        <div className="absolute z-50 mt-1 w-72 max-h-56 overflow-y-auto bg-background border rounded shadow-lg text-xs">
+          {filtered.length === 0 ? (
+            <div className="px-2 py-1.5 text-muted-foreground italic">Sin resultados</div>
+          ) : (
+            filtered.map((f) => (
+              <div
+                key={f.token}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  handleSelect(f.token)
+                }}
+                className="px-2 py-1.5 cursor-pointer hover:bg-muted flex items-center gap-2"
+              >
+                <span
+                  className={`h-2 w-2 rounded-full shrink-0 ${f.joined ? "bg-green-500" : "bg-red-500"}`}
+                  title={f.joined ? "Slot enlazado (join configurado)" : "Sin join — puede no coincidir en cantidad de filas"}
+                />
+                <span className="font-mono flex-1 truncate">{f.token}</span>
+                <span className="text-[10px] text-muted-foreground shrink-0">{f.slot}</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // -----------------------------
 // Main component
 // -----------------------------
@@ -539,8 +679,8 @@ export function ReportConfigBuilderCampaign({ campaign, open, onOpenChange, onSa
   }, [availableFields])
 
   const getValidOperationsForType = (type: AvailableField["type"]): KPIOperation[] => {
-    if (type === "number") return ["sum", "mean", "min", "max", "count", "median", "std", "variance"]
-    return ["count"]
+    if (type === "number") return ["sum", "mean", "min", "max", "count", "countDistinct", "median", "std", "variance"]
+    return ["count", "countDistinct"]
   }
 
   const getNumericAggOps = (): KPIOperation[] => getValidOperationsForType("number")
@@ -986,6 +1126,26 @@ export function ReportConfigBuilderCampaign({ campaign, open, onOpenChange, onSa
         return
       }
 
+      // Recalcular columnOrder de cada gráfico basado en el estado actual del builder
+      for (const fila of fullToSave.filas ?? []) {
+        for (const chart of fila.graficos ?? []) {
+          if ((chart as any).displayMode === "grouped_rows") {
+            const allCols = [
+              ...((chart as any).rawFields ?? []),
+              ...((chart as any).extraSlotColumns ?? []).map((ec: any) => ec.label).filter(Boolean),
+              ...((chart as any).computedColumns ?? []).map((cc: any) => cc.label).filter(Boolean),
+            ].filter(Boolean)
+
+            const existingOrder: string[] = (chart as any).columnOrder ?? []
+            const recomputed = [
+              ...existingOrder.filter((f: string) => allCols.includes(f)),
+              ...allCols.filter(f => !existingOrder.includes(f))
+            ]
+            ;(chart as any).columnOrder = recomputed
+          }
+        }
+      }
+
       await saveCampaignReportConfig(campaign.id, fullToSave as any)
 
       setValidationErrors([])
@@ -1192,7 +1352,7 @@ export function ReportConfigBuilderCampaign({ campaign, open, onOpenChange, onSa
                         <Label className="text-xs">Preview</Label>
                         <div 
                           className="mt-2 rounded-lg border overflow-hidden relative bg-muted"
-                          style={{ height: `${branding.heroImageHeight || 160}px` }}
+                          style={{ height: `${Number(branding.heroImageHeight) || 160}px` }}
                         >
                           {/* CASO 1: Cache base64 (upload reciente) */}
                           {branding._previewCache?.heroImageBase64 ? (
@@ -2578,7 +2738,7 @@ export function ReportConfigBuilderCampaign({ campaign, open, onOpenChange, onSa
                                 </Select>
                               </div>
 
-                              {kpi.operacion === "count" && (
+                              {(kpi.operacion === "count" || (kpi.operacion as string) === "countDistinct") && (
                                 <div className="md:col-span-12">
                                   <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
                                     <div className="md:col-span-8">
@@ -3638,9 +3798,197 @@ export function ReportConfigBuilderCampaign({ campaign, open, onOpenChange, onSa
                                       }}>
                                         <Plus className="h-3 w-3 mr-1" /> Agregar slot
                                       </Button>
+
+                                      {/* Series calculadas */}
+                                      <div className="border-t pt-2 space-y-2 mt-2">
+                                        <Label className="text-xs font-medium">Series calculadas</Label>
+                                        {(((chart as AnyChart) as any).computedSeries ?? []).map((cs: any, idx: number) => (
+                                          <div key={idx} className="flex gap-2 items-center flex-wrap border rounded p-2">
+                                            <Input className="h-7 text-xs w-28" placeholder="Etiqueta" value={cs.label ?? ""}
+                                              onChange={(e) => {
+                                                const next = [...((chart as AnyChart as any).computedSeries ?? [])]
+                                                next[idx] = { ...next[idx], label: e.target.value }
+                                                updateChart(row.id, chart.id, { computedSeries: next } as any)
+                                              }} />
+                                            <Select value={cs.op ?? "sub"} onValueChange={(v) => {
+                                              const next = [...((chart as AnyChart as any).computedSeries ?? [])]
+                                              next[idx] = { ...next[idx], op: v }
+                                              updateChart(row.id, chart.id, { computedSeries: next } as any)
+                                            }}>
+                                              <SelectTrigger className="h-7 w-20 text-xs"><SelectValue /></SelectTrigger>
+                                              <SelectContent>
+                                                <SelectItem value="sum">Suma (+)</SelectItem>
+                                                <SelectItem value="sub">Resta (-)</SelectItem>
+                                                <SelectItem value="div">División (÷)</SelectItem>
+                                                <SelectItem value="pct">Porcentaje (%)</SelectItem>
+                                              </SelectContent>
+                                            </Select>
+                                            {(cs.fields ?? []).map((f: string, fidx: number) => (
+                                              <Select key={fidx} value={f} onValueChange={(v) => {
+                                                const next = [...((chart as AnyChart as any).computedSeries ?? [])]
+                                                const fields = [...(next[idx].fields ?? [])]
+                                                fields[fidx] = v
+                                                next[idx] = { ...next[idx], fields }
+                                                updateChart(row.id, chart.id, { computedSeries: next } as any)
+                                              }}>
+                                                <SelectTrigger className="h-7 w-28 text-xs"><SelectValue placeholder="Campo..." /></SelectTrigger>
+                                                <SelectContent>
+                                                  {/* Series de slotSeries */}
+                                                  {(((chart as AnyChart) as any).slotSeries ?? []).length > 0 && (
+                                                    <div>
+                                                      <div className="px-2 py-1 text-[10px] text-muted-foreground font-medium uppercase">Series</div>
+                                                      {(((chart as AnyChart) as any).slotSeries ?? []).map((ss: any) => (
+                                                        <SelectItem key={ss.label} value={ss.label}>{ss.label}</SelectItem>
+                                                      ))}
+                                                    </div>
+                                                  )}
+                                                  {/* Campos directos por slot */}
+                                                  {Array.from(new Set(["primary", ...availableFields.map(f => (f as any).sourceLabel).filter(Boolean)])).map(slot => (
+                                                    <div key={slot}>
+                                                      <div className="px-2 py-1 text-[10px] text-muted-foreground font-medium uppercase border-t">{slot}</div>
+                                                      {availableFields
+                                                        .filter(f => ((f as any).sourceLabel ?? "primary") === slot && f.type === "number")
+                                                        .map(af => {
+                                                          const val = slot === (chart.sourceLabel ?? "primary") ? af.name : `${slot}::${af.name}`
+                                                          return <SelectItem key={val} value={val}>{af.name}</SelectItem>
+                                                        })
+                                                      }
+                                                    </div>
+                                                  ))}
+                                                </SelectContent>
+                                              </Select>
+                                            ))}
+                                            <Button size="sm" variant="outline" className="h-7 text-xs px-2"
+                                              onClick={() => {
+                                                const next = [...((chart as AnyChart as any).computedSeries ?? [])]
+                                                next[idx] = { ...next[idx], fields: [...(next[idx].fields ?? []), ""] }
+                                                updateChart(row.id, chart.id, { computedSeries: next } as any)
+                                              }}>+ Campo</Button>
+                                            <div className="h-7 w-7 rounded border overflow-hidden shrink-0">
+                                              <input type="color" value={cs.color ?? "#6366f1"}
+                                                onChange={(e) => {
+                                                  const next = [...((chart as AnyChart as any).computedSeries ?? [])]
+                                                  next[idx] = { ...next[idx], color: e.target.value }
+                                                  updateChart(row.id, chart.id, { computedSeries: next } as any)
+                                                }}
+                                                className="h-full w-full p-0 border-0 cursor-pointer" />
+                                            </div>
+                                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
+                                              onClick={() => {
+                                                const next = ((chart as AnyChart as any).computedSeries ?? []).filter((_: any, i: number) => i !== idx)
+                                                updateChart(row.id, chart.id, { computedSeries: next } as any)
+                                              }}>
+                                              <Trash2 className="h-3 w-3 text-destructive" />
+                                            </Button>
+                                          </div>
+                                        ))}
+                                       <Button size="sm" variant="outline" className="h-7 text-xs"
+                                          onClick={() => {
+                                            const next = [...((chart as AnyChart as any).computedSeries ?? []), { label: "Diferencia", op: "sub", fields: [] }]
+                                            updateChart(row.id, chart.id, { computedSeries: next } as any)
+                                          }}>
+                                          <Plus className="h-3 w-3 mr-1" /> Serie calculada
+                                        </Button>
+                                      </div>
                                     </div>
                                   )}
                                 </div>
+
+                                {/* Series calculadas — visible para torta y barras sin multi-slot */}
+                                {(["barras", "torta"].includes(chart.tipo as string)) && !((chart as AnyChart) as any).slotSeries && (
+                                  <div className="border rounded p-2 bg-background space-y-2">
+                                    <Label className="text-xs font-medium">Series calculadas</Label>
+                                    {(((chart as AnyChart) as any).computedSeries ?? []).map((cs: any, idx: number) => (
+                                      <div key={idx} className="flex gap-2 items-center flex-wrap border rounded p-2">
+                                        <Input className="h-7 text-xs w-28" placeholder="Etiqueta" value={cs.label ?? ""}
+                                          onChange={(e) => {
+                                            const next = [...((chart as AnyChart as any).computedSeries ?? [])]
+                                            next[idx] = { ...next[idx], label: e.target.value }
+                                            updateChart(row.id, chart.id, { computedSeries: next } as any)
+                                          }} />
+                                        <Select value={cs.op ?? "sum"} onValueChange={(v) => {
+                                          const next = [...((chart as AnyChart as any).computedSeries ?? [])]
+                                          next[idx] = { ...next[idx], op: v }
+                                          updateChart(row.id, chart.id, { computedSeries: next } as any)
+                                        }}>
+                                          <SelectTrigger className="h-7 w-20 text-xs"><SelectValue /></SelectTrigger>
+                                          <SelectContent>
+                                            <SelectItem value="sum">Suma (+)</SelectItem>
+                                            <SelectItem value="sub">Resta (-)</SelectItem>
+                                            <SelectItem value="div">División (÷)</SelectItem>
+                                            <SelectItem value="pct">Porcentaje (%)</SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                        {(cs.fields ?? []).map((f: string, fidx: number) => (
+                                          <Select key={fidx} value={f} onValueChange={(v) => {
+                                            const next = [...((chart as AnyChart as any).computedSeries ?? [])]
+                                            const fields = [...(next[idx].fields ?? [])]
+                                            fields[fidx] = v
+                                            next[idx] = { ...next[idx], fields }
+                                            updateChart(row.id, chart.id, { computedSeries: next } as any)
+                                          }}>
+                                            <SelectTrigger className="h-7 w-28 text-xs"><SelectValue placeholder="Campo..." /></SelectTrigger>
+                                            <SelectContent>
+                                              {Array.from(new Set(["primary", ...availableFields.map(f => (f as any).sourceLabel).filter(Boolean)])).map(slot => (
+                                                <div key={slot}>
+                                                  <div className="px-2 py-1 text-[10px] text-muted-foreground font-medium uppercase border-t first:border-t-0">{slot}</div>
+                                                  {availableFields
+                                                    .filter(f => ((f as any).sourceLabel ?? "primary") === slot && f.type === "number")
+                                                    .map(af => {
+                                                      const val = slot === (chart.sourceLabel ?? "primary") ? af.name : `${slot}::${af.name}`
+                                                      return <SelectItem key={val} value={val}>{af.name}</SelectItem>
+                                                    })
+                                                  }
+                                                </div>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
+                                        ))}
+                                        <Button size="sm" variant="outline" className="h-7 text-xs px-2"
+                                          onClick={() => {
+                                            const next = [...((chart as AnyChart as any).computedSeries ?? [])]
+                                            next[idx] = { ...next[idx], fields: [...(next[idx].fields ?? []), ""] }
+                                            updateChart(row.id, chart.id, { computedSeries: next } as any)
+                                          }}>+ Campo</Button>
+                                        <div className="h-7 w-7 rounded border overflow-hidden shrink-0">
+                                          <input type="color" value={cs.color ?? "#6366f1"}
+                                            onChange={(e) => {
+                                              const next = [...((chart as AnyChart as any).computedSeries ?? [])]
+                                              next[idx] = { ...next[idx], color: e.target.value }
+                                              updateChart(row.id, chart.id, { computedSeries: next } as any)
+                                            }}
+                                            className="h-full w-full p-0 border-0 cursor-pointer" />
+                                        </div>
+                                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
+                                          onClick={() => {
+                                            const next = ((chart as AnyChart as any).computedSeries ?? []).filter((_: any, i: number) => i !== idx)
+                                            updateChart(row.id, chart.id, { computedSeries: next } as any)
+                                          }}>
+                                          <Trash2 className="h-3 w-3 text-destructive" />
+                                        </Button>
+                                      </div>
+                                    ))}
+                                    <Button size="sm" variant="outline" className="h-7 text-xs"
+                                      onClick={() => {
+                                        const next = [...((chart as AnyChart as any).computedSeries ?? []), { label: "Nueva serie", op: "sum", fields: [] }]
+                                        updateChart(row.id, chart.id, { computedSeries: next } as any)
+                                      }}>
+                                      <Plus className="h-3 w-3 mr-1" /> Serie calculada
+                                    </Button>
+                                  </div>
+                                )}
+                                {/* Porcentaje en torta */}
+                                {(chart.tipo as string) === "torta" && (
+                                  <div className="flex items-center justify-between border rounded p-2 bg-background">
+                                    <Label className="text-xs">Mostrar porcentajes en la torta</Label>
+                                    <Switch
+                                      checked={!!((chart as any).showPercent)}
+                                      onCheckedChange={(checked) =>
+                                        updateChart(row.id, chart.id, { showPercent: checked } as any)
+                                      }
+                                    />
+                                  </div>
+                                )}
                                 {/* Bar size + reference KPI */}
                                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 mt-2">
                                   <div className="lg:col-span-3">
@@ -3804,6 +4152,253 @@ export function ReportConfigBuilderCampaign({ campaign, open, onOpenChange, onSa
                                             >
                                               <Plus className="h-3 w-3 mr-1" /> Agregar columna
                                              </Button>
+                                             {/* Columnas de otros slots */}
+                                          <div className="border-t pt-2 space-y-2 mt-2">
+                                            <Label className="text-xs font-medium">Columnas de otros slots</Label>
+                                            {((chart as AnyChart as any).extraSlotColumns ?? []).map((ec: any, idx: number) => (
+                                              <div key={idx} className="flex gap-2 items-center flex-wrap border rounded p-2">
+                                                <Select value={ec.slot ?? ""} onValueChange={(v) => {
+                                                  const next = [...((chart as AnyChart as any).extraSlotColumns ?? [])]
+                                                  next[idx] = { ...next[idx], slot: v }
+                                                  updateChart(row.id, chart.id, { extraSlotColumns: next } as any)
+                                                }}>
+                                                  <SelectTrigger className="h-7 w-36 text-xs"><SelectValue placeholder="Slot" /></SelectTrigger>
+                                                  <SelectContent>
+                                                    {Array.from(new Set(["primary", ...availableFields.map(f => (f as any).sourceLabel).filter(Boolean)])).map(slot => (
+                                                      <SelectItem key={slot} value={slot}>{slot}</SelectItem>
+                                                    ))}
+                                                  </SelectContent>
+                                                </Select>
+                                                <Select value={ec.field ?? "__rows__"} onValueChange={(v) => {
+                                                  const next = [...((chart as AnyChart as any).extraSlotColumns ?? [])]
+                                                  next[idx] = { ...next[idx], field: v === "" ? undefined : v }
+                                                  updateChart(row.id, chart.id, { extraSlotColumns: next } as any)
+                                                }}>
+                                                  <SelectTrigger className="h-7 w-40 text-xs"><SelectValue placeholder="Campo a sumar" /></SelectTrigger>
+                                                  <SelectContent>
+                                                    <SelectItem value="__rows__">Conteo filas</SelectItem>
+                                                    {uniqueFields.map(f => <SelectItem key={f.name} value={f.name}>{f.name}</SelectItem>)}
+                                                  </SelectContent>
+                                                </Select>
+                                                <Input className="h-7 text-xs flex-1 min-w-[100px]" placeholder="Etiqueta" value={ec.label ?? ""}
+                                                  onChange={(e) => {
+                                                    const next = [...((chart as AnyChart as any).extraSlotColumns ?? [])]
+                                                    next[idx] = { ...next[idx], label: e.target.value }
+                                                    updateChart(row.id, chart.id, { extraSlotColumns: next } as any)
+                                                  }} />
+                                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
+                                                  onClick={() => {
+                                                    const next = ((chart as AnyChart as any).extraSlotColumns ?? []).filter((_: any, i: number) => i !== idx)
+                                                    updateChart(row.id, chart.id, { extraSlotColumns: next } as any)
+                                                  }}>
+                                                  <Trash2 className="h-3 w-3 text-destructive" />
+                                                </Button>
+                                              </div>
+                                            ))}
+                                            <Button size="sm" variant="outline" className="h-7 text-xs"
+                                              onClick={() => {
+                                                const next = [...((chart as AnyChart as any).extraSlotColumns ?? []), { slot: "", field: undefined, label: "Nueva col" }]
+                                                updateChart(row.id, chart.id, { extraSlotColumns: next } as any)
+                                              }}>
+                                              <Plus className="h-3 w-3 mr-1" /> Col de otro slot
+                                            </Button>
+                                            <p className="text-[11px] text-muted-foreground">
+                                              El campo de join se deduce automáticamente del <strong>Mapeo de campos entre slots</strong> configurado arriba.
+                                            </p>
+                                          </div>
+                                             {/* Columnas calculadas */}
+                                          <div className="border-t pt-2 space-y-2">
+                                            <Label className="text-xs font-medium">Columnas calculadas (col1 + col2)</Label>
+                                            {((chart as AnyChart as any).computedColumns ?? []).map((cc: any, idx: number) => (
+                                              <div key={idx} className="border rounded p-2 space-y-2">
+                                                <div className="flex gap-2 items-center">
+                                                  <Input
+                                                    type="number"
+                                                    className="h-7 w-10 text-xs text-center px-1 shrink-0"
+                                                    value={idx + 1}
+                                                    min={1}
+                                                    max={((chart as AnyChart as any).computedColumns ?? []).length}
+                                                    onChange={(e) => {
+                                                      const newPos = Math.max(1, Math.min(((chart as AnyChart as any).computedColumns ?? []).length, parseInt(e.target.value) || 1)) - 1
+                                                      const next = [...((chart as AnyChart as any).computedColumns ?? [])]
+                                                      const [moved] = next.splice(idx, 1)
+                                                      next.splice(newPos, 0, moved)
+                                                      updateChart(row.id, chart.id, { computedColumns: next } as any)
+                                                    }}
+                                                  />
+                                                  <Input
+                                                    type="number"
+                                                    className="h-7 w-14 text-xs px-1 shrink-0"
+                                                    min={0} max={6}
+                                                    placeholder="Dec"
+                                                    value={cc.decimals ?? 0}
+                                                    onChange={(e) => {
+                                                      const next = [...((chart as AnyChart as any).computedColumns ?? [])]
+                                                      next[idx] = { ...next[idx], decimals: parseInt(e.target.value) || 0 }
+                                                      updateChart(row.id, chart.id, { computedColumns: next } as any)
+                                                    }}
+                                                  />
+                                                  <Input className="h-7 text-xs flex-1" placeholder="Etiqueta" value={cc.label ?? ""}
+                                                    onChange={(e) => {
+                                                      const next = [...((chart as AnyChart as any).computedColumns ?? [])]
+                                                      next[idx] = { ...next[idx], label: e.target.value }
+                                                      updateChart(row.id, chart.id, { computedColumns: next } as any)
+                                                    }} />
+                                                  <Select value={cc.op ?? "sum"} onValueChange={(v) => {
+                                                    const next = [...((chart as AnyChart as any).computedColumns ?? [])]
+                                                    next[idx] = { ...next[idx], op: v }
+                                                    updateChart(row.id, chart.id, { computedColumns: next } as any)
+                                                  }}>
+                                                    <SelectTrigger className="h-7 w-20"><SelectValue /></SelectTrigger>
+                                                    <SelectContent>
+                                                      <SelectItem value="sum">Suma (+)</SelectItem>
+                                                      <SelectItem value="sub">Resta (-)</SelectItem>
+                                                      <SelectItem value="mul">Multiplica (×)</SelectItem>
+                                                      <SelectItem value="div">División (÷)</SelectItem>
+                                                      <SelectItem value="pct">Porcentaje (%)</SelectItem>
+                                                    </SelectContent>
+                                                  </Select>
+                                                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
+                                                    onClick={() => {
+                                                      const next = ((chart as AnyChart as any).computedColumns ?? []).filter((_: any, i: number) => i !== idx)
+                                                      updateChart(row.id, chart.id, { computedColumns: next } as any)
+                                                    }}>
+                                                    <Trash2 className="h-3 w-3 text-destructive" />
+                                                  </Button>
+                                                </div>
+                                                <div className="space-y-1">
+                                                  {(cc.fields ?? []).map((f: string, fidx: number) => (
+                                                    <div key={fidx} className="flex gap-2 items-center">
+                                                      <Select value={f} onValueChange={(v) => {
+                                                        const next = [...((chart as AnyChart as any).computedColumns ?? [])]
+                                                        const fields = [...(next[idx].fields ?? [])]
+                                                        fields[fidx] = v
+                                                        next[idx] = { ...next[idx], fields }
+                                                        updateChart(row.id, chart.id, { computedColumns: next } as any)
+                                                      }}>
+                                                        <SelectTrigger className="h-7 flex-1 text-xs"><SelectValue placeholder="Campo..." /></SelectTrigger>
+                                                        <SelectContent>
+                                                          {/* Columnas calculadas previas */}
+                                                          {((chart as AnyChart as any).computedColumns ?? [])
+                                                            .slice(0, idx)
+                                                            .filter((prev: any) => prev.label)
+                                                            .map((prev: any) => (
+                                                              <SelectItem key={prev.label} value={prev.label}>
+                                                                <span className="text-amber-600">⟨{prev.label}⟩</span>
+                                                              </SelectItem>
+                                                            ))
+                                                          }
+                                                          {/* Campos del dataset por slot */}
+                                                          {Array.from(new Set(["primary", ...availableFields.map(f => (f as any).sourceLabel).filter(Boolean)])).map(slot => (
+                                                            <div key={slot}>
+                                                              <div className="px-2 py-1 text-[10px] text-muted-foreground font-medium uppercase tracking-wide border-t first:border-t-0">{slot}</div>
+                                                              {availableFields
+                                                                .filter(f => ((f as any).sourceLabel ?? "primary") === slot && f.type === "number")
+                                                                .map(af => {
+                                                                  const val = slot === (chart.sourceLabel ?? "primary") ? af.name : `${slot}::${af.name}`
+                                                                  return <SelectItem key={val} value={val}>{af.name}</SelectItem>
+                                                                })
+                                                              }
+                                                            </div>
+                                                          ))}
+                                                        </SelectContent>
+                                                      </Select>
+                                                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
+                                                        onClick={() => {
+                                                          const next = [...((chart as AnyChart as any).computedColumns ?? [])]
+                                                          next[idx] = { ...next[idx], fields: (next[idx].fields ?? []).filter((_: any, i: number) => i !== fidx) }
+                                                          updateChart(row.id, chart.id, { computedColumns: next } as any)
+                                                        }}>
+                                                        <Trash2 className="h-3 w-3 text-destructive" />
+                                                      </Button>
+                                                      
+                                                    </div>
+                                                    
+                                                  ))}
+                                                  <Button size="sm" variant="outline" className="h-6 text-xs"
+                                                    onClick={() => {
+                                                      const next = [...((chart as AnyChart as any).computedColumns ?? [])]
+                                                      next[idx] = { ...next[idx], fields: [...(next[idx].fields ?? []), ""] }
+                                                      updateChart(row.id, chart.id, { computedColumns: next } as any)
+                                                    }}>
+                                                    <Plus className="h-3 w-3 mr-1" /> Campo
+                                                  </Button>
+
+                                                  <div className="mt-1">
+                                                    <Label className="text-xs text-muted-foreground">O expresión libre (opcional)</Label>
+                                                    <ExpressionFieldInput
+                                                      value={(cc as any).expression ?? ""}
+                                                      onChange={(val) => {
+                                                        const next = [...((chart as AnyChart as any).computedColumns ?? [])]
+                                                        next[idx] = { ...next[idx], expression: val || undefined }
+                                                        updateChart(row.id, chart.id, { computedColumns: next } as any)
+                                                      }}
+                                                      fieldOptions={buildComputedColumnFieldOptions(
+                                                        chart as AnyChart,
+                                                        availableFields,
+                                                        (config as any).slotFieldMap ?? []
+                                                      )}
+                                                      placeholder="[Ingresos] - [Retiros] * 0.1"
+                                                    />
+                                                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                                                      Escribe <code className="bg-muted px-1 rounded">[</code> para ver columnas disponibles. Ej: ([A] + [B]) / [C] * 100
+                                                    </p>
+                                                    <p className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-3">
+                                                      <span className="flex items-center gap-1">
+                                                        <span className="h-2 w-2 rounded-full bg-green-500 inline-block" /> Slot enlazado
+                                                      </span>
+                                                      <span className="flex items-center gap-1">
+                                                        <span className="h-2 w-2 rounded-full bg-red-500 inline-block" /> Sin join — riesgo de filas desalineadas
+                                                      </span>
+                                                    </p>
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            ))}
+                                            <Button size="sm" variant="outline" className="h-7 text-xs"
+                                              onClick={() => {
+                                                const next = [...((chart as AnyChart as any).computedColumns ?? []), { label: "Col calculada", op: "sum", fields: [] }]
+                                                updateChart(row.id, chart.id, { computedColumns: next } as any)
+                                              }}>
+                                              <Plus className="h-3 w-3 mr-1" /> Columna calculada
+                                            </Button>
+                                            {/* Orden de columnas */}
+                                            <div className="border-t pt-2 space-y-1 mt-2">
+                                              <Label className="text-xs font-medium">Orden de columnas</Label>
+                                              <p className="text-[11px] text-muted-foreground">Escribe números para reordenar todas las columnas juntas.</p>
+                                              {(() => {
+                                                const allCols = [
+                                                  ...((chart as AnyChart).rawFields ?? []),
+                                                  ...((chart as AnyChart as any).extraSlotColumns ?? []).map((ec: any) => ec.label),
+                                                  ...((chart as AnyChart as any).computedColumns ?? []).map((cc: any) => cc.label),
+                                                ].filter(Boolean)
+                                                const columnOrder: string[] = (chart as AnyChart as any).columnOrder ?? allCols
+                                                return allCols.map((col, i) => {
+                                                  const currentPos = columnOrder.indexOf(col)
+                                                  return (
+                                                    <div key={col} className="flex gap-2 items-center">
+                                                      <Input
+                                                        type="number"
+                                                        className="h-7 w-10 text-xs text-center px-1 shrink-0"
+                                                        value={currentPos === -1 ? i + 1 : currentPos + 1}
+                                                        min={1}
+                                                        max={allCols.length}
+                                                        onChange={(e) => {
+                                                          const newPos = Math.max(1, Math.min(allCols.length, parseInt(e.target.value) || 1)) - 1
+                                                          const next = columnOrder.length ? [...columnOrder] : [...allCols]
+                                                          const curr = next.indexOf(col)
+                                                          if (curr !== -1) next.splice(curr, 1)
+                                                          next.splice(newPos, 0, col)
+                                                          updateChart(row.id, chart.id, { columnOrder: next } as any)
+                                                        }}
+                                                      />
+                                                      <span className="text-xs text-muted-foreground font-mono">{col}</span>
+                                                    </div>
+                                                  )
+                                                })
+                                              })()}
+                                            </div>
+                                          </div>
                                           </div>
                                         </div>
                                       </>

@@ -39,6 +39,7 @@ export const KPI_OPERATION_LABELS: Record<KPIOperation, string> = {
   mean: "Promedio",
   sum: "Suma",
   count: "Conteo",
+  countDistinct: "Conteo único (distinct)",
   max: "Máximo",
   min: "Mínimo",
   median: "Mediana",

@@ -151,13 +151,23 @@ export function CampaignsAdminView() {
       setTimeout(() => setReportConfigCampaignId(null), 300)
     }
   }, [])
+  const companiesById = useMemo(() => {
+    return new Map(companies.map((c) => [c.id, c]))
+  }, [companies])
+
+  const enrichedCampaigns = useMemo(() => {
+    return campaigns.map((c) => ({
+      ...c,
+      empresaNombre: companiesById.get(c.empresaId)?.nombre ?? c.empresaNombre,
+    }))
+  }, [campaigns, companiesById])
 
   const campaignsByCompany = useMemo(() => {
     if (role === "company" && user?.companyId) {
-      return campaigns.filter(c => c.empresaId === user.companyId)
+      return enrichedCampaigns.filter(c => c.empresaId === user.companyId)
     }
-    return campaigns
-  }, [campaigns, role, user])
+    return enrichedCampaigns
+  }, [enrichedCampaigns, role, user])
 
   const filteredCampaigns = useMemo(() => {
     return campaignsByCompany.filter((campaign) => {
@@ -180,17 +190,18 @@ export function CampaignsAdminView() {
     completada: campaignsByCompany.filter((c) => c.estado === "completada").length,
     cancelada: campaignsByCompany.filter((c) => c.estado === "cancelada").length,
   }), [campaignsByCompany])
+  
 
   const campaignToDelete = deleteCampaignId
-    ? campaigns.find((c) => c.id === deleteCampaignId) || null
+    ? enrichedCampaigns.find((c) => c.id === deleteCampaignId) || null
     : null
 
   const selectedCampaign = selectedCampaignId
-    ? campaigns.find((c) => c.id === selectedCampaignId) || null
+    ? enrichedCampaigns.find((c) => c.id === selectedCampaignId) || null
     : null
 
   const reportConfigCampaign = reportConfigCampaignId
-    ? campaigns.find((c) => c.id === reportConfigCampaignId) || null
+    ? enrichedCampaigns.find((c) => c.id === reportConfigCampaignId) || null
     : null
 
   if (isLoading) {

@@ -306,7 +306,20 @@ function computeBaseKpiValue(rows: RowData[], kpi: KPIDefinition): number {
     const cf = (kpi.countField ?? "__rows__") as any
     return countByField(rows, cf)
   }
-
+  if ((op as string) === "countDistinct") {
+    const cf = (kpi.countField && kpi.countField !== "__rows__") 
+      ? kpi.countField 
+      : kpi.fuente as any
+    if (!cf) return rows.length
+    const unique = new Set<string>()
+    for (const r of rows) {
+      const v = r?.[cf]
+      if (v !== null && v !== undefined && String(v).trim() !== "") {
+        unique.add(String(v).trim())
+      }
+    }
+    return unique.size
+  }
   const nums: number[] = []
   for (const r of rows) {
     const n = toNumber(r?.[fuente])
@@ -669,13 +682,11 @@ function EvidenceGallery({
           
           // Para Google Drive, convertir al formato thumbnail y usar proxy
           if (url.includes('drive.google.com')) {
-            // Extraer ID de diferentes formatos
             const idMatch = url.match(/[?&]id=([^&]+)/) || url.match(/\/d\/([^/?]+)/)
             if (idMatch) {
               const fileId = idMatch[1]
-              const driveUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`
-              // Usar proxy para evitar CORS
-              imageUrl = `/api/proxy-image?url=${encodeURIComponent(driveUrl)}`
+              // URL directa para archivos públicos — no requiere autenticación
+              imageUrl = `https://lh3.googleusercontent.com/d/${fileId}`
             }
           }
           
@@ -1507,6 +1518,7 @@ function SortableTable({
   columnWidths,
   showTotals,
   showSubtotals,
+  totalsRowKey,
 }: {
   data: any[]
   rowHeight?: number
@@ -1514,6 +1526,7 @@ function SortableTable({
   columnWidths?: Record<string, number>
   showTotals?: boolean
   showSubtotals?: boolean
+  totalsRowKey?: string
 }) {
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
@@ -1532,9 +1545,11 @@ function SortableTable({
     return [columns[0], "__suma__", ...columns.slice(1)]
   }, [columns, showSubtotals, numCols])
 
-  const sorted = useMemo(() => {
-    if (!sortKey) return data
-    return [...data].sort((a, b) => {
+ const sorted = useMemo(() => {
+    const totalsRow = data.find(r => totalsRowKey && r[totalsRowKey])
+    const rest = data.filter(r => !(totalsRowKey && r[totalsRowKey]))
+    if (!sortKey) return totalsRow ? [...rest, totalsRow] : rest
+    const sortedRest = [...rest].sort((a, b) => {
       const av = a[sortKey]
       const bv = b[sortKey]
       const an = Number(av)
@@ -1543,7 +1558,8 @@ function SortableTable({
       let cmp = isNum ? an - bn : String(av ?? "").localeCompare(String(bv ?? ""), "es", { sensitivity: "base" })
       return sortDir === "asc" ? cmp : -cmp
     })
-  }, [data, sortKey, sortDir])
+    return totalsRow ? [...sortedRest, totalsRow] : sortedRest
+  }, [data, sortKey, sortDir, totalsRowKey])
 
   const handleSort = (key: string) => {
     if (sortKey === key) {
@@ -1610,12 +1626,14 @@ function SortableTable({
           </thead>
           <tbody>
             {sorted.map((row, i) => (
-              <tr key={i} className="border-b hover:bg-muted/30 transition-colors">
+              <tr key={i} className={`border-b transition-colors ${totalsRowKey && row[totalsRowKey] ? "bg-muted/20 font-semibold border-t-2" : "hover:bg-muted/30"}`}>
                 {displayColumns.map((k) => (
                   <td key={k} className="px-2"
                     style={{ paddingTop: rowHeight ?? 8, paddingBottom: rowHeight ?? 8,
                       width: k !== "__suma__" && columnWidths?.[k] ? `${columnWidths[k]}px` : undefined }}>
-                    {getCellValue(row, k)}
+                    {typeof row[k] === "number"
+                      ? row[k].toLocaleString("es-CO")
+                      : getCellValue(row, k)}
                   </td>
                 ))}
               </tr>
@@ -1920,7 +1938,15 @@ export function DashboardFromConfig({
 
     const baseRows = kind === "field"
       ? getSlotRowsForField(k.fuente as string)
-      : allSlotsRows
+      : (() => {
+          if (kind === "expression") {
+            // Extraer primer campo de la expresión para detectar el slot
+            const fieldMatches = ((k as any).expression ?? "").match(/\[([^\]]+)\]/g)
+            const firstField = fieldMatches?.[0]?.replace(/[\[\]]/g, "")
+            return firstField ? getSlotRowsForField(firstField) : allSlotsRows
+          }
+          return allSlotsRows
+        })()
 
     const kpiRows: RowData[] = catField && catValue
       ? baseRows.filter((r) => String(r?.[catField] ?? "") === catValue)
@@ -2063,11 +2089,82 @@ export function DashboardFromConfig({
     const seriesKeys = built.seriesKeys
 
     if (tipo === "torta") {
-      const key = seriesKeys[0]?.key ?? "value"
       const groupByField = chart.groupBy as string
-      const pieData = s.map((p) => ({ name: p.name, value: Number(p[key] ?? 0) }))
+      const slotSeries = (chart as any).slotSeries as any[] | undefined
       const isFiltered = chartFilter?.field === groupByField
 
+      // Modo multi-slot: primera serie
+      let pieData: { name: string; value: number }[] = []
+      if (slotSeries && slotSeries.length > 0) {
+        const ss = slotSeries[0]
+        const fieldMap = globalFieldMap.filter(m => m.slot === ss.slot)
+        const translatedFilters: ReportFilters = {
+          ...userFilters,
+          condiciones: (userFilters.condiciones ?? []).map(cond => {
+            const mapped = fieldMap.find(m => m.from === cond.campo)
+            return mapped ? { ...cond, campo: mapped.to } : cond
+          })
+        }
+        let r = applyFilters(dataBySlot[ss.slot] ?? [], translatedFilters)
+        if (chartFilter) {
+          const mappedField = fieldMap.find(m => m.from === chartFilter.field)?.to ?? chartFilter.field
+          r = r.filter(row => String(row?.[mappedField] ?? "") === chartFilter.value)
+        }
+        const grouped = groupRows(r, ss.groupBy)
+        for (const [name, rows] of grouped.entries()) {
+          const val = ss.field
+            ? rows.reduce((acc: number, r: any) => acc + (Number(r[ss.field]) || 0), 0)
+            : rows.length
+          pieData.push({ name, value: val })
+        }
+      } else {
+        const key = seriesKeys[0]?.key ?? "value"
+        pieData = s.map((p) => ({ name: p.name, value: Number(p[key] ?? 0) }))
+      }
+      const computedSeries = (chart as any).computedSeries as any[] | undefined
+      if (computedSeries?.length && slotSeries && slotSeries.length > 0) {
+        const tempData: Record<string, any> = {}
+        for (const p of pieData) { tempData[p.name] = { [slotSeries[0].label]: p.value } }
+        const cs = computedSeries[0]
+        const resultData: { name: string; value: number }[] = []
+        for (const [name, row] of Object.entries(tempData)) {
+          const vals = (cs.fields ?? []).map((f: string) => Number((row as any)[f]) || 0)
+          let val = 0
+          if (cs.op === "pct") val = vals[1] === 0 ? 0 : (vals[0] / vals[1]) * 100
+          else if (cs.op === "sub") val = vals[0] - vals.slice(1).reduce((a: number, b: number) => a + b, 0)
+          resultData.push({ name, value: val })
+        }
+        pieData = resultData
+      }
+      // Modo torta de totales: computedSeries sin slotSeries
+    if ((!slotSeries || slotSeries.length === 0) && (chart as any).computedSeries?.length) {
+      const cs = (chart as any).computedSeries as Array<{
+        label: string; fields: string[]; op: string; color?: string
+      }>
+      pieData = cs.map(serie => {
+        const vals = (serie.fields ?? []).map((f: string) => {
+          if (f.includes("::")) {
+            const [slot, field] = f.split("::")
+            const slotMap = globalFieldMap.filter(m => m.slot === slot)
+            const slotRows = applyFilters(dataBySlot[slot] ?? [], {
+              ...userFilters,
+              condiciones: (userFilters.condiciones ?? []).map(cond => {
+                const mapped = slotMap.find(m => m.from === cond.campo)
+                return mapped ? { ...cond, campo: mapped.to } : cond
+              })
+            })
+            return slotRows.reduce((acc, r) => acc + (Number(r[field]) || 0), 0)
+          }
+          const slotRows = applyFilters(dataBySlot[chartSourceLabel ?? "primary"] ?? chartRows, userFilters)
+          return slotRows.reduce((acc, r) => acc + (Number(r[f]) || 0), 0)
+        })
+        let value = 0
+        if (serie.op === "sum") value = vals.reduce((a, b) => a + b, 0)
+        else if (serie.op === "sub") value = vals[0] - vals.slice(1).reduce((a, b) => a + b, 0)
+        else if (serie.op === "pct") value = vals[1] === 0 ? 0 : (vals[0] / vals[1]) * 100
+        return { name: serie.label, value }
+      })
+    }
       return (
         <div className="relative">
           {isFiltered && (
@@ -2087,7 +2184,9 @@ export function DashboardFromConfig({
                 data={pieData}
                 dataKey="value"
                 nameKey="name"
-                label
+                label={(chart as any).showPercent
+                  ? ({ percent }: any) => `${(percent * 100).toFixed(1)}%`
+                  : true}
                 cursor={onSegmentClick ? "pointer" : undefined}
                 onClick={(entry: any) => {
                   if (!onSegmentClick || !groupByField) return
@@ -2164,7 +2263,49 @@ export function DashboardFromConfig({
           return point
         })
 
+        // Series calculadas sobre slotSeries
+        const computedSeries = (chart as any).computedSeries as Array<{
+          label: string; fields: string[]; op: "sum" | "sub" | "div" | "pct"; color?: string
+        }> | undefined
+        if (computedSeries?.length) {
+          for (const row of chartData) {
+            for (const cs of computedSeries) {
+              const vals = (cs.fields ?? []).map((f: string) => {
+                if (f.includes("::")) {
+                  const [slot, field] = f.split("::")
+                  const slotMap = globalFieldMap.filter(m => m.slot === slot)
+                  // Buscar el campo equivalente al groupBy primario en este slot
+                  const primaryGroupBy = slotSeries[0]?.groupBy ?? ""
+                  const mappedGroupBy = slotMap.find(m => m.from === primaryGroupBy)?.to
+                    ?? globalFieldMap.find(m => m.slot === slot)?.to
+                    ?? primaryGroupBy
+                  const slotData = applyFilters(dataBySlot[slot] ?? [], {
+                    ...userFilters,
+                    condiciones: (userFilters.condiciones ?? []).map(cond => {
+                      const mapped = slotMap.find(m => m.from === cond.campo)
+                      return mapped ? { ...cond, campo: mapped.to } : cond
+                    })
+                  })
+                  return slotData
+                    .filter(r => String(r?.[mappedGroupBy] ?? "") === String(row.name))
+                    .reduce((acc, r) => acc + (Number(r[field]) || 0), 0)
+                }
+                return Number(row[f]) || 0
+              })
+              if (cs.op === "sum") row[cs.label] = vals.reduce((a: number, b: number) => a + b, 0)
+              else if (cs.op === "sub") row[cs.label] = vals[0] - vals.slice(1).reduce((a: number, b: number) => a + b, 0)
+              else if (cs.op === "div") row[cs.label] = vals[1] === 0 ? 0 : vals[0] / vals[1]
+              else if (cs.op === "pct") row[cs.label] = vals[1] === 0 ? 0 : (vals[0] / vals[1]) * 100
+            }
+          }
+        }
+        const allSlotSeries = [
+          ...slotSeries,
+          ...((computedSeries ?? []).map(cs => ({ slot: "", groupBy: "", label: cs.label, color: cs.color, agg: "sum" as KPIOperation })))
+        ]
+
         const isHorizontal = (chart as any).barOrientation === "horizontal"
+        
         const stackId = (chart as any).barMode === "stacked" ? "stack" : undefined
         const ChartComponent = isHorizontal ? BarChart : BarChart
         
@@ -2188,7 +2329,7 @@ export function DashboardFromConfig({
               )}
               <Tooltip />
               <Legend />
-              {slotSeries.map((ss, idx) => (
+              {allSlotSeries.map((ss, idx) => (
                 <Bar
                   key={ss.label}
                   dataKey={ss.label}
@@ -2420,6 +2561,44 @@ export function DashboardFromConfig({
         const groupDisplayField = (chart as any).groupDisplayField as string ?? chart.groupBy as string ?? ""
         const rawFields = (chart as any).rawFields as string[] ?? []
         const collapseToSum = !!(chart as any).collapseToSum
+        
+        // Columnas de otros slots
+        const extraSlotColumns = (chart as any).extraSlotColumns as Array<{
+          slot: string; joinField: string; field?: string; label: string
+        }> | undefined
+
+        const computedColumns = (chart as any).computedColumns as Array<{
+          label: string; fields: string[]; op: "sum" | "sub" | "mul" | "div" | "pct"; decimals?: number
+        }> | undefined
+
+        const extraColMaps: Array<{ label: string; valueMap: Map<string, number> }> = []
+        if (extraSlotColumns?.length) {
+          for (const ec of extraSlotColumns) {
+          const slotMap = globalFieldMap.filter(m => m.slot === ec.slot)
+
+          const joinFieldInSlot = slotMap.find(m => m.from === groupDisplayField)?.to ?? groupDisplayField
+          
+          const translatedFilters: ReportFilters = {
+            ...userFilters,
+            condiciones: (userFilters.condiciones ?? []).map(cond => {
+              const mapped = slotMap.find(m => m.from === cond.campo)
+              return mapped ? { ...cond, campo: mapped.to } : cond
+            })
+          }
+          const slotRows = applyFilters(dataBySlot[ec.slot] ?? [], translatedFilters)
+            // Derivar campo de join del slotFieldMap global
+          const grouped = groupRows(slotRows, joinFieldInSlot)
+          
+          const valueMap = new Map<string, number>()
+          for (const [groupVal, rows] of grouped.entries()) {
+            const nums = ec.field
+              ? rows.map(r => Number(r[ec.field!])).filter(n => !isNaN(n))
+              : rows.map(() => 1)
+            valueMap.set(groupVal, nums.reduce((a, b) => a + b, 0))
+          }
+          extraColMaps.push({ label: ec.label, valueMap })
+        }
+        }
         const tableRows = collapseToSum
           ? (() => {
               // Detectar cuáles rawFields son texto (se usan como sub-agrupación)
@@ -2432,6 +2611,10 @@ export function DashboardFromConfig({
               )
 
               // Agrupar por groupDisplayField + todos los campos de texto
+              const computedSourceFields = [...new Set(
+                (computedColumns ?? []).flatMap((cc: any) => cc.fields ?? [])
+                  .filter((f: string) => !textRawFields.includes(f) && !numericRawFields.includes(f))
+              )]
               const groupKeys = [groupDisplayField, ...textRawFields]
               const aggregated = new Map<string, Record<string, any>>()
 
@@ -2440,18 +2623,116 @@ export function DashboardFromConfig({
                 if (!aggregated.has(key)) {
                   const r: Record<string, any> = {}
                   groupKeys.forEach(k => { r[k] = row[k] ?? "" })
+                  // También incluir campos usados por computedColumns aunque no estén en rawFields
+                  const computedSourceFields = [...new Set(
+                    (computedColumns ?? []).flatMap((cc: any) => cc.fields ?? [])
+                      .filter((f: string) => !textRawFields.includes(f) && !numericRawFields.includes(f))
+                  )]
                   numericRawFields.forEach(f => { r[f] = 0 })
+                  computedSourceFields.forEach((f: string) => { r[f] = 0 })
                   aggregated.set(key, r)
                 }
                 const acc = aggregated.get(key)!
                 numericRawFields.forEach(f => {
                   acc[f] = (acc[f] || 0) + (Number(row[f]) || 0)
                 })
+                computedSourceFields.forEach((f: string) => {
+                  acc[f] = (acc[f] || 0) + (Number(row[f]) || 0)
+                })
               }
 
-              return Array.from(aggregated.values())
+              const rows = Array.from(aggregated.values())
+
+              // Columnas de otros slots
+              for (const r of rows) {
+                for (const ec of extraColMaps) {
+                  r[ec.label] = ec.valueMap.get(String(r[groupDisplayField] ?? "")) ?? 0
+                }
+              }
+
+              // Columnas calculadas
+              if (computedColumns?.length) {
+                for (const r of rows) {
+                  for (const cc of computedColumns) {
+                    const vals = (cc.fields ?? []).map((f: string) => {
+                      // Detectar campo de otro slot: "slot::campo"
+                      if (f.includes("::")) {
+                        const [slot, field] = f.split("::")
+                        const slotMap = globalFieldMap.filter(m => m.slot === slot)
+                        const joinField = slotMap.find(m => m.from === groupDisplayField)?.to ?? groupDisplayField
+                        const groupVal = String(r[groupDisplayField] ?? "")
+                        const slotRows = applyFilters(dataBySlot[slot] ?? [], userFilters)
+                        return slotRows
+                          .filter(sr => String(sr[joinField] ?? "") === groupVal)
+                          .reduce((acc, sr) => acc + (Number(sr[field]) || 0), 0)
+                      }
+                      return Number(r[f]) || 0
+                    })
+                    const applyDecimals = (val: number, cc: any) => {
+                      const d = cc.decimals ?? (cc.op === "pct" || cc.op === "div" ? 2 : 0)
+                      return Math.round(val * Math.pow(10, d)) / Math.pow(10, d)
+                    }
+                    
+                    if ((cc as any).expression) {
+                      let exprStr = (cc as any).expression as string
+                      const slotRefs = exprStr.match(/\[([^\]]+::[^\]]+)\]/g) ?? []
+                      for (const ref of slotRefs) {
+                        const f = ref.replace(/[\[\]]/g, "")
+                        const [slot, field] = f.split("::")
+                        const slotMap = globalFieldMap.filter(m => m.slot === slot)
+                        const joinField = slotMap.find(m => m.from === groupDisplayField)?.to ?? groupDisplayField
+                        const groupVal = String(r[groupDisplayField] ?? "")
+                        const slotRows = applyFilters(dataBySlot[slot] ?? [], userFilters)
+                        const val = slotRows
+                          .filter(sr => String(sr[joinField] ?? "") === groupVal)
+                          .reduce((acc, sr) => acc + (Number(sr[field]) || 0), 0)
+                        exprStr = exprStr.replace(ref, String(val))
+                      }
+                      exprStr = exprStr.replace(/\[([^\]]+)\]/g, (_: string, ref: string) => {
+                        return String(Number(r[ref.trim()]) || 0)
+                      })
+                      try {
+                        if (/^[\d\s+\-*/().]+$/.test(exprStr)) {
+                          // eslint-disable-next-line no-new-func
+                          r[cc.label] = Number(new Function(`"use strict"; return (${exprStr})`)()) || 0
+                        } else {
+                          r[cc.label] = 0
+                        }
+                      } catch { r[cc.label] = 0 }
+                    } else if (cc.op === "sum") r[cc.label] = applyDecimals(vals.reduce((a: number, b: number) => a + b, 0), cc)
+                    else if (cc.op === "sub") r[cc.label] = applyDecimals(vals[0] - vals.slice(1).reduce((a: number, b: number) => a + b, 0), cc)
+                    else if (cc.op === "mul") r[cc.label] = applyDecimals(vals.reduce((a: number, b: number) => a * b, 1), cc)
+                    else if (cc.op === "div") r[cc.label] = applyDecimals(vals[1] === 0 ? 0 : vals[0] / vals[1], cc)
+                    else if (cc.op === "pct") r[cc.label] = applyDecimals(vals[1] === 0 ? 0 : (vals[0] / vals[1]) * 100, cc)
+                  }
+                }
+              }
+
+              return rows
             })()
           : chartRows
+          const computedLabels = new Set<string>((computedColumns ?? []).map((cc: any) => cc.label))
+        const computedOnlyFields = new Set<string>(
+          (computedColumns ?? []).flatMap((cc: any) => cc.fields ?? [])
+            .filter((f: string) => !rawFields.includes(f) && !computedLabels.has(f))
+        )
+        const hiddenFields = new Set<string>([
+          ...computedOnlyFields,
+          ...((chart as any).hiddenFields ?? []),
+        ])
+        const allRawFields = [
+          ...rawFields,
+          ...(extraColMaps.map(ec => ec.label)),
+          ...((computedColumns ?? []).map((cc: any) => cc.label)),
+        ].filter(f => !hiddenFields.has(f))
+        const columnOrder = (chart as any).columnOrder as string[] | undefined
+        const orderedRawFields = columnOrder?.length
+          ? [
+              ...columnOrder.filter(f => allRawFields.includes(f)),
+              ...allRawFields.filter(f => !columnOrder.includes(f))
+            ]
+          : allRawFields
+        
         const groupedTotals = (chart as any).showTotals
           ? (() => {
               const sourceRows = tableRows
@@ -2464,11 +2745,32 @@ export function DashboardFromConfig({
                 totals["__suma__"] = chartRows.reduce((acc, r) =>
                   acc + numericRawFields.reduce((s, f) => s + (Number(r[f]) || 0), 0), 0)
               }
-              for (const f of rawFields) {
-                if (numericRawFields.includes(f)) {
-                  totals[f] = chartRows.reduce((acc, r) => acc + (Number(r[f]) || 0), 0)
+              // Separar columnas calculadas tipo pct/div (se recalculan al final)
+              const ratioCols = new Set<string>(
+                (computedColumns ?? [])
+                  .filter((cc: any) => cc.op === "pct" || cc.op === "div")
+                  .map((cc: any) => cc.label)
+              )
+              for (const f of orderedRawFields) {
+                if (ratioCols.has(f)) continue
+                if (numericRawFields.includes(f) || extraColMaps.some(ec => ec.label === f) || (computedColumns ?? []).some((cc: any) => cc.label === f)) {
+                  totals[f] = tableRows.reduce((acc: number, r: any) => acc + (Number(r[f]) || 0), 0)
                 } else {
                   totals[f] = ""
+                }
+              }
+              // Recalcular columnas pct/div usando los totales ya sumados
+              for (const cc of (computedColumns ?? [])) {
+                if (cc.op !== "pct" && cc.op !== "div") continue
+                const applyDecimals = (val: number, cc: any) => {
+                  const d = cc.decimals ?? 2
+                  return Math.round(val * Math.pow(10, d)) / Math.pow(10, d)
+                }
+                const vals = (cc.fields ?? []).map((f: string) => Number(totals[f]) || 0)
+                if (cc.op === "div") {
+                  totals[cc.label] = applyDecimals(vals[1] === 0 ? 0 : vals[0] / vals[1], cc)
+                } else {
+                  totals[cc.label] = applyDecimals(vals[1] === 0 ? 0 : (vals[0] / vals[1]) * 100, cc)
                 }
               }
               return totals
@@ -2476,12 +2778,19 @@ export function DashboardFromConfig({
           : null
         // Construir datos para exportación (sin formato, con todos los campos)
         
-        const exportData = chartRows.map(row => {
+        const exportData = tableRows.map(row => {
           const r: any = {}
-          const allFields = [groupDisplayField, ...rawFields]
+          const allFields = [groupDisplayField, ...orderedRawFields]
           allFields.forEach(f => { r[columnLabelMap?.[f] ?? f] = row[f] ?? "" })
           return r
         })
+        // Agregar fila de totales si existe
+        if (groupedTotals) {
+          const totalRow: any = {}
+          const allFields = [groupDisplayField, ...orderedRawFields]
+          allFields.forEach(f => { totalRow[columnLabelMap?.[f] ?? f] = groupedTotals[f] ?? "" })
+          exportData.push(totalRow)
+        }
         return (
           <div style={{ height: `${rowHeight}px`, overflowY: "hidden", display: "flex", flexDirection: "column" }}>
             <div className="flex justify-end mb-1 shrink-0">
@@ -2496,17 +2805,25 @@ export function DashboardFromConfig({
             <div className="overflow-auto flex-1">
               {collapseToSum ? (
                 <SortableTable
-                  data={tableRows}
+                  data={[
+                    ...tableRows.map(row => {
+                      const r: Record<string, any> = { [groupDisplayField]: row[groupDisplayField] }
+                      orderedRawFields.forEach(f => { r[f] = row[f] })
+                      return r
+                    }),
+                    ...(groupedTotals ? [{ ...groupedTotals, __isTotals__: true }] : [])
+                  ]}
                   columnLabels={columnLabelMap}
                   columnWidths={(chart as any).columnWidths}
                   rowHeight={(chart as any).tableRowHeight}
                   showSubtotals={(chart as any).showSubtotals}
+                  totalsRowKey="__isTotals__"
                 />
               ) : (
                 <GroupedTable
                   data={tableRows}
                   groupByField={groupDisplayField}
-                  displayFields={rawFields}
+                  displayFields={orderedRawFields}
                   columnLabels={columnLabelMap}
                   columnWidths={(chart as any).columnWidths}
                   rowHeight={(chart as any).tableRowHeight}
@@ -2514,36 +2831,7 @@ export function DashboardFromConfig({
                 />
               )}
             </div>
-            {groupedTotals && (
-              <div className="shrink-0 border-t-2 bg-muted/20 overflow-hidden" style={{ marginLeft: "-3px" }}>
-                <table className="min-w-[520px] w-full text-sm border-collapse">
-                  <colgroup>
-                    {[groupDisplayField, ...((chart as any).showSubtotals ? ["__suma__", ...rawFields] : rawFields)].map((k) => (
-                      <col key={k} style={{
-                        width: (chart as any).columnWidths?.[k] ? `${(chart as any).columnWidths[k]}px` : undefined,
-                        minWidth: (chart as any).columnWidths?.[k] ? `${(chart as any).columnWidths[k]}px` : undefined,
-                      }} />
-                    ))}
-                  </colgroup>
-                  <tbody>
-                    <tr>
-                      {[groupDisplayField, ...((chart as any).showSubtotals ? ["__suma__", ...rawFields] : rawFields)].map((k) => (
-                        <td key={k} className="px-2 font-semibold"
-                          style={{
-                            paddingTop: (chart as any).tableRowHeight ?? 8,
-                            paddingBottom: (chart as any).tableRowHeight ?? 8,
-                            width: (chart as any).columnWidths?.[k] ? `${(chart as any).columnWidths[k]}px` : undefined,
-                          }}>
-                          {typeof groupedTotals[k] === "number"
-                            ? groupedTotals[k].toLocaleString("es-CO")
-                            : groupedTotals[k] ?? ""}
-                        </td>
-                      ))}
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            )}
+            
           </div>
         )
       }
@@ -2765,13 +3053,13 @@ export function DashboardFromConfig({
             let imageUrl = url
             
             if (url.includes('drive.google.com')) {
-              const idMatch = url.match(/[?&]id=([^&]+)/) || url.match(/\/d\/([^/?]+)/)
-              if (idMatch) {
-                const fileId = idMatch[1]
-                const driveUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`
-                imageUrl = `/api/proxy-image?url=${encodeURIComponent(driveUrl)}`
-              }
+            const idMatch = url.match(/[?&]id=([^&]+)/) || url.match(/\/d\/([^/?]+)/)
+            if (idMatch) {
+              const fileId = idMatch[1]
+              // URL directa para archivos públicos — no requiere autenticación
+              imageUrl = `https://lh3.googleusercontent.com/d/${fileId}`
             }
+          }
             
             photos.push({
               url: imageUrl,
@@ -2793,7 +3081,7 @@ export function DashboardFromConfig({
       {(heroImagePublicUrl || branding.heroTitle || branding.heroSubtitle) && (
         <div 
           className="relative overflow-hidden rounded-xl border bg-white" 
-          style={{ height: `${branding.heroImageHeight || 160}px` }}
+          style={{ height: `${Number(branding.heroImageHeight) || 160}px` }}
         >
           {heroImagePublicUrl && (
             <>

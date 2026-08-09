@@ -84,6 +84,181 @@ function parseGoogleSheetsUrl(url: string): { spreadsheetId: string; gid?: strin
   return { spreadsheetId, gid }
 }
 
+function SlotDataPreview({ campaignId, slotLabel }: { campaignId: string; slotLabel: string }) {
+  const [open, setOpen] = useState(false)
+  const [rows, setRows] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const load = async () => {
+    if (rows.length > 0) { setOpen(true); return }
+    setLoading(true)
+    try {
+      const { getCampaignDataset } = await import("@/lib/api/campaignApi")
+      const data = await getCampaignDataset(campaignId)
+      const slotRows = data.dataBySlot?.[slotLabel] ?? []
+      setRows(slotRows.slice(0, 20)) // solo primeras 20
+      setOpen(true)
+    } catch (e) {
+      toast.error("Error cargando preview")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <Button size="sm" variant="outline" className="w-full mt-2 text-xs h-7" onClick={load} disabled={loading}>
+        {loading ? "Cargando..." : "Ver datos importados"}
+      </Button>
+    )
+  }
+
+  const columns = rows[0] ? Object.keys(rows[0]) : []
+
+  return (
+    <div className="mt-2 border rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-muted/40 border-b">
+        <span className="text-xs font-medium">Preview — primeras {rows.length} filas</span>
+        <button className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setOpen(false)}>
+          Cerrar
+        </button>
+      </div>
+      <div className="overflow-auto max-h-64 max-w-full">
+      <div className="min-w-max">
+        <table className="text-xs w-full">
+          <thead>
+            <tr className="border-b bg-muted/20">
+              {columns.map(col => (
+                <th key={col} className="px-2 py-1 text-left font-medium whitespace-nowrap">
+                  <div>{col}</div>
+                  <div className="font-normal text-muted-foreground">
+                    {typeof rows[0]?.[col] === "number" ? "number" 
+                      : rows[0]?.[col] === null ? "null"
+                      : "string"}
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i} className="border-b hover:bg-muted/10">
+                {columns.map(col => (
+                  <td key={col} className="px-2 py-1 whitespace-nowrap max-w-[150px] truncate" title={String(row[col] ?? "")}>
+                    {row[col] === null ? <span className="text-muted-foreground italic">null</span> : String(row[col])}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      </div>
+    </div>
+  )
+}
+
+function SearchableSelect({
+  value,
+  onChange,
+  options,
+  placeholder = "(ignorar)",
+  className = "",
+}: {
+  value: string
+  onChange: (value: string) => void
+  options: string[]
+  placeholder?: string
+  className?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState("")
+  const containerRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+        setSearch("")
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
+
+  const filtered = options.filter((opt) =>
+    opt.toLowerCase().includes(search.toLowerCase())
+  )
+
+  return (
+    <div ref={containerRef} className={`relative ${className}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full border rounded px-2 py-1 text-sm bg-background text-left flex items-center justify-between gap-1"
+      >
+        <span className={`truncate ${value ? "" : "text-muted-foreground"}`}>
+          {value || placeholder}
+        </span>
+        <svg
+          className={`h-3 w-3 text-muted-foreground shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full bg-background border rounded shadow-lg max-h-64 flex flex-col">
+          <div className="p-1.5 border-b shrink-0">
+            <input
+              autoFocus
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar campo..."
+              className="w-full px-2 py-1 text-sm border rounded bg-background"
+              onKeyDown={(e) => e.stopPropagation()}
+            />
+          </div>
+          <div className="overflow-y-auto">
+            <div
+              onClick={() => {
+                onChange("")
+                setOpen(false)
+                setSearch("")
+              }}
+              className="px-2 py-1.5 text-sm cursor-pointer hover:bg-muted text-muted-foreground"
+            >
+              (ignorar)
+            </div>
+            {filtered.length === 0 ? (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground italic">Sin resultados</div>
+            ) : (
+              filtered.map((opt) => (
+                <div
+                  key={opt}
+                  onClick={() => {
+                    onChange(opt)
+                    setOpen(false)
+                    setSearch("")
+                  }}
+                  className={`px-2 py-1.5 text-sm cursor-pointer hover:bg-muted ${
+                    opt === value ? "bg-amber-50 dark:bg-amber-950/30 font-medium" : ""
+                  }`}
+                >
+                  {opt}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function buildExportXlsxUrl(spreadsheetId: string, gid?: string) {
   const base = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=xlsx`
   return gid ? `${base}&gid=${gid}` : base
@@ -610,15 +785,15 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
         </DialogHeader>
 
         <Tabs defaultValue="detalles" className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="detalles">Detalles</TabsTrigger>
-            <TabsTrigger value="info">Info</TabsTrigger>
-            <TabsTrigger value="excel">
-              <FileText className="h-4 w-4 mr-2" />
-              Excel
-            </TabsTrigger>
-            <TabsTrigger value="mapeo">Mapeo</TabsTrigger>
-          </TabsList>
+          <TabsList className="grid w-full grid-cols-5">
+          <TabsTrigger value="detalles">Detalles</TabsTrigger>
+          <TabsTrigger value="info">Info</TabsTrigger>
+          <TabsTrigger value="excel">
+            <FileText className="h-4 w-4 mr-2" />Excel
+          </TabsTrigger>
+          <TabsTrigger value="mapeo">Mapeo</TabsTrigger>
+          <TabsTrigger value="datos">Datos</TabsTrigger>
+        </TabsList>
 
           {/* TAB: Detalles */}
           <TabsContent value="detalles" className="space-y-4">
@@ -899,7 +1074,6 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                       <p className="text-[11px] text-muted-foreground">Estado</p>
                     </div>
                   </div>
- 
                   {/* Historial de versiones del slot */}
                   {versionCount > 1 && (
                     <div>
@@ -1203,18 +1377,12 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                               <span className="text-[10px] font-normal opacity-70 shrink-0">(guardado)</span>
                             )}
                           </span>
-                          <select
-                            className={`flex-1 border rounded px-2 py-1 text-sm bg-background ${isRestored ? "border-green-400 dark:border-green-700" : ""}`}
+                          <SearchableSelect
                             value={mapping[header] ?? ""}
-                            onChange={(e) => setMapping((m) => ({ ...m, [header]: e.target.value }))}
-                          >
-                            <option value="">(ignorar)</option>
-                            {schemaFields.map((field: string) => (
-                              <option key={field} value={field}>
-                                {field}
-                              </option>
-                            ))}
-                          </select>
+                            onChange={(val) => setMapping((m) => ({ ...m, [header]: val }))}
+                            options={schemaFields}
+                            className={`flex-1 ${isRestored ? "[&>button]:border-green-400 dark:[&>button]:border-green-700" : ""}`}
+                          />
                         </div>
                       )
                     })}
@@ -1294,23 +1462,18 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
                       </div>
                       <div className="col-span-1 text-center text-muted-foreground text-xs">→</div>
                       <div className="col-span-6">
-                        <select
-                          className="w-full border rounded px-2 py-1 text-sm bg-background"
+                        <SearchableSelect
                           value={canonicalField}
-                          onChange={(e) => {
-                            setEditableMapping(prev => ({ ...prev, [sourceCol]: e.target.value }))
+                          onChange={(val) => {
+                            setEditableMapping(prev => ({ ...prev, [sourceCol]: val }))
                             setMappingDirty(true)
                           }}
-                        >
-                          <option value="">(ignorar)</option>
-                          {canonicalFields.map(f => (
-                            <option key={f} value={f}>{f}</option>
-                          ))}
-                          {/* Si el campo actual no está en canonicalFields, mostrarlo igual */}
-                          {canonicalField && !canonicalFields.includes(canonicalField) && (
-                            <option value={canonicalField}>{canonicalField}</option>
-                          )}
-                        </select>
+                          options={
+                            canonicalField && !canonicalFields.includes(canonicalField)
+                              ? [...canonicalFields, canonicalField]
+                              : canonicalFields
+                          }
+                        />
                       </div>
                     </div>
                   ))}
@@ -1364,6 +1527,27 @@ export function CampaignDetailModal({ campaign, isOpen, onClose }: CampaignDetai
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+        <TabsContent value="datos" className="space-y-3">
+          <div className="flex flex-wrap gap-2 items-center">
+            {availableSlots.map(slot => (
+              <button
+                key={slot}
+                type="button"
+                onClick={() => setActiveSourceLabel(slot)}
+                className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                  activeSourceLabel === slot
+                    ? "bg-amber-600 text-white border-amber-600"
+                    : "border-slate-300 text-slate-600 dark:text-slate-300"
+                }`}
+              >
+                {slot}
+              </button>
+            ))}
+          </div>
+          {campaignId && (
+            <SlotDataPreview campaignId={campaignId} slotLabel={activeSourceLabel} />
+          )}
         </TabsContent>
       </Tabs>
     </DialogContent>

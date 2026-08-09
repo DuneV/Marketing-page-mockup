@@ -9,7 +9,11 @@ function cellToValue(v: CellValue | null | undefined): any {
   if (typeof v === "string") return v.trim() === "" ? null : v
   if (typeof v === "boolean") return v ? "SI" : "NO"
   if (typeof v === "number") return Number.isFinite(v) ? v : null
-  if (v instanceof Date) return v.toISOString().split("T")[0]
+  if (v instanceof Date) {
+      const t = v.getTime()
+      if (!Number.isFinite(t) || isNaN(t)) return null
+      return v.toISOString().split("T")[0]
+    }
   // Formula result object
   const result = (v as any)?.result
   if (result !== undefined) return cellToValue(result)
@@ -200,7 +204,7 @@ export async function processImport(importId: string) {
   const flushBuffer = async () => {
     if (rowBuffer.length === 0) return
     const valuePlaceholders = rowBuffer.map((_, i) =>
-      `($1, $${i * 3 + 2}, $${i * 3 + 3}, true)`
+      `($1, $${i * 2 + 2}, $${i * 2 + 3}::jsonb, true)`
     ).join(", ")
     const flatParams: any[] = [importId]
     for (const r of rowBuffer) {
